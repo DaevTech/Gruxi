@@ -1,7 +1,6 @@
-use crate::conf_structure::Binding;
-use crate::conf_structure::Server;
-use crate::conf_structure::Sites;
-use config::Config;
+use crate::grux_configuration_struct::Binding;
+use crate::grux_configuration_struct::Server;
+use crate::grux_configuration_struct::Sites;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::Body;
 use hyper::body::Bytes;
@@ -19,7 +18,10 @@ use tokio::join;
 use tokio::net::TcpListener;
 
 #[tokio::main]
-pub async fn initialize_server(config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn initialize_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Get configuration
+    let config = crate::grux_configuration::get_configuration();
+
     // Figure out what we want to start
     let servers: Vec<Server> = config.get("servers").unwrap();
     if servers.is_empty() {

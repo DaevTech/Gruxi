@@ -1,3 +1,4 @@
 /target
 grux.db
-logs/
+logs/*.log
+/temp_test_data

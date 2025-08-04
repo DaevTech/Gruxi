@@ -16,3 +16,7 @@ config =  { version = "0.15.13", features = ["json"] }
 serde_json = "1.0.141"
 mime_guess = "2.0.5"
 hyper-content-encoding = "0.1.1"
+
+[lib]
+name = "grux"
+path = "src/lib.rs"
