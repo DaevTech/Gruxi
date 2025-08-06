@@ -1,5 +1,4 @@
 use grux::grux_configuration;
-use grux::grux_configuration_struct::Server;
 use std::fs;
 use std::path::Path;
 

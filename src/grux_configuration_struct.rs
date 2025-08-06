@@ -10,7 +10,7 @@ pub struct Server {
 #[allow(unused)]
 pub struct Binding {
     pub ip: String,
-    pub port: String,
+    pub port: u16,
     pub is_admin: bool,
     pub sites: Vec<Sites>,
 }
@@ -38,7 +38,7 @@ pub struct Configuration {
 pub struct AdminSite {
     pub is_admin_portal_enabled: bool,
     pub admin_portal_ip: String,
-    pub admin_portal_port: u32,
+    pub admin_portal_port: u16,
     pub admin_portal_web_root: String,
     pub admin_portal_index_file: String,
 }
@@ -57,7 +57,7 @@ impl Configuration {
 
         let default_binding = Binding {
             ip: "0.0.0.0".to_string(),
-            port: "80".to_string(),
+            port: 80,
             is_admin: false,
             sites: vec![default_site],
         };

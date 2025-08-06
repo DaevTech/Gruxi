@@ -1,8 +1,8 @@
-use crate::grux_configuration_struct::AdminSite;
-use crate::grux_configuration_struct::Binding;
-use crate::grux_configuration_struct::Server;
-use crate::grux_configuration_struct::Sites;
-use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use crate::grux_configuration_struct::*;
+use crate::grux_http_admin::*;
+use crate::grux_http_util::*;
+use futures::future::join_all;
+use http_body_util::{combinators::BoxBody};
 use hyper::body::Body;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -16,7 +16,6 @@ use mime_guess::MimeGuess;
 use std::net::SocketAddr;
 use tokio::fs;
 use tokio::net::TcpListener;
-use futures::future::join_all;
 
 #[tokio::main]
 pub async fn initialize_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -38,7 +37,7 @@ pub async fn initialize_server() -> Result<(), Box<dyn std::error::Error + Send 
     if admin_site_config.is_admin_portal_enabled {
         let admin_binding = Binding {
             ip: admin_site_config.admin_portal_ip.clone(),
-            port: admin_site_config.admin_portal_port.to_string(),
+            port: admin_site_config.admin_portal_port,
             is_admin: true,
             sites: vec![Sites {
                 hostnames: vec!["*".to_string()],
@@ -63,7 +62,7 @@ pub async fn initialize_server() -> Result<(), Box<dyn std::error::Error + Send 
     for server in servers {
         for binding in server.bindings {
             let ip = binding.ip.parse::<std::net::IpAddr>().map_err(|e| format!("Invalid IP address: {}", e))?;
-            let port = binding.port.parse::<u16>().map_err(|e| format!("Invalid port: {}", e))?;
+            let port = binding.port;
             let addr = SocketAddr::new(ip, port);
 
             // Start listening on the specified address
@@ -82,7 +81,7 @@ pub async fn initialize_server() -> Result<(), Box<dyn std::error::Error + Send 
 
 fn start_server_binding(binding: Binding) -> impl std::future::Future<Output = ()> {
     let ip = binding.ip.parse::<std::net::IpAddr>().unwrap();
-    let port = binding.port.parse::<u16>().unwrap();
+    let port = binding.port;
     let addr = SocketAddr::new(ip, port);
 
     async move {
@@ -132,107 +131,94 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -
     );
     trace!("Matched site with request: {:?}", site);
 
+    // Check if the request is for the admin portal
+    if binding.is_admin {
+        // We only want to handle a few paths in the admin portal
+        if path == "login" && method == hyper::Method::POST {
+            return handle_login_request(&req, site);
+        } else if path == "logout" && method == hyper::Method::POST {
+            return handle_logout_request(&req, site);
+        } else if path == "config" && method == hyper::Method::GET {
+            return admin_get_configuration_endpoint(&req, site);
+        } else if path == "config" && method == hyper::Method::POST {
+            return admin_post_configuration_endpoint(&req, site);
+        } else {
+            // For any other path, we return a 404
+            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+        }
+    }
+
     // First, check if the there is a specific file requested
     let web_root = &site.web_root;
 
-    // Check if path ends with a slash
-    if path.ends_with('/') {
-        // If the path is just "/", we can return the index file, if it exists
-        let index_file = site
-            .web_root_index_file_list
-            .iter()
-            .find(|&file| {
-                let file_path = format!("{}{}", web_root, file);
-                std::path::Path::new(&file_path).exists()
-            })
-            .map(|file| file.to_string());
-        if index_file.is_none() {
-            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
-        }
-        let file_path = format!("{}{}", web_root, index_file.unwrap());
-        trace!("Returning index file: {}", file_path);
+    // Check if if request is for path or file
+    let mut file_path = clean_url_path(&format!("{}{}", web_root, path));
+    trace!("Checking file path: {}", file_path);
 
-        // Read the index file and return it
-        let file_content = match fs::read(&file_path).await {
-            Ok(content) => content,
-            Err(_) => return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND)),
-        };
+    // Check if the file/dir exists
+    if let Ok(file_path_meta) = std::fs::metadata(&file_path) {
+        if file_path_meta.is_dir() {
+            // If it's a directory, we will try to return the index file
+            trace!("File is a directory: {}", file_path);
 
-        let mut resp = Response::new(full(file_content));
-
-        // Check if we should encode the response
-        if headers.get("Accept-Encoding").map_or(false, |v| v.to_str().unwrap_or("").contains("gzip")) {
-            resp = encode_response(resp, Encoding::Gzip).await.unwrap();
-        }
-
-        resp.headers_mut().insert("Content-Type", "text/html; charset=UTF-8".parse().unwrap());
-
-        *resp.status_mut() = hyper::StatusCode::OK;
-        add_standard_headers_to_response(&mut resp);
-
-        Ok(resp)
-    } else {
-        // If the path is not "/" or ends with "/", we will try to serve the requested file
-        trace!("Requested filepath: {}", path);
-
-        // Check if file exist
-        let file_path = format!("{}{}", web_root, path.trim_start_matches('/'));
-        trace!("File exist check: {}", file_path);
-        if fs::metadata(&file_path).await.is_err() {
-            trace!("File did not exists: {}", file_path);
-            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
-        }
-        trace!("File exists: {}", file_path);
-
-        // Read the file and return it
-        let file_content = match fs::read(&file_path).await {
-            Ok(content) => content,
-            Err(_) => return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND)),
-        };
-
-        let mut resp = Response::new(full(file_content));
-
-        // Attempt to guess the MIME type of the file
-        if let Some(mime) = MimeGuess::from_path(&file_path).first() {
-            resp.headers_mut().insert("Content-Type", mime.to_string().parse().unwrap());
-        } else {
-            resp.headers_mut().insert("Content-Type", "application/octet-stream".parse().unwrap());
-        }
-        add_standard_headers_to_response(&mut resp);
-
-        // Check if we should encode the response
-        if headers.get("Accept-Encoding").map_or(false, |v| v.to_str().unwrap_or("").contains("gzip")) {
-            // We only encode response for certain content types
-            let content_types_to_encode = vec!["text/", "application/json", "application/javascript", "text/css", "application/css"];
-            let resp_content_type = resp.headers().get("Content-Type").and_then(|v| v.to_str().ok()).unwrap_or("");
-            if content_types_to_encode.iter().any(|ct| resp_content_type.starts_with(ct)) {
-                trace!("Encoding file response with gzip");
-                resp = encode_response(resp, Encoding::Gzip).await.unwrap();
-            } else {
-                trace!("Not encoding file response, content type not suitable for gzip");
+            let index_file = site
+                .web_root_index_file_list
+                .iter()
+                .find(|&file| {
+                    let file_path = format!("{}/{}", file_path, file);
+                    std::path::Path::new(&file_path).exists()
+                })
+                .map(|file| file.to_string());
+            if index_file.is_none() {
+                trace!("Index files in dir does not exist: {}", file_path);
+                // We return 404, as we never want to expose directory listings
+                return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
             }
+            file_path = format!("{}/{}", file_path, index_file.unwrap());
+            trace!("Returning index file: {}", file_path);
+        } else if file_path_meta.is_file() {
+            // If it's a file, we will try to read it
+            // Nothing will done right now
+        } else {
+            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
         }
-
-        Ok(resp)
+    } else {
+        trace!("File does not exist: {}", file_path);
+        return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
     }
-}
 
-fn empty_response_with_status(status: hyper::StatusCode) -> Response<BoxBody<Bytes, hyper::Error>> {
-    let mut resp = Response::new(full(""));
-    *resp.status_mut() = status;
+    // If we reach here, we have a valid file to return
+    let file_content = match fs::read(&file_path).await {
+        Ok(content) => content,
+        Err(_) => return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND)),
+    };
+
+    let mut resp = Response::new(full(file_content));
+
+    // Attempt to guess the MIME type of the file
+    if let Some(mime) = MimeGuess::from_path(&file_path).first() {
+        resp.headers_mut().insert("Content-Type", mime.to_string().parse().unwrap());
+    } else {
+        resp.headers_mut().insert("Content-Type", "application/octet-stream".parse().unwrap());
+    }
     add_standard_headers_to_response(&mut resp);
-    resp
-}
 
-fn add_standard_headers_to_response(resp: &mut Response<BoxBody<Bytes, hyper::Error>>) {
-    for (key, value) in get_standard_headers() {
-        resp.headers_mut().insert(key, value.parse().unwrap());
+    // Check if we should encode the response
+    if headers.get("Accept-Encoding").map_or(false, |v| v.to_str().unwrap_or("").contains("gzip")) {
+        // We only encode response for certain content types
+        let content_types_to_encode = vec!["text/", "application/json", "application/javascript", "text/css", "application/css"];
+        let resp_content_type = resp.headers().get("Content-Type").and_then(|v| v.to_str().ok()).unwrap_or("");
+        if content_types_to_encode.iter().any(|ct| resp_content_type.starts_with(ct)) {
+            trace!("Encoding file response with gzip");
+            resp = encode_response(resp, Encoding::Gzip).await.unwrap();
+        } else {
+            trace!("Not encoding file response, content type not suitable for gzip");
+        }
     }
+
+    Ok(resp)
 }
 
-fn get_standard_headers() -> Vec<(&'static str, &'static str)> {
-    return vec![("Server", "Grux"), ("Vary", "Accept-Encoding")];
-}
 
 /*
 fn validate_requests(req: &Request<hyper::body::Incoming>) -> Result<(), hyper::Error> {
@@ -274,8 +260,4 @@ fn find_best_match_site<'a>(sites: &'a [Sites], requested_hostname: &'a str) -> 
     }
 
     site
-}
-
-fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
-    Full::new(chunk.into()).map_err(|never| match never {}).boxed()
 }
