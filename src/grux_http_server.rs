@@ -132,9 +132,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -
         trace!("Handling request for admin portal with path: {}", path_cleaned);
 
         // We only want to handle a few paths in the admin portal
-        if path_cleaned == "" && method == hyper::Method::GET {
-            // Fall through to serve the admin index file
-        } else if path_cleaned == "login" && method == hyper::Method::POST {
+        if path_cleaned == "login" && method == hyper::Method::POST {
             return handle_login_request(req, site).await;
         } else if path_cleaned == "logout" && method == hyper::Method::POST {
             return handle_logout_request(req, site).await;
@@ -142,9 +140,6 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -
             return admin_get_configuration_endpoint(&req, site);
         } else if path_cleaned == "config" && method == hyper::Method::POST {
             return admin_post_configuration_endpoint(&req, site);
-        } else {
-            // For any other path, we return a 404
-            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
         }
     }
 
