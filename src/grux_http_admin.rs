@@ -187,11 +187,95 @@ pub async fn admin_get_configuration_endpoint(req: &Request<hyper::body::Incomin
     }
 }
 
-pub fn admin_post_configuration_endpoint(_req: &Request<hyper::body::Incoming>, _admin_site: &Sites) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    // Here we can handle the post configuration requests
-    let mut resp = Response::new(full("Post configuration endpoint not implemented yet"));
-    *resp.status_mut() = hyper::StatusCode::OK;
-    Ok(resp)
+pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Sites) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    // Check if this is a POST request
+    if req.method() != hyper::Method::POST {
+        let mut resp = Response::new(full(r#"{"error": "Method not allowed"}"#));
+        *resp.status_mut() = hyper::StatusCode::METHOD_NOT_ALLOWED;
+        resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        return Ok(resp);
+    }
+
+    // Check authentication first
+    match require_authentication(&req).await {
+        Ok(Some(_session)) => {
+            debug!("User authenticated for configuration update");
+        }
+        Ok(None) => {
+            let mut resp = Response::new(full(r#"{"error": "Authentication required"}"#));
+            *resp.status_mut() = hyper::StatusCode::UNAUTHORIZED;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+        Err(auth_response) => {
+            return Ok(auth_response);
+        }
+    }
+
+    // Read the request body
+    let body_bytes = match req.collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(e) => {
+            error!("Failed to read request body: {}", e);
+            let mut resp = Response::new(full(r#"{"error": "Failed to read request body"}"#));
+            *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+    };
+
+    // Parse JSON body into Configuration struct
+    let configuration: crate::grux_configuration_struct::Configuration = match serde_json::from_slice(&body_bytes) {
+        Ok(config) => config,
+        Err(e) => {
+            error!("Failed to parse configuration JSON: {}", e);
+            let error_response = serde_json::json!({
+                "error": "Invalid JSON format",
+                "details": e.to_string()
+            });
+            let mut resp = Response::new(full(error_response.to_string()));
+            *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+    };
+
+    // Save the configuration
+    match crate::grux_configuration::save_configuration(&configuration) {
+        Ok(true) => {
+            info!("Configuration updated successfully");
+            let success_response = serde_json::json!({
+                "success": true,
+                "message": "Configuration updated successfully. Please restart the server for changes to take effect."
+            });
+            let mut resp = Response::new(full(success_response.to_string()));
+            *resp.status_mut() = hyper::StatusCode::OK;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            Ok(resp)
+        }
+        Ok(false) => {
+            info!("Configuration save requested, but no changes detected");
+            let success_response = serde_json::json!({
+                "success": true,
+                "message": "Configuration is up to date. No changes were needed."
+            });
+            let mut resp = Response::new(full(success_response.to_string()));
+            *resp.status_mut() = hyper::StatusCode::OK;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            Ok(resp)
+        }
+        Err(validation_errors) => {
+            error!("Configuration validation failed: {}", validation_errors);
+            let error_response = serde_json::json!({
+                "error": "Configuration validation failed",
+                "details": validation_errors
+            });
+            let mut resp = Response::new(full(error_response.to_string()));
+            *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            Ok(resp)
+        }
+    }
 }
 
 // Helper function to extract session token from request

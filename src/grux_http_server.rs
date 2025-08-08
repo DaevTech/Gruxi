@@ -139,7 +139,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -
         } else if path_cleaned == "config" && method == hyper::Method::GET {
             return admin_get_configuration_endpoint(&req, site).await;
         } else if path_cleaned == "config" && method == hyper::Method::POST {
-            return admin_post_configuration_endpoint(&req, site);
+            return admin_post_configuration_endpoint(req, site).await;
         }
     }
 

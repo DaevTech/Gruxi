@@ -20,6 +20,7 @@ const emit = defineEmits(['close'])
 const isLoading = ref(false)
 const isSaving = ref(false)
 const error = ref('')
+const saveError = ref('')
 const successMessage = ref('')
 const originalConfig = ref(null)
 const config = ref(null)
@@ -75,7 +76,7 @@ const loadConfiguration = async () => {
 // Save configuration
 const saveConfiguration = async () => {
   isSaving.value = true
-  error.value = ''
+  saveError.value = ''
   successMessage.value = ''
 
   try {
@@ -88,18 +89,43 @@ const saveConfiguration = async () => {
       body: JSON.stringify(config.value)
     })
 
+    const responseData = await response.json()
+
     if (response.ok) {
       originalConfig.value = JSON.parse(JSON.stringify(config.value)) // Update original
-      successMessage.value = 'Configuration saved successfully!'
+      successMessage.value = responseData.message || 'Configuration saved successfully!'
+      saveError.value = '' // Clear any previous save errors
       setTimeout(() => {
         successMessage.value = ''
-      }, 5000)
+      }, 10000) // Show for 10 seconds since restart might be required
     } else {
-      error.value = 'Failed to save configuration'
+      // Handle different types of errors - DON'T reset config, keep user's changes
+      if (response.status === 400) {
+        // Validation error
+        if (responseData.details && typeof responseData.details === 'string') {
+          // Single error message
+          saveError.value = `${responseData.details}`
+        } else if (responseData.details && Array.isArray(responseData.details)) {
+          // Multiple validation errors - format as bullet list
+          saveError.value = `Configuration validation failed:\n• ${responseData.details.split(';').map(err => err.trim()).join('\n• ')}`
+        } else {
+          saveError.value = responseData.error || 'Configuration validation failed'
+        }
+      } else if (response.status === 401) {
+        saveError.value = 'Authentication required. Please log in again.'
+      } else {
+        saveError.value = responseData.error || 'Failed to save configuration'
+      }
+      successMessage.value = '' // Clear success message if there's an error
     }
   } catch (err) {
     console.error('Config saving error:', err)
-    error.value = 'Network error while saving configuration'
+    successMessage.value = '' // Clear success message if there's an error
+    if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
+      saveError.value = 'Network error: Unable to connect to server'
+    } else {
+      saveError.value = 'Network error while saving configuration'
+    }
   } finally {
     isSaving.value = false
   }
@@ -300,7 +326,7 @@ onMounted(() => {
         <button
           @click="saveConfiguration"
           class="save-button"
-          :disabled="isSaving || !hasUnsavedChanges"
+          :disabled="isSaving"
         >
           <span v-if="isSaving">Saving...</span>
           <span v-else>Save Configuration</span>
@@ -326,7 +352,7 @@ onMounted(() => {
         <button
           @click="saveConfiguration"
           class="save-button inline"
-          :disabled="isSaving || !hasUnsavedChanges"
+          :disabled="isSaving"
         >
           <span v-if="isSaving">Saving...</span>
           <span v-else>Save Configuration</span>
@@ -339,16 +365,35 @@ onMounted(() => {
     </div>
 
     <!-- Error State -->
-    <div v-else-if="error" class="error-message">
-      {{ error }}
+        <!-- Error State (for loading/configuration errors) -->
+    <div v-else-if="error && !config" class="error-message">
+      <pre v-if="error.includes('\\n')" class="error-details">{{ error }}</pre>
+      <span v-else>{{ error }}</span>
       <button @click="loadConfiguration" class="retry-button">Retry</button>
     </div>
 
     <!-- Main Content -->
     <div v-else-if="config" class="config-form">
+      <!-- Save Error message (validation/save errors) -->
+      <div v-if="saveError" class="save-error-message">
+        <div class="error-header">
+          <span class="error-icon">⚠️</span>
+          <strong>Configuration Save Failed</strong>
+        </div>
+        <pre v-if="saveError.includes('\\n')" class="error-details">{{ saveError }}</pre>
+        <span v-else>{{ saveError }}</span>
+        <p class="error-help">Please fix the errors above and try saving again.</p>
+      </div>
+
       <!-- Success message -->
       <div v-if="successMessage" class="success-message">
         {{ successMessage }}
+      </div>
+
+      <!-- Error message for save operations -->
+      <div v-if="error && config" class="form-error-message">
+        <pre v-if="error.includes('\\n')" class="error-details">{{ error }}</pre>
+        <span v-else>{{ error }}</span>
       </div>
 
       <!-- Unsaved changes indicator -->
@@ -841,6 +886,58 @@ onMounted(() => {
   font-weight: 500;
 }
 
+.form-error-message {
+  background: #fef2f2;
+  border-left: 4px solid #ef4444;
+  color: #dc2626;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  font-weight: 500;
+}
+
+.save-error-message {
+  background: #fef2f2;
+  border: 2px solid #ef4444;
+  color: #dc2626;
+  padding: 1.5rem;
+  border-radius: 12px;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.1);
+}
+
+.save-error-message .error-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+}
+
+.save-error-message .error-icon {
+  font-size: 1.5rem;
+}
+
+.save-error-message .error-help {
+  margin-top: 1rem;
+  margin-bottom: 0;
+  font-style: italic;
+  color: #b91c1c;
+  font-size: 0.9rem;
+}
+
+.form-error-message .error-details,
+.save-error-message .error-details {
+  margin: 0.5rem 0 0 0;
+  font-family: inherit;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
 .changes-indicator {
   background: #fffbeb;
   border-left: 4px solid #f59e0b;
@@ -1242,6 +1339,21 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   gap: 1rem;
+  flex-direction: column;
+}
+
+.error-message .error-details {
+  margin: 0;
+  font-family: inherit;
+  white-space: pre-wrap;
+  text-align: left;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0.75rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .retry-button,
