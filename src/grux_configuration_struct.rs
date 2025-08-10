@@ -32,6 +32,7 @@ pub struct Sites {
 pub struct Configuration {
     pub servers: Vec<Server>,
     pub admin_site: AdminSite,
+    pub file_cache: FileCache,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -43,6 +44,13 @@ pub struct AdminSite {
     pub admin_portal_index_file: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileCache {
+    pub is_enabled: bool,
+    pub cache_size: usize,
+    pub cache_lifetime: usize,
+}
+
 impl Configuration {
     pub fn new() -> Self {
         let default_site = Sites {
@@ -51,7 +59,7 @@ impl Configuration {
             is_enabled: true,
             is_ssl: false,
             is_ssl_required: false,
-            web_root: "./www-default/".to_string(),
+            web_root: "./www-default".to_string(),
             web_root_index_file_list: vec!["index.html".to_string()],
         };
 
@@ -68,13 +76,20 @@ impl Configuration {
             is_admin_portal_enabled: true,
             admin_portal_ip: "0.0.0.0".to_string(),
             admin_portal_port: 8000,
-            admin_portal_web_root: "./www-admin/".to_string(),
+            admin_portal_web_root: "./www-admin".to_string(),
             admin_portal_index_file: "index.html".to_string(),
+        };
+
+        let file_cache = FileCache {
+            is_enabled: true,
+            cache_size: 1024 * 1024 * 100, // 100 MB
+            cache_lifetime: 60,            // 60 seconds
         };
 
         Configuration {
             servers: vec![default_server],
             admin_site,
+            file_cache,
         }
     }
 
@@ -102,11 +117,7 @@ impl Configuration {
             }
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }
 
@@ -126,11 +137,7 @@ impl Server {
             }
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }
 
@@ -176,11 +183,7 @@ impl Binding {
             errors.push("One site must be marked as default when multiple sites exist".to_string());
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }
 
@@ -220,11 +223,7 @@ impl Sites {
             errors.push("SSL cannot be required when SSL is not enabled".to_string());
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }
 
@@ -248,16 +247,15 @@ impl AdminSite {
         if self.admin_portal_web_root.trim().is_empty() {
             errors.push("Admin portal web root cannot be empty".to_string());
         }
+        if self.admin_portal_web_root.ends_with("/") {
+            errors.push("Admin portal web root cannot end with a slash".to_string());
+        }
 
         // Validate index file
         if self.admin_portal_index_file.trim().is_empty() {
             errors.push("Admin portal index file cannot be empty".to_string());
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }

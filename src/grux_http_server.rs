@@ -1,4 +1,5 @@
 use crate::grux_configuration_struct::*;
+use crate::grux_file_cache::get_file_cache;
 use crate::grux_http_admin::*;
 use crate::grux_http_util::*;
 use futures::future::join_all;
@@ -8,16 +9,15 @@ use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
-use hyper_content_encoding::Encoding;
-use hyper_content_encoding::encode_response;
+use hyper_content_encoding::{Encoding, encode_response};
 use hyper_util::rt::TokioIo;
 use log::{error, info, trace};
-use mime_guess::MimeGuess;
+use mime_guess;
+use serde_json;
 use std::net::SocketAddr;
-use tokio::fs;
 use tokio::net::TcpListener;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 pub async fn initialize_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Get configuration
     let config = crate::grux_configuration::get_configuration();
@@ -106,6 +106,8 @@ fn start_server_binding(binding: Binding) -> impl std::future::Future<Output = (
 
 // Handle the incoming request
 async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    //  return Ok(empty_response_with_status(hyper::StatusCode::OK));
+
     // Extract data for the request before we borrow/move
     let method = req.method().clone();
     let uri = req.uri().clone();
@@ -158,70 +160,67 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -
     // Check if if request is for path or file
     let path_cleaned = clean_url_path(path);
 
-    let mut file_path = clean_url_path(&format!("{}/{}", web_root, path_cleaned));
+    let mut file_path = format!("{}/{}", web_root, path_cleaned);
 
     trace!("Checking file path: {}", file_path);
 
-    // Check if the file/dir exists
-    if let Ok(file_path_meta) = std::fs::metadata(&file_path) {
-        if file_path_meta.is_dir() {
-            // If it's a directory, we will try to return the index file
-            trace!("File is a directory: {}", file_path);
+    // Check if the file/dir exists using direct tokio::fs calls
+    let file_cache = get_file_cache();
+    let file_data = file_cache.get_file(&file_path).unwrap();
 
-            let index_file = site
-                .web_root_index_file_list
-                .iter()
-                .find(|&file| {
-                    let file_path = format!("{}/{}", file_path, file);
-                    std::path::Path::new(&file_path).exists()
-                })
-                .map(|file| file.to_string());
-            if index_file.is_none() {
-                trace!("Index files in dir does not exist: {}", file_path);
-                // We return 404, as we never want to expose directory listings
-                return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
-            }
-            file_path = format!("{}/{}", file_path, index_file.unwrap());
-            trace!("Returning index file: {}", file_path);
-        } else if file_path_meta.is_file() {
-            // If it's a file, we will try to read it
-            // Nothing will done right now
-        } else {
-            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
-        }
-    } else {
+    if !file_data.exists {
         trace!("File does not exist: {}", file_path);
         return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
     }
 
-    // If we reach here, we have a valid file to return
-    let file_content = match fs::read(&file_path).await {
-        Ok(content) => content,
-        Err(_) => return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND)),
-    };
 
-    let mut resp = Response::new(full(file_content));
+    if file_data.is_directory {
+        // If it's a directory, we will try to return the index file
+        trace!("File is a directory: {}", file_path);
 
-    // Attempt to guess the MIME type of the file
-    if let Some(mime) = MimeGuess::from_path(&file_path).first() {
+        let index_file = {
+            let mut found_index = None;
+            for file in &site.web_root_index_file_list {
+                let index_path = format!("{}{}", file_path, file);
+                if file_cache.get_file(&index_path).unwrap().exists {
+                    found_index = Some(file.clone());
+                    break;
+                }
+            }
+            found_index
+        };
+
+        if index_file.is_none() {
+            trace!("Index files in dir does not exist: {}", file_path);
+            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+        }
+        file_path = format!("{}{}", file_path, &index_file.unwrap());
+        trace!("Returning index file: {}", file_path);
+    }
+
+    let mut resp = Response::new(full(file_data.content));
+
+
+/*
+    // Set MIME type
+    if let Some(mime) = mime_guess::MimeGuess::from_path(&file_path).first() {
         resp.headers_mut().insert("Content-Type", mime.to_string().parse().unwrap());
     } else {
         resp.headers_mut().insert("Content-Type", "application/octet-stream".parse().unwrap());
     }
-    add_standard_headers_to_response(&mut resp);
 
     // Check if we should encode the response
     if headers.get("Accept-Encoding").map_or(false, |v| v.to_str().unwrap_or("").contains("gzip")) {
-        // We only encode response for certain content types
         let content_types_to_encode = vec!["text/", "application/json", "application/javascript", "text/css", "application/css"];
         let resp_content_type = resp.headers().get("Content-Type").and_then(|v| v.to_str().ok()).unwrap_or("");
         if content_types_to_encode.iter().any(|ct| resp_content_type.starts_with(ct)) {
             trace!("Encoding file response with gzip");
-            resp = encode_response(resp, Encoding::Gzip).await.unwrap();
-        } else {
-            trace!("Not encoding file response, content type not suitable for gzip");
+            resp = hyper_content_encoding::encode_response(resp, hyper_content_encoding::Encoding::Gzip).await.unwrap();
         }
     }
+    */
+
+    add_standard_headers_to_response(&mut resp);
 
     Ok(resp)
 }

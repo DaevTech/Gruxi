@@ -30,7 +30,7 @@ pub fn init_logging() -> Result<log4rs::Handle, String> {
     let config = Config::builder()
         .appender(Appender::builder().build("logfile", Box::new(logfile)))
         .appender(Appender::builder().filter(Box::new(ThresholdFilter::new(level))).build("stderr", Box::new(stderr)))
-        .build(Root::builder().appender("logfile").appender("stderr").build(LevelFilter::Trace))
+        .build(Root::builder().appender("logfile").appender("stderr").build(LevelFilter::Info))
         .unwrap();
 
     // Use this to change log levels at runtime.

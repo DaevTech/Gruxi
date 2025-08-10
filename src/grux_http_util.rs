@@ -9,17 +9,64 @@ pub fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
 }
 
 pub fn clean_url_path(path: &str) -> String {
-    let mut cleaned_path = path.trim_start_matches('/').to_string();
+    let mut buf = String::with_capacity(path.len());
+    let mut chars = path.trim_start_matches('/').chars().peekable();
+    let mut prev_was_slash = false;
 
-    cleaned_path = cleaned_path.replace("%20", " "); // Decode spaces
-    cleaned_path = cleaned_path.replace("%2F", "/"); // Decode forward slashes
-    cleaned_path = cleaned_path.replace("%5C", "/"); // Decode backslashes
-    cleaned_path = cleaned_path.replace("\\", "/"); // Replace backslashes with forward slashes
-    cleaned_path = cleaned_path.trim_end_matches('/').to_string(); // Remove trailing slashes
-    cleaned_path = cleaned_path.replace("..", ""); // Remove any parent directory references
-    cleaned_path = cleaned_path.replace("./", ""); // Remove current directory references
-    cleaned_path = cleaned_path.replace("//", "/"); // Ensure no double slashes remain
-    cleaned_path
+    while let Some(c) = chars.next() {
+        let decoded = if c == '%' {
+            let code: String = chars.by_ref().take(2).collect();
+            match code.as_str() {
+                "20" => Some(' '),
+                "2F" | "5C" => Some('/'),
+                _ => {
+                    buf.push('%');
+                    buf.push_str(&code);
+                    None
+                }
+            }
+        } else if c == '\\' {
+            Some('/')
+        } else {
+            Some(c)
+        };
+
+        if let Some(ch) = decoded {
+            if ch == '/' {
+                if prev_was_slash {
+                    continue; // skip duplicate slashes
+                }
+                prev_was_slash = true;
+            } else {
+                prev_was_slash = false;
+            }
+            buf.push(ch);
+        }
+    }
+
+    // Remove trailing slash
+    while buf.ends_with('/') {
+        buf.pop();
+    }
+
+    // Remove "." and ".." segments
+    let mut parts = Vec::new();
+    for part in buf.split('/') {
+        match part {
+            "" | "." | ".." => continue,
+            _ => parts.push(part),
+        }
+    }
+
+    // Join parts and ensure no trailing slash
+    let result = parts.join("/");
+
+    // Final safety check - ensure we never return a trailing slash
+    if result.ends_with('/') {
+        result[..result.len() - 1].to_string()
+    } else {
+        result
+    }
 }
 
 pub fn empty_response_with_status(status: hyper::StatusCode) -> Response<BoxBody<Bytes, hyper::Error>> {
