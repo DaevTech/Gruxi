@@ -106,7 +106,7 @@ impl FileCache {
                 trace!("Guessed MIME type for {}: {}", file_path, mime_type);
 
                 // Create gzip version if content type is compressible
-                if self.should_compress(&mime_type) {
+                if self.should_compress(&mime_type, length) {
                     match self.compress_content(&content, &mut gzip_content) {
                         Ok(_) => {
                             // Only keep compressed version if it's significantly smaller
@@ -143,9 +143,9 @@ impl FileCache {
     }
 
     /// Check if a MIME type should be compressed
-    fn should_compress(&self, mime_type: &str) -> bool {
+    fn should_compress(&self, mime_type: &str, content_length: u64) -> bool {
         if self.gzip_enabled {
-            return self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
+            return content_length > 1000 && content_length < (10 * 1024 * 1024) && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
         }
         false
     }
@@ -172,11 +172,7 @@ impl FileCache {
 
                 cache_map.retain(|_path, cached_file| {
                     let age = now.duration_since(cached_file.last_checked);
-                    if age > max_age {
-                        false
-                    } else {
-                        true
-                    }
+                    if age > max_age { false } else { true }
                 });
 
                 let final_count = cache_map.len();
