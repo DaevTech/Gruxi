@@ -6,14 +6,12 @@ use futures::future::join_all;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Body;
 use hyper::body::Bytes;
+use hyper::header::HeaderValue;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
-use hyper_content_encoding::{Encoding, encode_response};
 use hyper_util::rt::TokioIo;
 use log::{error, info, trace};
-use mime_guess;
-use serde_json;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
@@ -166,13 +164,12 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -
 
     // Check if the file/dir exists using direct tokio::fs calls
     let file_cache = get_file_cache();
-    let file_data = file_cache.get_file(&file_path).unwrap();
+    let mut file_data = file_cache.get_file(&file_path).unwrap();
 
     if !file_data.exists {
         trace!("File does not exist: {}", file_path);
         return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
     }
-
 
     if file_data.is_directory {
         // If it's a directory, we will try to return the index file
@@ -182,7 +179,11 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -
             let mut found_index = None;
             for file in &site.web_root_index_file_list {
                 let index_path = format!("{}{}", file_path, file);
-                if file_cache.get_file(&index_path).unwrap().exists {
+                let index_data = file_cache.get_file(&index_path).unwrap();
+                if index_data.exists {
+                    trace!("Returning index file: {}", index_path);
+                    file_data = index_data;
+                    file_path = index_path;
                     found_index = Some(file.clone());
                     break;
                 }
@@ -194,31 +195,19 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -
             trace!("Index files in dir does not exist: {}", file_path);
             return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
         }
-        file_path = format!("{}{}", file_path, &index_file.unwrap());
-        trace!("Returning index file: {}", file_path);
     }
 
-    let mut resp = Response::new(full(file_data.content));
-
-
-/*
-    // Set MIME type
-    if let Some(mime) = mime_guess::MimeGuess::from_path(&file_path).first() {
-        resp.headers_mut().insert("Content-Type", mime.to_string().parse().unwrap());
+    // Check what content we want to return and take ownership to avoid cloning
+    let body_content = if file_data.gzip_content.is_empty() {
+        file_data.content
     } else {
-        resp.headers_mut().insert("Content-Type", "application/octet-stream".parse().unwrap());
-    }
+        file_data.gzip_content
+    };
 
-    // Check if we should encode the response
-    if headers.get("Accept-Encoding").map_or(false, |v| v.to_str().unwrap_or("").contains("gzip")) {
-        let content_types_to_encode = vec!["text/", "application/json", "application/javascript", "text/css", "application/css"];
-        let resp_content_type = resp.headers().get("Content-Type").and_then(|v| v.to_str().ok()).unwrap_or("");
-        if content_types_to_encode.iter().any(|ct| resp_content_type.starts_with(ct)) {
-            trace!("Encoding file response with gzip");
-            resp = hyper_content_encoding::encode_response(resp, hyper_content_encoding::Encoding::Gzip).await.unwrap();
-        }
-    }
-    */
+    // Create the response
+    let mut resp = Response::new(full(body_content));
+    *resp.status_mut() = hyper::StatusCode::OK;
+    resp.headers_mut().insert("Content-Type", HeaderValue::from_str(&file_data.mime_type).unwrap());
 
     add_standard_headers_to_response(&mut resp);
 
