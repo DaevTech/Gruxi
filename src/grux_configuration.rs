@@ -14,7 +14,7 @@ fn init() -> Result<Config, String> {
         .map_err(|e| format!("Failed to create configuration table: {}", e))?;
 
     let mut statement = connection
-        .prepare("SELECT configuration FROM grux_config WHERE type = 'base'")
+        .prepare("SELECT configuration FROM grux_config WHERE type = 'base' ORDER BY id DESC LIMIT 1")
         .map_err(|e| format!("Failed to prepare statement: {}", e))?;
 
     let row_state = statement.next().map_err(|e| format!("Failed to execute statement: {}", e))?;
@@ -68,7 +68,7 @@ pub fn get_current_configuration_from_db() -> Result<Configuration, String> {
         .map_err(|e| format!("Failed to open database connection: {}", e))?;
 
     let mut statement = connection
-        .prepare("SELECT configuration FROM grux_config WHERE type = 'base'")
+        .prepare("SELECT configuration FROM grux_config WHERE type = 'base' ORDER BY id DESC LIMIT 1")
         .map_err(|e| format!("Failed to prepare statement: {}", e))?;
 
     let row_state = statement.next()

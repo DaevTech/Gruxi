@@ -47,10 +47,12 @@ pub struct AdminSite {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileCache {
     pub is_enabled: bool,
-    pub cache_size: usize,
+    pub cache_item_size: usize,
     pub cache_max_size_per_file: usize,
-    pub cache_max_item_lifetime: usize,
+    pub cache_item_time_between_checks: usize,
     pub cleanup_thread_interval: usize,
+    pub max_item_lifetime: usize, // in seconds
+    pub forced_eviction_threshold: usize, // 1-99 %
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -96,21 +98,21 @@ impl Configuration {
 
         let file_cache = FileCache {
             is_enabled: true,
-            cache_size: 1024 * 1024 * 100,
+            cache_item_size: 1000,
             cache_max_size_per_file: 1024 * 1024 * 1,
-            cache_max_item_lifetime: 60,    // seconds
+            cache_item_time_between_checks: 20,    // seconds
             cleanup_thread_interval: 10,     // seconds
+            max_item_lifetime: 60,           // seconds
+            forced_eviction_threshold: 70,   // 1-99 %
         };
 
         let gzip = Gzip {
             is_enabled: true,
             compressible_content_types: vec![
-                "text/plain".to_string(),
-                "text/html".to_string(),
+                "text/".to_string(),
                 "application/json".to_string(),
                 "application/javascript".to_string(),
                 "application/xml".to_string(),
-                "text/css".to_string(),
                 "image/svg+xml".to_string(),
             ],
         };

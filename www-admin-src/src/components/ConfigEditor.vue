@@ -28,14 +28,19 @@ const config = ref(null)
 // Track which sections are expanded (all collapsed by default)
 const expandedSections = reactive({
   servers: false,
-  adminSite: false
+  adminSite: false,
+  core: false
 })
 
 // Track which individual items are expanded
 const expandedItems = reactive({
   servers: {},
   bindings: {},
-  sites: {}
+  sites: {},
+  coreSubsections: {
+    fileCache: false,
+    gzip: false
+  }
 })
 
 // Check if config has unsaved changes
@@ -182,6 +187,15 @@ const isSiteExpanded = (serverIndex, bindingIndex, siteIndex) => {
   return expandedItems.sites[key] || false
 }
 
+// Toggle core subsections
+const toggleCoreSubsection = (subsection) => {
+  expandedItems.coreSubsections[subsection] = !expandedItems.coreSubsections[subsection]
+}
+
+const isCoreSubsectionExpanded = (subsection) => {
+  return expandedItems.coreSubsections[subsection] || false
+}
+
 // Add new server
 const addServer = () => {
   if (!config.value.servers) {
@@ -302,6 +316,49 @@ const removeIndexFile = (serverIndex, bindingIndex, siteIndex, fileIndex) => {
     config.value.servers[serverIndex].bindings[bindingIndex].sites[siteIndex].web_root_index_file_list.splice(fileIndex, 1)
   }
 }
+
+// Add gzip content type
+const addGzipContentType = () => {
+  if (config.value.core && config.value.core.gzip) {
+    config.value.core.gzip.compressible_content_types.push("text/plain")
+  }
+}
+
+// Remove gzip content type
+const removeGzipContentType = (index) => {
+  if (config.value.core && config.value.core.gzip &&
+      config.value.core.gzip.compressible_content_types.length > index) {
+    config.value.core.gzip.compressible_content_types.splice(index, 1)
+  }
+}
+
+// MB to bytes conversion for file cache
+const bytesToMb = (bytes) => {
+  return Math.round(bytes / (1024 * 1024) * 100) / 100 // Round to 2 decimal places
+}
+
+const mbToBytes = (mb) => {
+  return Math.round(mb * 1024 * 1024)
+}
+
+// Computed properties for MB values
+const fileCacheSizeMb = computed({
+  get: () => config.value?.core?.file_cache?.cache_size ? bytesToMb(config.value.core.file_cache.cache_size) : 0,
+  set: (value) => {
+    if (config.value?.core?.file_cache) {
+      config.value.core.file_cache.cache_size = mbToBytes(value)
+    }
+  }
+})
+
+const fileCacheMaxSizePerFileMb = computed({
+  get: () => config.value?.core?.file_cache?.cache_max_size_per_file ? bytesToMb(config.value.core.file_cache.cache_max_size_per_file) : 0,
+  set: (value) => {
+    if (config.value?.core?.file_cache) {
+      config.value.core.file_cache.cache_max_size_per_file = mbToBytes(value)
+    }
+  }
+})
 
 // Initialize
 onMounted(() => {
@@ -577,6 +634,100 @@ onMounted(() => {
             <div class="form-field small-field">
               <label>Port</label>
               <input v-model.number="config.admin_site.admin_portal_port" type="number" min="1" max="65535" />
+            </div>
+            <div class="form-field">
+              <label>Web Root Path</label>
+              <input v-model="config.admin_site.admin_portal_web_root" type="text" />
+            </div>
+            <div class="form-field">
+              <label>Index File</label>
+              <input v-model="config.admin_site.admin_portal_index_file" type="text" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Core Settings Section -->
+      <div class="config-section">
+        <div class="section-header" @click="toggleSection('core')">
+          <span class="section-icon" :class="{ expanded: expandedSections.core }">▶</span>
+          <span class="section-title-icon">⚡</span>
+          <h3>Core Settings</h3>
+        </div>
+
+        <div v-if="expandedSections.core" class="section-content">
+          <!-- File Cache Settings -->
+          <div class="binding-item">
+            <div class="item-header compact" @click="toggleCoreSubsection('fileCache')">
+              <div class="header-left">
+                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('fileCache') }">▶</span>
+                <span class="hierarchy-indicator">📁</span>
+                <h4>File Cache</h4>
+                <span v-if="config.core.file_cache.is_enabled" class="default-badge">ENABLED</span>
+                <span v-else class="admin-badge">DISABLED</span>
+              </div>
+            </div>
+
+            <div v-if="isCoreSubsectionExpanded('fileCache')" class="item-content">
+              <div class="form-grid compact">
+                <div class="form-field full-width">
+                  <label>
+                    <input v-model="config.core.file_cache.is_enabled" type="checkbox" />
+                    Enable File Caching
+                  </label>
+                </div>
+                <div class="form-field">
+                  <label>Cache Size (MB)</label>
+                  <input v-model.number="fileCacheSizeMb" type="number" min="0" step="0.01" />
+                </div>
+                <div class="form-field">
+                  <label>Max Size Per File (MB)</label>
+                  <input v-model.number="fileCacheMaxSizePerFileMb" type="number" min="0" step="0.01" />
+                </div>
+                <div class="form-field">
+                  <label>Max Item Lifetime (seconds)</label>
+                  <input v-model.number="config.core.file_cache.cache_max_item_lifetime" type="number" min="0" />
+                </div>
+                <div class="form-field">
+                  <label>Cleanup Thread Interval (seconds)</label>
+                  <input v-model.number="config.core.file_cache.cleanup_thread_interval" type="number" min="1" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Gzip Settings -->
+          <div class="binding-item">
+            <div class="item-header compact" @click="toggleCoreSubsection('gzip')">
+              <div class="header-left">
+                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('gzip') }">▶</span>
+                <span class="hierarchy-indicator">📦</span>
+                <h4>Gzip Compression</h4>
+                <span v-if="config.core.gzip.is_enabled" class="default-badge">ENABLED</span>
+                <span v-else class="admin-badge">DISABLED</span>
+                <span class="item-summary">({{ config.core.gzip.compressible_content_types?.length || 0 }} content types)</span>
+              </div>
+            </div>
+
+            <div v-if="isCoreSubsectionExpanded('gzip')" class="item-content">
+              <div class="form-grid compact">
+                <div class="form-field full-width">
+                  <label>
+                    <input v-model="config.core.gzip.is_enabled" type="checkbox" />
+                    Enable Gzip Compression
+                  </label>
+                </div>
+                <div class="form-field full-width">
+                  <label>Compressible Content Types</label>
+                  <div class="array-field">
+                    <div v-for="(contentType, index) in config.core.gzip.compressible_content_types" :key="index" class="array-item">
+                      <input v-model="config.core.gzip.compressible_content_types[index]" type="text" />
+                      <button @click="removeGzipContentType(index)" type="button" class="remove-button" title="Remove Content Type">✕</button>
+                    </div>
+                    <button @click="addGzipContentType" type="button" class="add-button">+ Add Content Type</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1412,10 +1563,10 @@ onMounted(() => {
 /* Admin portal specific layout */
 .admin-portal-layout {
   display: grid;
-  grid-template-columns: 140px 140px 1fr;
+  grid-template-columns: 140px 140px 1fr 1fr;
   grid-template-areas:
-    "checkbox checkbox checkbox"
-    "ip port .";
+    "checkbox checkbox checkbox checkbox"
+    "ip port webroot indexfile";
   gap: 1rem;
   align-items: end;
 }
@@ -1432,6 +1583,55 @@ onMounted(() => {
 
 .admin-portal-layout .form-field:nth-child(3) {
   grid-area: port;
+}
+
+.admin-portal-layout .form-field:nth-child(4) {
+  grid-area: webroot;
+}
+
+.admin-portal-layout .form-field:nth-child(5) {
+  grid-area: indexfile;
+}
+
+/* Subsection styles */
+.subsection {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin: 1rem 0;
+}
+
+.subsection-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.subsection-header h4 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+/* Array field styles */
+.array-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.array-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.array-item input {
+  flex: 1;
 }
 
 @media (max-width: 768px) {

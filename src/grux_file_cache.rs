@@ -1,8 +1,10 @@
 use crate::grux_configuration_struct::FileCache as GruxFileCacheConfig;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use log::{info, trace, warn};
+use log::{trace, warn};
 use std::io::Write;
+use std::time::Instant;
+use std::time::SystemTime;
 use std::{
     collections::HashMap,
     num::NonZeroUsize,
@@ -14,6 +16,7 @@ use tokio::time::interval;
 pub struct FileCache {
     is_enabled: bool,
     cache: Arc<RwLock<HashMap<String, CachedFile>>>,
+    cached_items_last_checked: Arc<RwLock<HashMap<String, (Instant, Instant, SystemTime)>>>,
     max_file_size: u64,
     gzip_enabled: bool,
     compressible_content_types: Vec<String>,
@@ -21,7 +24,6 @@ pub struct FileCache {
 
 #[derive(Clone, Debug)]
 pub struct CachedFile {
-    pub last_checked: std::time::Instant,
     pub is_directory: bool,
     pub exists: bool,
     pub length: u64,
@@ -42,9 +44,10 @@ impl FileCache {
 
         let is_enabled = file_data_config.is_enabled;
         let max_file_size = file_data_config.cache_max_size_per_file as u64;
-        let capacity = file_data_config.cache_size;
-        let max_item_lifetime = file_data_config.cache_max_item_lifetime;
+        let capacity = file_data_config.cache_item_size;
+        let max_item_lifetime = file_data_config.max_item_lifetime;
         let cleanup_thread_interval = file_data_config.cleanup_thread_interval;
+        let forced_eviction_threshold = file_data_config.forced_eviction_threshold;
 
         let compressible_content_types = config.get::<Vec<String>>("core.gzip.compressible_content_types").unwrap_or(vec![]);
         let gzip_enabled = config.get_bool("core.gzip.is_enabled").unwrap_or(false);
@@ -55,18 +58,26 @@ impl FileCache {
         }
 
         let cache = Arc::new(RwLock::new(hashmap));
+        let cached_items_last_checked = Arc::new(RwLock::new(HashMap::new()));
 
         // Start the cleanup thread
-        let cache_clone_clean = cache.clone();
-        tokio::spawn(async move {
-            Self::cleanup_thread_static(cache_clone_clean, max_item_lifetime, cleanup_thread_interval).await;
-        });
+        if is_enabled {
+            // Update/cleanup cache thread
+            let cache_clone_update = cache.clone();
+            let last_checked_clone = cached_items_last_checked.clone();
+            let eviction_threshold: f64 = (capacity as f64 * (forced_eviction_threshold as f64 / 100.0)).round();
+
+            tokio::spawn(async move {
+                Self::update_cache(cache_clone_update, last_checked_clone, cleanup_thread_interval, max_item_lifetime, eviction_threshold as usize).await;
+            });
+        }
 
         Self {
             is_enabled,
             cache,
             max_file_size,
             compressible_content_types,
+            cached_items_last_checked,
             gzip_enabled,
         }
     }
@@ -78,13 +89,13 @@ impl FileCache {
         } else {
             // Not found in cache, so we populate it
             trace!("File/dir not found in cache, reading from disk: {}", file_path);
-            let (length, exists, is_directory) = match std::fs::metadata(file_path) {
-                Ok(metadata) => (metadata.len(), true, metadata.is_dir()),
-                Err(_) => (0, false, false),
+            let (length, exists, is_directory, last_modified) = match std::fs::metadata(file_path) {
+                Ok(metadata) => (metadata.len(), true, metadata.is_dir(), metadata.modified().unwrap_or(SystemTime::now())),
+                Err(_) => (0, false, false, std::time::SystemTime::now()),
             };
 
             // If its a file and has content, read it
-            let content = if is_directory || length > self.max_file_size || !exists || length == 0 {
+            let content = if is_directory || !exists || length == 0 {
                 Vec::new()
             } else {
                 let file_content = match std::fs::read(&file_path) {
@@ -110,7 +121,7 @@ impl FileCache {
                     match self.compress_content(&content, &mut gzip_content) {
                         Ok(_) => {
                             // Only keep compressed version if it's significantly smaller
-                            if gzip_content.len() > (content.len() * (90 / 100)) {
+                            if gzip_content.len() as f64 > content.len() as f64 * 0.8 {
                                 trace!("Compressed version not significantly smaller, skipping for: {}", file_path);
                                 gzip_content.clear();
                             }
@@ -119,11 +130,10 @@ impl FileCache {
                             warn!("Failed to compress file {}: {}", file_path, e);
                         }
                     }
-                };
+                }
             }
 
             let new_cached_file = CachedFile {
-                last_checked: std::time::Instant::now(),
                 is_directory: is_directory,
                 exists: exists,
                 length: length,
@@ -133,16 +143,20 @@ impl FileCache {
                 gzip_content: gzip_content,
             };
 
-            if self.is_enabled {
+            if self.is_enabled && (length < self.max_file_size) {
                 trace!("New cached file/dir: {:?}", new_cached_file);
                 self.cache.write().unwrap().insert(file_path.to_string(), new_cached_file.clone());
+                self.cached_items_last_checked
+                    .write()
+                    .unwrap()
+                    .insert(file_path.to_string(), (Instant::now(), Instant::now(), last_modified));
             }
 
             return Ok(new_cached_file);
         }
     }
 
-    /// Check if a MIME type should be compressed
+    // Check if a MIME type should be compressed
     fn should_compress(&self, mime_type: &str, content_length: u64) -> bool {
         if self.gzip_enabled {
             return content_length > 1000 && content_length < (10 * 1024 * 1024) && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
@@ -150,41 +164,99 @@ impl FileCache {
         false
     }
 
-    /// Background cleanup thread that periodically removes old cache entries
-    async fn cleanup_thread_static(cache: Arc<RwLock<HashMap<String, CachedFile>>>, max_item_lifetime: usize, cleanup_thread_interval: usize) {
-        let mut interval = interval(Duration::from_secs(cleanup_thread_interval as u64));
+    // Handle updating data on the cached items, based on the last modified
+    async fn update_cache(
+        cache: Arc<RwLock<HashMap<String, CachedFile>>>,
+        cached_items_last_checked: Arc<RwLock<HashMap<String, (Instant, Instant, SystemTime)>>>,
+        lifetime_before_check: usize,
+        max_item_lifetime: usize,
+        eviction_threshold: usize,
+    ) {
+        let mut interval = interval(Duration::from_secs(10));
+
+        let max_item_lifetime_duration = Duration::from_secs(max_item_lifetime as u64);
+
+        let lifetime_before_check_duration = Duration::from_secs(lifetime_before_check as u64);
 
         loop {
             interval.tick().await;
 
-            let cache_read = cache.read().unwrap();
+            let start_time = Instant::now();
 
-            // Figure out how many bytes are currently used and how many items are in the cache
-            let cache_bytes_used: usize = cache_read.values().map(|f| f.content.len() + f.gzip_content.len()).sum();
-            drop(cache_read);
+            trace!("[FileCacheUpdate] Checking if we are above the eviction threshold, so we can delete files in cache that have been in cache for too long");
+            let current_cache_size = cache.read().unwrap().len();
+            if current_cache_size > eviction_threshold {
+                trace!("[FileCacheUpdate] Eviction threshold exceeded, triggering cleanup of items older than max");
+                let files_to_remove: Vec<_> = cached_items_last_checked
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter(|(_, (added, _last_checked, _last_modified))| added.elapsed() > max_item_lifetime_duration)
+                    .map(|(path, _)| path.clone())
+                    .collect();
 
-            let now = std::time::Instant::now();
-            let max_age = Duration::from_secs(max_item_lifetime as u64);
+                trace!("[FileCacheUpdate] Removing {} files from cache due to eviction threshold", files_to_remove.len());
 
-            // Get write lock and remove old entries
-            if let Ok(mut cache_map) = cache.write() {
-                let initial_count = cache_map.len();
-
-                cache_map.retain(|_path, cached_file| {
-                    let age = now.duration_since(cached_file.last_checked);
-                    if age > max_age { false } else { true }
-                });
-
-                let final_count = cache_map.len();
-                let removed_count = initial_count.saturating_sub(final_count);
-
-                let cache_bytes_used_after: usize = cache_map.values().map(|f| f.content.len() + f.gzip_content.len()).sum();
-
-                info!(
-                    "Memory file data cache cleanup: removed {} expired, {} remaining. Cache size: {} bytes -> {} bytes",
-                    removed_count, final_count, cache_bytes_used, cache_bytes_used_after
-                );
+                // Remove item from cache
+                for path in files_to_remove {
+                    cache.write().unwrap().remove(&path);
+                    cached_items_last_checked.write().unwrap().remove(&path);
+                }
+            } else {
+                trace!("[FileCacheUpdate] Cache size is below eviction threshold, no action taken");
             }
+
+            trace!("[FileCacheUpdate] Checking for modified timestamps and if known files still exist");
+
+            // Start by grapping a list of file we want to check on, up to 100
+            let files_to_check: Vec<_> = cached_items_last_checked
+                .read()
+                .unwrap()
+                .iter()
+                .filter(|(_, (_added, last_checked, _last_modified))| last_checked.elapsed() > lifetime_before_check_duration)
+                .take(100)
+                .map(|(path, (added, last_checked, last_modified))| (path.clone(), (added.clone(), last_checked.clone(), last_modified.clone())))
+                .collect();
+
+            trace!("[FileCacheUpdate] Files found to check for modified timestamps: {}", files_to_check.len());
+
+            // Now we go through the list, to check if the file was modified since last known timestamp
+            for (path, (added, _last_checked, last_modified)) in files_to_check {
+                let metadata = match std::fs::metadata(&path) {
+                    Ok(metadata) => metadata,
+                    Err(_) => {
+                        // We try to load that cache entry, so figure out if we already have it as non-existent
+                        if let Some(cached_file) = cache.read().unwrap().get(&path) {
+                            if cached_file.exists {
+                                // File no longer exists, so we just remove it from the cache
+                                trace!("[FileCacheUpdate] File no longer exists: {}", path);
+                                cache.write().unwrap().remove(&path);
+                                cached_items_last_checked.write().unwrap().remove(&path);
+                            } else {
+                                trace!("[FileCacheUpdate] File is marked as non-existent in cache, which it still is: {}", path);
+                            }
+                        }
+                        continue;
+                    }
+                };
+
+                if let Ok(modified_time) = metadata.modified() {
+                    if modified_time != last_modified {
+                        // File was changed, so we remove it from cache
+                        trace!("[FileCacheUpdate] File was changed: {}", path);
+                        cache.write().unwrap().remove(&path);
+                        cached_items_last_checked.write().unwrap().remove(&path);
+                        continue;
+                    }
+                    // If all is good, we update the last_checked
+                    trace!("[FileCacheUpdate] File is good and not modified: {}", path);
+                    cached_items_last_checked.write().unwrap().insert(path, (added, Instant::now(), modified_time));
+                }
+            }
+
+            let end_time = Instant::now();
+
+            trace!("[FileCacheUpdate] Cache update completed in {:?}", end_time.duration_since(start_time));
         }
     }
 

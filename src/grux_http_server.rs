@@ -197,17 +197,25 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -
         }
     }
 
-    // Check what content we want to return and take ownership to avoid cloning
+    let mut additional_headers: Vec<(&str, &str)> = vec![
+        ("Content-Type", &file_data.mime_type)
+    ];
+
+    // Gzip body or raw content
     let body_content = if file_data.gzip_content.is_empty() {
         file_data.content
     } else {
+        additional_headers.push(("Content-Encoding", "gzip"));
         file_data.gzip_content
     };
 
     // Create the response
     let mut resp = Response::new(full(body_content));
     *resp.status_mut() = hyper::StatusCode::OK;
-    resp.headers_mut().insert("Content-Type", HeaderValue::from_str(&file_data.mime_type).unwrap());
+
+    for (key, value) in additional_headers {
+        resp.headers_mut().insert(key, HeaderValue::from_str(value).unwrap());
+    }
 
     add_standard_headers_to_response(&mut resp);
 
