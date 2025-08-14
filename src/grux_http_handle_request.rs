@@ -33,21 +33,6 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
     }
     let site = site.unwrap();
 
-    // If TLS is required for this site but current binding is non-TLS, redirect to HTTPS
-    if site.is_tls_required && !binding.is_tls {
-        let mut location = format!("https://{}{}", requested_hostname, path);
-        if !query.is_empty() {
-            location.push('?');
-            location.push_str(query);
-        }
-        let mut resp = Response::new(full(Bytes::from_static(b"")));
-        *resp.status_mut() = hyper::StatusCode::PERMANENT_REDIRECT; // 308
-        resp.headers_mut()
-            .insert(hyper::header::LOCATION, HeaderValue::from_str(&location).unwrap_or_else(|_| HeaderValue::from_static("/")));
-        add_standard_headers_to_response(&mut resp);
-        return Ok(resp);
-    }
-
     // Check if the request is for the admin portal - handle these first
     if binding.is_admin {
         let path_cleaned = clean_url_path(path);

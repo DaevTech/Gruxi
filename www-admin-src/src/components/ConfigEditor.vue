@@ -210,8 +210,6 @@ const addServer = () => {
         hostnames: ["*"],
         is_default: true,
         is_enabled: true,
-        is_tls: false,
-        is_tls_required: false,
         web_root: "./www-default/",
         web_root_index_file_list: ["index.html"]
       }]
@@ -233,12 +231,11 @@ const addBinding = (serverIndex) => {
       ip: "0.0.0.0",
       port: 80,
       is_admin: false,
+      is_tls: false,
       sites: [{
         hostnames: ["*"],
         is_default: false,
         is_enabled: true,
-        is_tls: false,
-        is_tls_required: false,
         web_root: "./www-default/",
         web_root_index_file_list: ["index.html"]
       }]
@@ -262,10 +259,10 @@ const addSite = (serverIndex, bindingIndex) => {
       hostnames: ["example.com"],
       is_default: false,
       is_enabled: true,
-      is_tls: false,
-      is_tls_required: false,
       web_root: "./www-default/",
-      web_root_index_file_list: ["index.html"]
+      web_root_index_file_list: ["index.html"],
+      tls_cert_path: null,
+      tls_key_path: null
     })
   }
 }
@@ -342,15 +339,6 @@ const mbToBytes = (mb) => {
 }
 
 // Computed properties for MB values
-const fileCacheSizeMb = computed({
-  get: () => config.value?.core?.file_cache?.cache_size ? bytesToMb(config.value.core.file_cache.cache_size) : 0,
-  set: (value) => {
-    if (config.value?.core?.file_cache) {
-      config.value.core.file_cache.cache_size = mbToBytes(value)
-    }
-  }
-})
-
 const fileCacheMaxSizePerFileMb = computed({
   get: () => config.value?.core?.file_cache?.cache_max_size_per_file ? bytesToMb(config.value.core.file_cache.cache_max_size_per_file) : 0,
   set: (value) => {
@@ -507,6 +495,7 @@ onMounted(() => {
                     <h6>Binding {{ bindingIndex + 1 }}</h6>
                     <span class="binding-summary">{{ binding.ip }}:{{ binding.port }}</span>
                     <span v-if="binding.is_admin" class="admin-badge">ADMIN</span>
+                    <span v-if="binding.is_tls" class="tls-badge">TLS</span>
                     <span class="item-summary">({{ binding.sites?.length || 0 }} sites)</span>
                   </div>
                   <button @click.stop="removeBinding(serverIndex, bindingIndex)" class="remove-button compact small" :disabled="server.bindings.length === 1">Remove</button>
@@ -522,6 +511,16 @@ onMounted(() => {
                     <div class="form-field small-field">
                       <label>Port</label>
                       <input v-model.number="binding.port" type="number" min="1" max="65535" />
+                    </div>
+                    <div class="form-field checkbox-grid">
+                      <label>
+                        <input v-model="binding.is_admin" type="checkbox" />
+                        Admin portal
+                      </label>
+                      <label>
+                        <input v-model="binding.is_tls" type="checkbox" />
+                        Enable TLS (https://) for all sites
+                      </label>
                     </div>
                   </div>
 
@@ -544,7 +543,7 @@ onMounted(() => {
                         <h6>Site {{ siteIndex + 1 }}</h6>
                         <span class="site-summary">{{ site.hostnames[0] || 'No hostname' }}</span>
                         <span v-if="site.is_default" class="default-badge">DEFAULT</span>
-                        <span v-if="site.is_tls" class="tls-badge">TLS</span>
+                        <span v-if="binding.is_tls" class="tls-badge">TLS</span>
                       </div>
                       <button @click.stop="removeSite(serverIndex, bindingIndex, siteIndex)" class="remove-button compact small" :disabled="binding.sites.length === 1">Remove</button>
                     </div>
@@ -559,20 +558,24 @@ onMounted(() => {
                         <div class="form-field checkbox-grid compact">
                           <label>
                             <input v-model="site.is_default" type="checkbox" />
-                            Default Site
+                            Default Site for binding
                           </label>
                           <label>
                             <input v-model="site.is_enabled" type="checkbox" />
                             Enabled
                           </label>
-                          <label>
-                            <input v-model="site.is_tls" type="checkbox" />
-                            TLS Enabled
-                          </label>
-                          <label>
-                            <input v-model="site.is_tls_required" type="checkbox" />
-                            TLS Required
-                          </label>
+                        </div>
+                      </div>
+
+                      <!-- TLS Certificate Settings (only show if TLS is enabled) -->
+                      <div v-if="binding.is_tls" class="form-grid compact">
+                        <div class="form-field">
+                          <label>TLS Certificate Path (optional)</label>
+                          <input v-model="site.tls_cert_path" type="text" placeholder="Path to certificate file" />
+                        </div>
+                        <div class="form-field">
+                          <label>TLS Key Path (optional)</label>
+                          <input v-model="site.tls_key_path" type="text" placeholder="Path to private key file" />
                         </div>
                       </div>
 
@@ -620,28 +623,12 @@ onMounted(() => {
         </div>
 
         <div v-if="expandedSections.adminSite" class="section-content">
-          <div class="form-grid compact admin-portal-layout">
+          <div class="form-grid compact">
             <div class="form-field full-width">
               <label>
                 <input v-model="config.admin_site.is_admin_portal_enabled" type="checkbox" />
                 Enable Admin Portal (Beware that disabling this will prevent access to the admin dashboard after saving)
               </label>
-            </div>
-            <div class="form-field small-field">
-              <label>IP Address</label>
-              <input v-model="config.admin_site.admin_portal_ip" type="text" />
-            </div>
-            <div class="form-field small-field">
-              <label>Port</label>
-              <input v-model.number="config.admin_site.admin_portal_port" type="number" min="1" max="65535" />
-            </div>
-            <div class="form-field">
-              <label>Web Root Path</label>
-              <input v-model="config.admin_site.admin_portal_web_root" type="text" />
-            </div>
-            <div class="form-field">
-              <label>Index File</label>
-              <input v-model="config.admin_site.admin_portal_index_file" type="text" />
             </div>
           </div>
         </div>
@@ -677,20 +664,28 @@ onMounted(() => {
                   </label>
                 </div>
                 <div class="form-field">
-                  <label>Cache Size (MB)</label>
-                  <input v-model.number="fileCacheSizeMb" type="number" min="0" step="0.01" />
+                  <label>Max Cached Items (count)</label>
+                  <input v-model.number="config.core.file_cache.cache_item_size" type="number" min="1" />
                 </div>
                 <div class="form-field">
                   <label>Max Size Per File (MB)</label>
                   <input v-model.number="fileCacheMaxSizePerFileMb" type="number" min="0" step="0.01" />
                 </div>
                 <div class="form-field">
-                  <label>Max Item Lifetime (seconds)</label>
-                  <input v-model.number="config.core.file_cache.cache_max_item_lifetime" type="number" min="0" />
+                  <label>How often to check files for changes (seconds)</label>
+                  <input v-model.number="config.core.file_cache.cache_item_time_between_checks" type="number" min="1" />
                 </div>
                 <div class="form-field">
                   <label>Cleanup Thread Interval (seconds)</label>
                   <input v-model.number="config.core.file_cache.cleanup_thread_interval" type="number" min="1" />
+                </div>
+                <div class="form-field">
+                  <label>Max Time To Keep a File (seconds)</label>
+                  <input v-model.number="config.core.file_cache.max_item_lifetime" type="number" min="0" />
+                </div>
+                <div class="form-field">
+                  <label>Forced Eviction Threshold (%)</label>
+                  <input v-model.number="config.core.file_cache.forced_eviction_threshold" type="number" min="1" max="99" />
                 </div>
               </div>
             </div>

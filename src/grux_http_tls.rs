@@ -52,7 +52,6 @@ pub async fn persist_generated_tls_for_site(binding: &Binding, site: &Sites, cer
     for server in configuration.servers.iter_mut() {
         for b in server.bindings.iter_mut() {
             if b.ip == binding.ip && b.port == binding.port && b.is_admin == binding.is_admin {
-                b.is_tls = true;
                 for s in b.sites.iter_mut() {
                     if s.web_root == site.web_root && s.hostnames == site.hostnames {
                         s.tls_cert_path = Some(cert_path.clone());
@@ -107,7 +106,8 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
             (Some(cert_path), Some(key_path)) => match (CertificateDer::from_pem_file(cert_path), PrivateKeyDer::from_pem_file(key_path)) {
                 (Ok(cert), Ok(key)) => (vec![cert.into_owned()], key, None),
                 (cerr, kerr) => {
-                    warn!("Failed to load TLS materials for site (cert: {:?}, key: {:?}); generating self-signed", cerr.err(), kerr.err());
+                    warn!("Failed to load TLS certificates for site (cert: {:?}, key: {:?})", cerr.err(), kerr.err());
+                    warn!("Generating self signed certificates instead.");
                     let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(sans.clone()).map_err(|e| format!("Failed to generate self-signed cert: {}", e))?;
                     let cert_pem = cert.pem();
                     let key_pem = signing_key.serialize_pem();

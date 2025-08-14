@@ -62,24 +62,25 @@ pub fn check_configuration() -> Result<Config, String> {
     init()
 }
 
+// Get the newest configuration - Must only be called after checking it, as it will panic if the configuration is invalid
+pub fn get_newest_configuration() -> Config {
+    check_configuration().unwrap()
+}
+
 /// Get the current configuration from the database as a Configuration struct
 pub fn get_current_configuration_from_db() -> Result<Configuration, String> {
-    let connection = sqlite::open("./grux.db")
-        .map_err(|e| format!("Failed to open database connection: {}", e))?;
+    let connection = sqlite::open("./grux.db").map_err(|e| format!("Failed to open database connection: {}", e))?;
 
     let mut statement = connection
         .prepare("SELECT configuration FROM grux_config WHERE type = 'base' ORDER BY id DESC LIMIT 1")
         .map_err(|e| format!("Failed to prepare statement: {}", e))?;
 
-    let row_state = statement.next()
-        .map_err(|e| format!("Failed to execute statement: {}", e))?;
+    let row_state = statement.next().map_err(|e| format!("Failed to execute statement: {}", e))?;
 
     if row_state == State::Row {
-        let configuration_json: String = statement.read(0)
-            .map_err(|e| format!("Failed to read row: {}", e))?;
+        let configuration_json: String = statement.read(0).map_err(|e| format!("Failed to read row: {}", e))?;
 
-        let config: Configuration = serde_json::from_str(&configuration_json)
-            .map_err(|e| format!("Failed to deserialize configuration: {}", e))?;
+        let config: Configuration = serde_json::from_str(&configuration_json).map_err(|e| format!("Failed to deserialize configuration: {}", e))?;
 
         drop(statement);
         drop(connection);
@@ -98,18 +99,14 @@ pub fn get_current_configuration_from_db() -> Result<Configuration, String> {
 /// Returns Ok(true) if changes were saved, Ok(false) if no changes were needed
 pub fn save_configuration(config: &Configuration) -> Result<bool, String> {
     // First validate the configuration
-    config.validate().map_err(|errors| {
-        format!("Configuration validation failed: {}", errors.join("; "))
-    })?;
+    config.validate().map_err(|errors| format!("Configuration validation failed: {}", errors.join("; ")))?;
 
     // Check if the configuration is different from what's currently in the database
     let current_config = get_current_configuration_from_db()?;
 
     // Serialize both configurations to JSON for comparison
-    let new_config_json = serde_json::to_string(config)
-        .map_err(|e| format!("Failed to serialize new configuration: {}", e))?;
-    let current_config_json = serde_json::to_string(&current_config)
-        .map_err(|e| format!("Failed to serialize current configuration: {}", e))?;
+    let new_config_json = serde_json::to_string(config).map_err(|e| format!("Failed to serialize new configuration: {}", e))?;
+    let current_config_json = serde_json::to_string(&current_config).map_err(|e| format!("Failed to serialize current configuration: {}", e))?;
 
     // If configurations are identical, no need to save
     if new_config_json == current_config_json {
@@ -117,21 +114,16 @@ pub fn save_configuration(config: &Configuration) -> Result<bool, String> {
     }
 
     // Save to database
-    let connection = sqlite::open("./grux.db")
-        .map_err(|e| format!("Failed to open database connection: {}", e))?;
+    let connection = sqlite::open("./grux.db").map_err(|e| format!("Failed to open database connection: {}", e))?;
 
     // Update or insert the configuration
     let mut statement = connection
         .prepare("INSERT OR REPLACE INTO grux_config (type, configuration) VALUES ('base', ?)")
         .map_err(|e| format!("Failed to prepare update statement: {}", e))?;
 
-    statement
-        .bind((1, new_config_json.as_str()))
-        .map_err(|e| format!("Failed to bind parameter: {}", e))?;
+    statement.bind((1, new_config_json.as_str())).map_err(|e| format!("Failed to bind parameter: {}", e))?;
 
-    statement
-        .next()
-        .map_err(|e| format!("Failed to execute update statement: {}", e))?;
+    statement.next().map_err(|e| format!("Failed to execute update statement: {}", e))?;
 
     drop(statement);
     drop(connection);

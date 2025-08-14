@@ -1,7 +1,7 @@
 use crate::grux_configuration_struct::FileCache as GruxFileCacheConfig;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use log::{trace, warn, debug};
+use log::{debug, trace, warn};
 use std::io::Write;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -226,16 +226,22 @@ impl FileCache {
                     Ok(metadata) => metadata,
                     Err(_) => {
                         // We try to load that cache entry, so figure out if we already have it as non-existent
+                        let mut should_remove_path = false;
                         if let Some(cached_file) = cache.read().unwrap().get(&path) {
                             if cached_file.exists {
                                 // File no longer exists, so we just remove it from the cache
                                 trace!("[FileCacheUpdate] File no longer exists: {}", path);
-                                cache.write().unwrap().remove(&path);
-                                cached_items_last_checked.write().unwrap().remove(&path);
+                                should_remove_path = true;
                             } else {
                                 trace!("[FileCacheUpdate] File is marked as non-existent in cache, which it still is: {}", path);
                             }
                         }
+
+                        if should_remove_path {
+                            cache.write().unwrap().remove(&path);
+                            cached_items_last_checked.write().unwrap().remove(&path);
+                        }
+
                         continue;
                     }
                 };

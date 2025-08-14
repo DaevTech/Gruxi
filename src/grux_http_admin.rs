@@ -155,7 +155,7 @@ pub async fn admin_get_configuration_endpoint(req: &Request<hyper::body::Incomin
     }
 
     // Get the current configuration
-    let config = crate::grux_configuration::get_configuration();
+    let config = crate::grux_configuration::get_newest_configuration();
 
     // Try to deserialize the configuration to ensure it's valid
     match config.clone().try_deserialize::<crate::grux_configuration_struct::Configuration>() {

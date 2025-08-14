@@ -23,8 +23,6 @@ pub struct Sites {
     pub hostnames: Vec<String>,
     pub is_default: bool,
     pub is_enabled: bool,
-    pub is_tls: bool,
-    pub is_tls_required: bool,
     pub web_root: String,
     pub web_root_index_file_list: Vec<String>,
     // Optional PEM file paths for this specific site; if not provided and served over TLS, a self-signed cert may be generated
@@ -76,8 +74,6 @@ impl Configuration {
             hostnames: vec!["*".to_string()],
             is_default: true,
             is_enabled: true,
-            is_tls: false,
-            is_tls_required: false,
             web_root: "./www-default".to_string(),
             web_root_index_file_list: vec!["index.html".to_string()],
             tls_cert_path: None,
@@ -88,8 +84,6 @@ impl Configuration {
             hostnames: vec!["*".to_string()],
             is_default: true,
             is_enabled: true,
-            is_tls: true,
-            is_tls_required: true,
             web_root: "./www-admin".to_string(),
             web_root_index_file_list: vec!["index.html".to_string()],
             tls_cert_path: None,
@@ -158,6 +152,16 @@ impl Configuration {
             errors.push("Configuration must have at least one server".to_string());
         }
 
+        // Check that there's exactly one admin binding across all servers
+        let total_admin_bindings = self.servers.iter()
+            .flat_map(|server| &server.bindings)
+            .filter(|binding| binding.is_admin)
+            .count();
+
+        if total_admin_bindings > 1 {
+            errors.push("Configuration must have only have one (or none) admin binding".to_string());
+        }
+
         for (server_idx, server) in self.servers.iter().enumerate() {
             if let Err(server_errors) = server.validate() {
                 for error in server_errors {
@@ -173,6 +177,13 @@ impl Configuration {
             }
         }
 
+        // Validate core settings
+        if let Err(core_errors) = self.core.validate() {
+            for error in core_errors {
+                errors.push(format!("Core: {}", error));
+            }
+        }
+
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }
@@ -183,6 +194,12 @@ impl Server {
 
         if self.bindings.is_empty() {
             errors.push("Server must have at least one binding".to_string());
+        }
+
+        // Check that only one binding can be admin
+        let admin_bindings_count = self.bindings.iter().filter(|binding| binding.is_admin).count();
+        if admin_bindings_count > 1 {
+            errors.push("Only one binding per server can be marked as admin".to_string());
         }
 
         for (binding_idx, binding) in self.bindings.iter().enumerate() {
@@ -213,6 +230,14 @@ impl Binding {
             errors.push("Port cannot be 0".to_string());
         }
 
+        // Validate common TLS port usage
+        if self.is_tls && self.port == 80 {
+            errors.push("Port 80 is typically used for HTTP, not HTTPS. Consider using port 443 for TLS".to_string());
+        }
+        if !self.is_tls && self.port == 443 {
+            errors.push("Port 443 is typically used for HTTPS, not HTTP. Consider using port 80 for non-TLS or enable TLS".to_string());
+        }
+
         // Validate sites
         if self.sites.is_empty() {
             errors.push("Binding must have at least one site".to_string());
@@ -239,6 +264,19 @@ impl Binding {
             errors.push("One site must be marked as default when multiple sites exist".to_string());
         }
 
+        // Admin binding specific validations
+        if self.is_admin {
+            // Admin bindings should typically use TLS for security
+            if !self.is_tls {
+                errors.push("Admin binding should use TLS for security".to_string());
+            }
+
+            // Admin bindings should have at least one site
+            if self.sites.is_empty() {
+                errors.push("Admin binding must have at least one site configured".to_string());
+            }
+        }
+
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }
@@ -255,6 +293,8 @@ impl Sites {
         for (hostname_idx, hostname) in self.hostnames.iter().enumerate() {
             if hostname.trim().is_empty() {
                 errors.push(format!("Hostname {} cannot be empty", hostname_idx + 1));
+            } else if hostname.trim() != "*" && hostname.trim().len() < 3 {
+                errors.push(format!("Hostname '{}' is too short (minimum 3 characters unless wildcard '*')", hostname.trim()));
             }
         }
 
@@ -274,9 +314,25 @@ impl Sites {
             }
         }
 
-        // Validate TLS settings
-        if self.is_tls_required && !self.is_tls {
-            errors.push("TLS cannot be required when TLS is not enabled".to_string());
+        // Validate TLS certificate paths if provided
+        if let Some(cert_path) = &self.tls_cert_path {
+            if cert_path.trim().is_empty() {
+                errors.push("TLS certificate path cannot be empty if specified".to_string());
+            }
+        }
+
+        if let Some(key_path) = &self.tls_key_path {
+            if key_path.trim().is_empty() {
+                errors.push("TLS key path cannot be empty if specified".to_string());
+            }
+        }
+
+        // If one TLS path is provided, both should be provided
+        if self.tls_cert_path.is_some() && self.tls_key_path.is_none() {
+            errors.push("TLS key path must be provided when certificate path is specified".to_string());
+        }
+        if self.tls_key_path.is_some() && self.tls_cert_path.is_none() {
+            errors.push("TLS certificate path must be provided when key path is specified".to_string());
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
@@ -287,6 +343,95 @@ impl AdminSite {
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let errors = Vec::new();
 
+        // Currently only has is_admin_portal_enabled field which is a boolean,
+        // so no validation needed beyond the type system
+
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+}
+
+impl Core {
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // Validate file cache settings
+        if let Err(file_cache_errors) = self.file_cache.validate() {
+            for error in file_cache_errors {
+                errors.push(format!("File Cache: {}", error));
+            }
+        }
+
+        // Validate gzip settings
+        if let Err(gzip_errors) = self.gzip.validate() {
+            for error in gzip_errors {
+                errors.push(format!("Gzip: {}", error));
+            }
+        }
+
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+}
+
+impl FileCache {
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // Validate cache_item_size
+        if self.cache_item_size == 0 {
+            errors.push("Max cached items count cannot be 0".to_string());
+        }
+
+        // Validate cache_max_size_per_file
+        if self.cache_max_size_per_file == 0 {
+            errors.push("Max size per file cannot be 0 bytes".to_string());
+        }
+
+        // Validate cache_item_time_between_checks
+        if self.cache_item_time_between_checks == 0 {
+            errors.push("Cache item time between checks cannot be 0".to_string());
+        }
+
+        // Validate cleanup_thread_interval
+        if self.cleanup_thread_interval == 0 {
+            errors.push("Cleanup thread interval cannot be 0".to_string());
+        }
+
+        // Validate max_item_lifetime
+        if self.max_item_lifetime == 0 {
+            errors.push("Max item lifetime cannot be 0".to_string());
+        }
+
+        // Validate forced_eviction_threshold (should be between 1-99)
+        if self.forced_eviction_threshold == 0 || self.forced_eviction_threshold > 99 {
+            errors.push("Forced eviction threshold must be between 1-99%".to_string());
+        }
+
+        // Note: cache_item_size is a count of items, cache_max_size_per_file is bytes per file
+        // These are different units and cannot be compared directly
+
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+}
+
+impl Gzip {
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // Validate compressible content types
+        if self.is_enabled && self.compressible_content_types.is_empty() {
+            errors.push("At least one compressible content type must be specified when gzip is enabled".to_string());
+        }
+
+        for (content_type_idx, content_type) in self.compressible_content_types.iter().enumerate() {
+            if content_type.trim().is_empty() {
+                errors.push(format!("Content type {} cannot be empty", content_type_idx + 1));
+            }
+
+            // Basic validation for content type format
+            if !content_type.contains('/') && !content_type.ends_with('/') {
+                errors.push(format!("Content type '{}' appears to be invalid format (should contain '/' or end with '/')", content_type));
+            }
+        }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
