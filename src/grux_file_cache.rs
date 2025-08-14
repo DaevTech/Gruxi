@@ -1,7 +1,7 @@
 use crate::grux_configuration_struct::FileCache as GruxFileCacheConfig;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use log::{trace, warn};
+use log::{trace, warn, debug};
 use std::io::Write;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -256,7 +256,7 @@ impl FileCache {
 
             let end_time = Instant::now();
 
-            trace!("[FileCacheUpdate] Cache update completed in {:?}", end_time.duration_since(start_time));
+            debug!("[FileCacheUpdate] Cache update completed in {:?}", end_time.duration_since(start_time));
         }
     }
 

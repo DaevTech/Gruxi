@@ -210,8 +210,8 @@ const addServer = () => {
         hostnames: ["*"],
         is_default: true,
         is_enabled: true,
-        is_ssl: false,
-        is_ssl_required: false,
+        is_tls: false,
+        is_tls_required: false,
         web_root: "./www-default/",
         web_root_index_file_list: ["index.html"]
       }]
@@ -237,8 +237,8 @@ const addBinding = (serverIndex) => {
         hostnames: ["*"],
         is_default: false,
         is_enabled: true,
-        is_ssl: false,
-        is_ssl_required: false,
+        is_tls: false,
+        is_tls_required: false,
         web_root: "./www-default/",
         web_root_index_file_list: ["index.html"]
       }]
@@ -262,8 +262,8 @@ const addSite = (serverIndex, bindingIndex) => {
       hostnames: ["example.com"],
       is_default: false,
       is_enabled: true,
-      is_ssl: false,
-      is_ssl_required: false,
+      is_tls: false,
+      is_tls_required: false,
       web_root: "./www-default/",
       web_root_index_file_list: ["index.html"]
     })
@@ -544,7 +544,7 @@ onMounted(() => {
                         <h6>Site {{ siteIndex + 1 }}</h6>
                         <span class="site-summary">{{ site.hostnames[0] || 'No hostname' }}</span>
                         <span v-if="site.is_default" class="default-badge">DEFAULT</span>
-                        <span v-if="site.is_ssl" class="ssl-badge">SSL</span>
+                        <span v-if="site.is_tls" class="tls-badge">TLS</span>
                       </div>
                       <button @click.stop="removeSite(serverIndex, bindingIndex, siteIndex)" class="remove-button compact small" :disabled="binding.sites.length === 1">Remove</button>
                     </div>
@@ -566,12 +566,12 @@ onMounted(() => {
                             Enabled
                           </label>
                           <label>
-                            <input v-model="site.is_ssl" type="checkbox" />
-                            SSL Enabled
+                            <input v-model="site.is_tls" type="checkbox" />
+                            TLS Enabled
                           </label>
                           <label>
-                            <input v-model="site.is_ssl_required" type="checkbox" />
-                            SSL Required
+                            <input v-model="site.is_tls_required" type="checkbox" />
+                            TLS Required
                           </label>
                         </div>
                       </div>
@@ -795,7 +795,7 @@ onMounted(() => {
 
 .admin-badge,
 .default-badge,
-.ssl-badge {
+.tls-badge {
   font-size: 0.65rem;
   font-weight: 700;
   padding: 0.25rem 0.5rem;
@@ -814,7 +814,7 @@ onMounted(() => {
   color: #1d4ed8;
 }
 
-.ssl-badge {
+.tls-badge {
   background: #d1fae5;
   color: #065f46;
 }

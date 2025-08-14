@@ -27,10 +27,23 @@ pub fn init_logging() -> Result<log4rs::Handle, String> {
 
     // Log Trace level output to file where trace is the default level
     // and the programmatically specified level to stderr.
+    // Trace-only log file
+    let trace_logfile = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{h({d(%d-%m-%Y %H:%M:%S)(utc)} - {l}: {m}{n})}")))
+        .build(format!("{}/trace.log", get_log_location().map_err(|e| format!("Failed to get log location: {}", e))?))
+        .unwrap();
+
     let config = Config::builder()
-        .appender(Appender::builder().build("logfile", Box::new(logfile)))
+        .appender(Appender::builder().filter(Box::new(ThresholdFilter::new(level))).build("logfile", Box::new(logfile)))
         .appender(Appender::builder().filter(Box::new(ThresholdFilter::new(level))).build("stderr", Box::new(stderr)))
-        .build(Root::builder().appender("logfile").appender("stderr").build(LevelFilter::Trace))
+        .appender(Appender::builder()
+            .filter(Box::new(ThresholdFilter::new(LevelFilter::Trace)))
+            .build("trace", Box::new(trace_logfile)))
+        .build(Root::builder()
+            .appender("logfile")
+            .appender("stderr")
+            .appender("trace")
+            .build(LevelFilter::Trace))
         .unwrap();
 
     // Use this to change log levels at runtime.

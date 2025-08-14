@@ -3,3 +3,4 @@ grux.db
 logs/*.log
 /temp_test_data
 /www-admin
+certs/*.pem

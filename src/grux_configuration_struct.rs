@@ -12,6 +12,8 @@ pub struct Binding {
     pub ip: String,
     pub port: u16,
     pub is_admin: bool,
+    #[serde(default)]
+    pub is_tls: bool,
     pub sites: Vec<Sites>,
 }
 
@@ -21,10 +23,15 @@ pub struct Sites {
     pub hostnames: Vec<String>,
     pub is_default: bool,
     pub is_enabled: bool,
-    pub is_ssl: bool,
-    pub is_ssl_required: bool,
+    pub is_tls: bool,
+    pub is_tls_required: bool,
     pub web_root: String,
     pub web_root_index_file_list: Vec<String>,
+    // Optional PEM file paths for this specific site; if not provided and served over TLS, a self-signed cert may be generated
+    #[serde(default)]
+    pub tls_cert_path: Option<String>,
+    #[serde(default)]
+    pub tls_key_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,7 +58,7 @@ pub struct FileCache {
     pub cache_max_size_per_file: usize,
     pub cache_item_time_between_checks: usize,
     pub cleanup_thread_interval: usize,
-    pub max_item_lifetime: usize, // in seconds
+    pub max_item_lifetime: usize,         // in seconds
     pub forced_eviction_threshold: usize, // 1-99 %
 }
 
@@ -73,16 +80,19 @@ impl Configuration {
             hostnames: vec!["*".to_string()],
             is_default: true,
             is_enabled: true,
-            is_ssl: false,
-            is_ssl_required: false,
+            is_tls: false,
+            is_tls_required: false,
             web_root: "./www-default".to_string(),
             web_root_index_file_list: vec!["index.html".to_string()],
+            tls_cert_path: None,
+            tls_key_path: None,
         };
 
         let default_binding = Binding {
             ip: "0.0.0.0".to_string(),
             port: 80,
             is_admin: false,
+            is_tls: false,
             sites: vec![default_site],
         };
 
@@ -100,10 +110,10 @@ impl Configuration {
             is_enabled: true,
             cache_item_size: 1000,
             cache_max_size_per_file: 1024 * 1024 * 1,
-            cache_item_time_between_checks: 20,    // seconds
-            cleanup_thread_interval: 10,     // seconds
-            max_item_lifetime: 60,           // seconds
-            forced_eviction_threshold: 70,   // 1-99 %
+            cache_item_time_between_checks: 20, // seconds
+            cleanup_thread_interval: 10,        // seconds
+            max_item_lifetime: 60,              // seconds
+            forced_eviction_threshold: 70,      // 1-99 %
         };
 
         let gzip = Gzip {
@@ -117,10 +127,7 @@ impl Configuration {
             ],
         };
 
-        let core = Core {
-            file_cache: file_cache,
-            gzip: gzip,
-        };
+        let core = Core { file_cache: file_cache, gzip: gzip };
 
         Configuration {
             servers: vec![default_server],
@@ -254,9 +261,9 @@ impl Sites {
             }
         }
 
-        // Validate SSL settings
-        if self.is_ssl_required && !self.is_ssl {
-            errors.push("SSL cannot be required when SSL is not enabled".to_string());
+        // Validate TLS settings
+        if self.is_tls_required && !self.is_tls {
+            errors.push("TLS cannot be required when TLS is not enabled".to_string());
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
