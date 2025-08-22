@@ -1,0 +1,28 @@
+# Development Dockerfile for faster iteration
+FROM rust:alpine
+
+# Install required system dependencies
+RUN apk add --no-cache \
+    musl-dev \
+    openssl-dev \
+    openssl-libs-static \
+    pkgconfig \
+    ca-certificates
+
+# Install cargo-watch for file watching
+RUN cargo install cargo-watch
+
+# Set the working directory
+WORKDIR /usr/src/grux
+
+# Copy dependency files for caching
+COPY Cargo.toml Cargo.lock ./
+
+# Pre-fetch dependencies
+RUN cargo fetch
+
+# Expose the required ports
+EXPOSE 80 443 8000
+
+# Default command for development (can be overridden)
+CMD ["cargo", "run", "--release"]

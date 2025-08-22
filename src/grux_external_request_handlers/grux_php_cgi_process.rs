@@ -46,6 +46,8 @@ impl PhpCgiProcess {
         let port = self.assigned_port.unwrap();
         let mut cmd = Command::new(&self.executable_path);
 
+
+
         if cfg!(target_os = "windows") {
             // For Windows, use php-cgi.exe in CGI mode with assigned port
             cmd.arg("-b").arg(format!("127.0.0.1:{}", port));

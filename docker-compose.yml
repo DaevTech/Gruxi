@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  grux:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"     # HTTP
+      - "443:443"   # HTTPS
+      - "8000:8000" # Admin/API port
+    volumes:
+      # Mount project directories for development
+      - ./src:/app/src:ro                    # Source code (read-only in container)
+      - ./certs:/app/certs                   # SSL certificates
+      - ./www-default:/app/www-default       # Default web content
+      - ./www-admin:/app/www-admin           # Admin interface
+      - ./logs:/app/logs                     # Log files
+      - ./temp_test_data:/app/temp_test_data # Test data
+      - ./grux.db:/app/grux.db               # Database file
+      # Configuration can be mounted here if needed
+      # - ./config:/app/config
+    environment:
+      - RUST_LOG=debug
+      - GRUX_CONFIG_PATH=/app/config
+    restart: unless-stopped
+    depends_on:
+      - php-fpm
+    networks:
+      - grux-network
+    # Optionally add resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # PHP-FPM service for handling PHP requests
+  php-fpm:
+    image: php:8.2-fpm-alpine
+    volumes:
+      - ./www-default:/var/www/html:ro  # Web content accessible to PHP-FPM
+    restart: unless-stopped
+    networks:
+      - grux-network
+    # Install additional PHP extensions if needed
+    # command: >
+    #   sh -c "docker-php-ext-install pdo pdo_mysql mysqli curl gd &&
+    #          php-fpm"
+
+  # Optional: Development service that rebuilds on code changes
+  grux-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    profiles:
+      - dev
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8000:8000"
+    volumes:
+      - .:/usr/src/grux
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/usr/src/grux/target
+    environment:
+      - RUST_LOG=debug
+      - CARGO_INCREMENTAL=1
+    depends_on:
+      - php-fpm
+    networks:
+      - grux-network
+    command: cargo run --release
+
+networks:
+  grux-network:
+    driver: bridge
+
+volumes:
+  cargo-cache:
+  target-cache:

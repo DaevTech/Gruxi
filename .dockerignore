@@ -1,0 +1,38 @@
+# Git files
+.git
+.gitignore
+
+# Rust build artifacts
+target/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+logs/*.log
+
+# Temporary files
+*.tmp
+*.temp
+temp_test_data/
+
+# Docker files (don't copy into the container)
+Dockerfile
+Dockerfile.dev
+docker-compose.yml
+.dockerignore
+
+# Documentation
+README.md
+*.md
+
+# Tests (optional, comment out if you want to include tests)
+tests/
