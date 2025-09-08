@@ -15,7 +15,7 @@ fn test_php_handler_creation() {
     );
 
     assert_eq!(handler.get_handler_type(), "php");
-    assert_eq!(handler.get_file_matches(), vec!["*.php".to_string()]);
+    assert_eq!(handler.get_file_matches(), vec![".php".to_string()]);
 }
 
 #[test]

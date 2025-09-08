@@ -99,7 +99,7 @@ impl PortManager {
             // Check if this port is not already allocated
             if !inner.allocated_ports.contains_key(&port) && port <= inner.max_port {
                 inner.allocated_ports.insert(port, service_id.clone());
-                info!("Allocated new port {} to service '{}'", port, service_id);
+                debug!("Allocated new port {} to service '{}'", port, service_id);
                 return Some(port);
             }
 

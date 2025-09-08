@@ -9,7 +9,7 @@ fn test_request_handler_validation_valid() {
         handler_type: "php".to_string(),
         request_timeout: 30,
         max_concurrent_requests: 10,
-        file_match: vec![".php".to_string(), "*.php".to_string()],
+        file_match: vec![".php".to_string(), ".php".to_string()],
         executable: "php-cgi.exe".to_string(),
         ip_and_port: "127.0.0.1:9000".to_string(),
         extra_handler_config: vec![("option1".to_string(), "value1".to_string())],

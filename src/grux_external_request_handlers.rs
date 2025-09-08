@@ -6,11 +6,14 @@ use crate::{
 use hyper::Request;
 use log::debug;
 use std::{collections::HashMap, sync::OnceLock};
+use hyper::{Response};
+use hyper::body::Bytes;
+use http_body_util::combinators::BoxBody;
 pub mod grux_handler_php;
 pub mod grux_php_cgi_process;
 
 pub struct ExternalRequestHandlers {
-    handlers: Vec<Box<dyn ExternalRequestHandler>>,
+    handlers: HashMap<String, Box<dyn ExternalRequestHandler>>,
 }
 
 // A trait for external request handlers
@@ -18,13 +21,13 @@ pub trait ExternalRequestHandler: Send + Sync {
     fn start(&self);
     fn stop(&self);
     fn get_file_matches(&self) -> Vec<String>;
-    fn handle_request(&self, request: &Request<hyper::body::Incoming>);
+    fn handle_request(&self, request: &Request<hyper::body::Incoming>) -> Response<BoxBody<Bytes, hyper::Error>>;
     fn get_handler_type(&self) -> String;
 }
 
 impl ExternalRequestHandlers {
     pub fn new() -> Self {
-        let handlers: Vec<Box<dyn ExternalRequestHandler>> = Vec::new();
+        let handlers: HashMap<String, Box<dyn ExternalRequestHandler>> = HashMap::new();
         ExternalRequestHandlers { handlers }
     }
 }
@@ -54,8 +57,6 @@ fn start_external_request_handlers() -> Result<ExternalRequestHandlers, String> 
 
     // Load our implemented handlers, so they can be matched with what is configured
     let mut external_request_handlers = ExternalRequestHandlers::new();
-
-    // Add PHP as a potential handler
 
     // Go through our configured handlers and load the ones we need
     let mut handler_type_to_load: HashMap<String, RequestHandler> = HashMap::new();
@@ -87,7 +88,7 @@ fn start_external_request_handlers() -> Result<ExternalRequestHandlers, String> 
                     handler.extra_environment,
                 );
                 php_handler.start();
-                external_request_handlers.handlers.push(Box::new(php_handler));
+                external_request_handlers.handlers.insert(handler.id.clone(), Box::new(php_handler));
                 debug!("PHP handler started and added to external request handlers.");
             }
             _ => {
@@ -103,4 +104,10 @@ fn start_external_request_handlers() -> Result<ExternalRequestHandlers, String> 
 pub fn get_request_handlers() -> &'static ExternalRequestHandlers {
     static HANDLERS: OnceLock<ExternalRequestHandlers> = OnceLock::new();
     HANDLERS.get_or_init(|| start_external_request_handlers().unwrap_or_else(|e| panic!("Failed to start request handlers: {}", e)))
+}
+
+// Get a request handler with a certain id
+pub fn get_request_handler_by_id(id: &str) -> Option<&'static dyn ExternalRequestHandler> {
+    let handlers = get_request_handlers();
+    handlers.handlers.get(id).map(|h| h.as_ref())
 }

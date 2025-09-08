@@ -44,10 +44,6 @@ services:
     restart: unless-stopped
     networks:
       - grux-network
-    # Install additional PHP extensions if needed
-    # command: >
-    #   sh -c "docker-php-ext-install pdo pdo_mysql mysqli curl gd &&
-    #          php-fpm"
 
   # Optional: Development service that rebuilds on code changes
   grux-dev:

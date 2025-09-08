@@ -104,31 +104,51 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
         }
     }
 
-    // We check if is a request we need to handle another way
-
-
-
-    let mut additional_headers: Vec<(&str, &str)> = vec![("Content-Type", &file_data.mime_type)];
-
-    // Gzip body or raw content
-    let body_content = if file_data.gzip_content.is_empty() {
-        file_data.content
-    } else {
-        additional_headers.push(("Content-Encoding", "gzip"));
-        file_data.gzip_content
-    };
-
-    // Create the response
-    let mut resp = Response::new(full(body_content));
-    *resp.status_mut() = hyper::StatusCode::OK;
-
-    for (key, value) in additional_headers {
-        resp.headers_mut().insert(key, HeaderValue::from_str(value).unwrap());
+    // We check if is a request we need to handle another way, such as PHP intepreter
+    // We only go through the handlers that are active for this site
+    let mut handler_response = Response::new(full(""));
+    let mut handler_did_stuff = false;
+    for handler_id in &site.enabled_handlers {
+        let handler = crate::grux_external_request_handlers::get_request_handler_by_id(handler_id);
+        if let Some(handler) = handler {
+            let file_matches = handler.get_file_matches();
+            if file_matches.iter().any(|m| file_path.ends_with(m)) {
+                trace!("Passing request to external handler {} for file {}", handler_id, file_path);
+                handler_response = handler.handle_request(&req);
+                handler_did_stuff = true;
+                break; // Only handle with the first matching handler
+            }
+        }
     }
 
-    add_standard_headers_to_response(&mut resp);
+    // Create the response
+    let mut additional_headers: Vec<(&str, &str)> = vec![];
+    let mut response;
+    if handler_did_stuff {
+        response = handler_response;
+        additional_headers.push(("Content-Type", "text/html; charset=utf-8"));
+    } else {
+        additional_headers.push(("Content-Type", &file_data.mime_type));
 
-    Ok(resp)
+        // Gzip body or raw content
+        let body_content = if file_data.gzip_content.is_empty() {
+            file_data.content
+        } else {
+            additional_headers.push(("Content-Encoding", "gzip"));
+            file_data.gzip_content
+        };
+
+        response = Response::new(full(body_content));
+        *response.status_mut() = hyper::StatusCode::OK;
+    }
+
+    for (key, value) in additional_headers {
+        response.headers_mut().insert(key, HeaderValue::from_str(value).unwrap());
+    }
+
+    add_standard_headers_to_response(&mut response);
+
+    Ok(response)
 }
 
 // Find a best match site for the requested hostname

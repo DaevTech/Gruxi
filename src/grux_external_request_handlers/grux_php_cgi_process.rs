@@ -1,5 +1,5 @@
 use crate::grux_port_manager::PortManager;
-use log::{error, info, warn};
+use log::{error, trace, warn};
 use tokio::process::{Child, Command};
 use std::time::Duration;
 
@@ -33,7 +33,7 @@ impl PhpCgiProcess {
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
-        info!("Starting PHP-CGI process: {} for service {}", self.executable_path, self.service_id);
+        trace!("Starting PHP-CGI process: {} for service {}", self.executable_path, self.service_id);
 
         // Allocate a port if we don't have one
         if self.assigned_port.is_none() {
@@ -46,8 +46,6 @@ impl PhpCgiProcess {
         let port = self.assigned_port.unwrap();
         let mut cmd = Command::new(&self.executable_path);
 
-
-
         if cfg!(target_os = "windows") {
             // For Windows, use php-cgi.exe in CGI mode with assigned port
             cmd.arg("-b").arg(format!("127.0.0.1:{}", port));
@@ -57,7 +55,7 @@ impl PhpCgiProcess {
             Ok(child) => {
                 self.process = Some(child);
                 self.restart_count += 1;
-                info!("PHP-CGI process started successfully on port {} for service {} (restart count: {})",
+                trace!("PHP-CGI process started successfully on port {} for service {} (restart count: {})",
                       port, self.service_id, self.restart_count);
                 Ok(())
             }
@@ -105,7 +103,7 @@ impl PhpCgiProcess {
 
     pub async fn stop(&mut self) {
         if let Some(mut process) = self.process.take() {
-            info!("Stopping PHP-CGI process for service {}", self.service_id);
+            trace!("Stopping PHP-CGI process for service {}", self.service_id);
             if let Err(e) = process.kill().await {
                 error!("Failed to kill PHP-CGI process for service {}: {}", self.service_id, e);
             }
