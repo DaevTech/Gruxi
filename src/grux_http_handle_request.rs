@@ -1,5 +1,6 @@
 use crate::grux_configuration_struct::*;
 use crate::grux_file_cache::get_file_cache;
+use crate::grux_file_util::get_full_file_path;
 use crate::grux_http_admin::*;
 use crate::grux_http_util::*;
 use http_body_util::combinators::BoxBody;
@@ -67,6 +68,14 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
 
     let mut file_path = format!("{}/{}", web_root, path_cleaned);
 
+    // Expand it to full path
+    let resolved_path = get_full_file_path(&file_path);
+    if let Err(e) = resolved_path {
+        trace!("Error resolving file path {}: {}", file_path, e);
+        return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+    }
+    file_path = resolved_path.unwrap();
+
     trace!("Checking file path: {}", file_path);
 
     // Check if the file/dir exists using direct tokio::fs calls
@@ -114,7 +123,7 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
             let file_matches = handler.get_file_matches();
             if file_matches.iter().any(|m| file_path.ends_with(m)) {
                 trace!("Passing request to external handler {} for file {}", handler_id, file_path);
-                handler_response = handler.handle_request(&req);
+                handler_response = handler.handle_request(&req, &file_path);
                 handler_did_stuff = true;
                 break; // Only handle with the first matching handler
             }

@@ -21,7 +21,7 @@ pub trait ExternalRequestHandler: Send + Sync {
     fn start(&self);
     fn stop(&self);
     fn get_file_matches(&self) -> Vec<String>;
-    fn handle_request(&self, request: &Request<hyper::body::Incoming>) -> Response<BoxBody<Bytes, hyper::Error>>;
+    fn handle_request(&self, request: &Request<hyper::body::Incoming>, full_file_path: &String) -> Response<BoxBody<Bytes, hyper::Error>>;
     fn get_handler_type(&self) -> String;
 }
 
@@ -84,6 +84,7 @@ fn start_external_request_handlers() -> Result<ExternalRequestHandlers, String> 
                     handler.ip_and_port.clone(),
                     handler.request_timeout,
                     handler.max_concurrent_requests,
+                    handler.other_webroot.clone(),
                     handler.extra_handler_config,
                     handler.extra_environment,
                 );
