@@ -123,6 +123,7 @@ impl PHPHandler {
         let query_string = if uri_parts.len() > 1 { uri_parts[1] } else { "" };
 
         // Pass the script file path, to get the directory and filename
+        let full_script_path = php_request.script_file.clone();
         let (directory, filename) = split_path(&php_request.script_file);
 
         trace!("PHP FastCGI - Directory: {}, Filename: {}", directory, filename);
@@ -153,7 +154,7 @@ impl PHPHandler {
         params.push(("REQUEST_METHOD".to_string(), php_request.method.clone()));
         params.push(("REQUEST_URI".to_string(), php_request.uri.clone()));
         params.push(("SCRIPT_NAME".to_string(), script_name.to_string()));
-        params.push(("SCRIPT_FILENAME".to_string(), filename.to_string()));
+        params.push(("SCRIPT_FILENAME".to_string(), full_script_path.to_string()));
         params.push(("DOCUMENT_ROOT".to_string(), cgi_web_root));
         params.push(("QUERY_STRING".to_string(), query_string.to_string()));
         params.push(("CONTENT_LENGTH".to_string(), php_request.body.len().to_string()));

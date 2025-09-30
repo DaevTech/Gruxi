@@ -3,7 +3,7 @@ services:
   php-fpm:
     image: php:8.2-fpm-alpine
     volumes:
-      - ./www-default:/var/www/html:ro  # Web content accessible to PHP-FPM
+      - ../../www-default:/var/www/html:ro  # Web content accessible to PHP-FPM
     ports:
       - "9000:9000"
     restart: unless-stopped

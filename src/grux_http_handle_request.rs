@@ -94,7 +94,7 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
         let index_file = {
             let mut found_index = None;
             for file in &site.web_root_index_file_list {
-                let index_path = format!("{}{}", file_path, file);
+                let index_path = format!("{}/{}", file_path, file);
                 let index_data = file_cache.get_file(&index_path).unwrap();
                 if index_data.exists {
                     trace!("Returning index file: {}", index_path);
