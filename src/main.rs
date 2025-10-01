@@ -1,5 +1,7 @@
+use clap::Parser;
 use grux::grux_configuration;
-use grux::grux_core;
+use grux::grux_core::grux_command_line_args::GruxCommandLineArgs;
+use grux::grux_core::grux_operation_mode::load_operation_mode;
 use grux::grux_database;
 use grux::grux_external_request_handlers;
 use grux::grux_http_server;
@@ -7,8 +9,11 @@ use grux::grux_log;
 use log::{error, info};
 
 fn main() {
+    // Parse command line args
+    let cli = GruxCommandLineArgs::parse();
+
     // Load operation mode
-    let operation_mode = grux_core::grux_operation_mode::load_operation_mode();
+    let operation_mode = load_operation_mode(cli.opmode);
 
     // Initialize logging
     match grux_log::init_logging(operation_mode) {

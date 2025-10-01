@@ -13,7 +13,6 @@ use crate::grux_core::grux_operation_mode::OperationMode;
 
 // Initilize the logging
 pub fn init_logging(operation_mode: OperationMode) -> Result<log4rs::Handle, String> {
-    let level = log::LevelFilter::Info;
     let file_path = get_log_location().map_err(|e| format!("Failed to get log location: {}", e))?;
     let file_path = format!("{}/system.log", file_path);
 
