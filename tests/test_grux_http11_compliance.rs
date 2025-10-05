@@ -50,50 +50,6 @@ fn get_http_server_addr() -> SocketAddr {
     SocketAddr::new(GRUX_HTTP_HOST.parse().unwrap(), GRUX_HTTP_PORT)
 }
 
-/// Helper function to ensure server is available for all tests
-async fn ensure_server_running() {
-    if let Err(e) = check_server_availability().await {
-        panic!("{}", e);
-    }
-}
-
-/// For future TLS testing against admin endpoints:
-/// const GRUX_ADMIN_HOST: &str = "127.0.0.1";
-/// const GRUX_ADMIN_PORT: u16 = 8000;
-/// fn get_https_server_addr() -> SocketAddr {
-///     SocketAddr::new(GRUX_ADMIN_HOST.parse().unwrap(), GRUX_ADMIN_PORT)
-/// }
-
-/// Check if the Grux HTTP server is running and accessible
-async fn check_server_availability() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let addr = get_http_server_addr();
-    let request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-
-    match timeout(Duration::from_secs(2), send_raw_http_request(addr, request)).await {
-        Ok(Ok(_)) => {
-            println!("✓ Grux server is running and accessible on {}", addr);
-            Ok(())
-        },
-        Ok(Err(e)) => {
-            if e.to_string().contains("Connection refused") || e.to_string().contains("10061") {
-                Err(format!(
-                    "\n❌ GRUX SERVER NOT RUNNING\n\n\
-                    The HTTP compliance tests require a running Grux server.\n\n\
-                    TO FIX THIS:\n\
-                    1. Open a new terminal\n\
-                    2. Run: cargo run\n\
-                    3. Wait for server to start on 127.0.0.1:80\n\
-                    4. Run tests again: cargo test --test test_grux_http11_compliance\n\n\
-                    Error details: {}", e
-                ).into())
-            } else {
-                Err(format!("Server responded with error: {}", e).into())
-            }
-        },
-        Err(_) => Err("Server did not respond within timeout. Make sure Grux is running on 127.0.0.1:80".into()),
-    }
-}
-
 /// Send raw HTTP request and get raw response
 async fn send_raw_http_request(addr: SocketAddr, request: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let mut stream = timeout(TEST_TIMEOUT, TcpStream::connect(addr)).await??;
@@ -174,11 +130,6 @@ fn validate_status_line(status_line: &str) -> bool {
 
 #[tokio::test]
 async fn test_required_methods_support() {
-    // Ensure Grux server is running
-    if let Err(e) = check_server_availability().await {
-        panic!("{}", e);
-    }
-
     let server_addr = get_http_server_addr();
 
     // RFC 7231: GET and HEAD methods MUST be supported by all general-purpose servers
