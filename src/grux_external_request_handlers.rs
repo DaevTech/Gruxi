@@ -10,7 +10,6 @@ use hyper::{Response};
 use hyper::body::Bytes;
 use http_body_util::combinators::BoxBody;
 pub mod grux_handler_php;
-pub mod grux_php_cgi_process;
 
 pub struct ExternalRequestHandlers {
     handlers: HashMap<String, Box<dyn ExternalRequestHandler>>,

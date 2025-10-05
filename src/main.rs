@@ -9,6 +9,17 @@ use grux::grux_log;
 use log::{error, info};
 
 fn main() {
+    let logo = r#"
+  ________
+ /  _____/______ __ _____  ___
+/   \  __\_  __ \  |  \  \/  /
+\    \_\  \  | \/  |  />    <
+ \______  /__|  |____//__/\_ \
+        \/   WEBSERVER      \/
+"#;
+
+    println!("{}", logo);
+
     // Parse command line args
     let cli = GruxCommandLineArgs::parse();
 
@@ -24,9 +35,9 @@ fn main() {
         }
     }
 
-    // Starting grux
+    // Starting Grux
     let version = env!("CARGO_PKG_VERSION", "unknown");
-    info!("Starting grux {}...", version);
+    info!("Starting Grux {}...", version);
     info!("Operation mode: {:?}", operation_mode);
 
     // Load configuration and check for errors

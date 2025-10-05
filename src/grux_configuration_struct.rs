@@ -25,7 +25,7 @@ pub struct Site {
     pub is_enabled: bool,
     pub web_root: String,
     pub web_root_index_file_list: Vec<String>,
-    pub enabled_handlers: Vec<String>,  // List of enabled handler IDs for this site
+    pub enabled_handlers: Vec<String>, // List of enabled handler IDs for this site
     // Optional PEM file paths for this specific site; if not provided and served over TLS, a self-signed cert may be generated
     #[serde(default)]
     pub tls_cert_path: Option<String>,
@@ -72,18 +72,18 @@ pub struct Core {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RequestHandler {
-    pub id: String, // Generated id, unique, so it can be referenced from sites as a handler
-    pub is_enabled: bool,   // Whether it is enabled or not
-    pub name: String,   // A name to identify the handler, self chosen
-    pub handler_type: String, // e.g., "php", "python", etc. Used by the handlers to identify if they should handle requests
+    pub id: String,             // Generated id, unique, so it can be referenced from sites as a handler
+    pub is_enabled: bool,       // Whether it is enabled or not
+    pub name: String,           // A name to identify the handler, self chosen
+    pub handler_type: String,   // e.g., "php", "python", etc. Used by the handlers to identify if they should handle requests
     pub request_timeout: usize, // Seconds
     pub max_concurrent_requests: usize,
-    pub file_match: Vec<String>,    // .php, .html, etc
-    pub executable: String, // Path to the executable or script that handles the request, like php-cgi.exe location for PHP on windows
-    pub ip_and_port: String, // IP and port to connect to the handler, e.g. 127.0.0.1:9000 for FastCGI passthrough
-    pub other_webroot: String, // Optional webroot to use when passing to the handler, if different from the site's webroot
+    pub file_match: Vec<String>,                     // .php, .html, etc
+    pub executable: String,                          // Path to the executable or script that handles the request, like php-cgi.exe location for PHP on windows
+    pub ip_and_port: String,                         // IP and port to connect to the handler, e.g. 127.0.0.1:9000 for FastCGI passthrough
+    pub other_webroot: String,                       // Optional webroot to use when passing to the handler, if different from the site's webroot
     pub extra_handler_config: Vec<(String, String)>, // Key/value pairs for extra handler configuration
-    pub extra_environment: Vec<(String, String)>,   // Key/value pairs to add to environment, passed on to the handler
+    pub extra_environment: Vec<(String, String)>,    // Key/value pairs to add to environment, passed on to the handler
 }
 
 impl Configuration {
@@ -130,9 +130,7 @@ impl Configuration {
         let default_server = Server { bindings: vec![default_binding] };
         let admin_server = Server { bindings: vec![admin_binding] };
 
-        let admin_site = AdminSite {
-            is_admin_portal_enabled: true,
-        };
+        let admin_site = AdminSite { is_admin_portal_enabled: true };
 
         let file_cache = FileCache {
             is_enabled: true,
@@ -157,22 +155,22 @@ impl Configuration {
 
         let core = Core { file_cache: file_cache, gzip: gzip };
 
-        let request_handlers = vec![
-            RequestHandler {
-                id: "php_handler".to_string(),
-                is_enabled: true,
-                name: "PHP Handler".to_string(),
-                handler_type: "php".to_string(),
-                request_timeout: 30, // seconds
-                max_concurrent_requests: 10,
-                file_match: vec![".php".to_string()],
-                executable: "D:/dev/php/8.2.9/php-cgi.exe".to_string(), // Path to the PHP CGI executable (windows only)
-                ip_and_port: "127.0.0.1:9000".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
-                other_webroot: "/var/www/html".to_string(),
-                extra_handler_config: vec![],
-                extra_environment: vec![],
-            },
-        ];
+        let request_handlers = vec![RequestHandler {
+            id: "php_handler".to_string(),
+            is_enabled: true,
+            name: "PHP Handler".to_string(),
+            handler_type: "php".to_string(),
+            request_timeout: 30, // seconds
+            max_concurrent_requests: 10,
+            file_match: vec![".php".to_string()],
+            executable: "D:/dev/php/8.2.9/php-cgi.exe".to_string(), // Path to the PHP CGI executable (windows only)
+            //ip_and_port: "127.0.0.1:10001".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
+            ip_and_port: "".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
+            //other_webroot: "/var/www/html".to_string(),
+            other_webroot: "".to_string(),
+            extra_handler_config: vec![],
+            extra_environment: vec![],
+        }];
 
         Configuration {
             servers: vec![default_server, admin_server],
@@ -192,10 +190,7 @@ impl Configuration {
         }
 
         // Check that there's exactly one admin binding across all servers
-        let total_admin_bindings = self.servers.iter()
-            .flat_map(|server| &server.bindings)
-            .filter(|binding| binding.is_admin)
-            .count();
+        let total_admin_bindings = self.servers.iter().flat_map(|server| &server.bindings).filter(|binding| binding.is_admin).count();
 
         if total_admin_bindings > 1 {
             errors.push("Configuration must have only have one (or none) admin binding".to_string());
@@ -483,14 +478,14 @@ impl Gzip {
                 errors.push(format!("Content type {} cannot be empty", content_type_idx + 1));
             }
 
-        // Basic validation for content type format
-        if !content_type.contains('/') && !content_type.ends_with('/') {
-            errors.push(format!("Content type '{}' appears to be invalid format (should contain '/' or end with '/')", content_type));
+            // Basic validation for content type format
+            if !content_type.contains('/') && !content_type.ends_with('/') {
+                errors.push(format!("Content type '{}' appears to be invalid format (should contain '/' or end with '/')", content_type));
+            }
         }
-    }
 
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
-}
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
 }
 
 impl RequestHandler {
@@ -518,8 +513,7 @@ impl RequestHandler {
             // Validate known handler types
             let valid_types = ["php", "python", "node", "static", "proxy"];
             if !valid_types.contains(&self.handler_type.trim()) {
-                errors.push(format!("Unknown handler type '{}'. Valid types are: {}",
-                    self.handler_type, valid_types.join(", ")));
+                errors.push(format!("Unknown handler type '{}'. Valid types are: {}", self.handler_type, valid_types.join(", ")));
             }
         }
 
@@ -556,9 +550,7 @@ impl RequestHandler {
         }
 
         // Validate IP and port
-        if self.ip_and_port.trim().is_empty() {
-            errors.push("IP and port cannot be empty".to_string());
-        } else {
+        if !self.ip_and_port.trim().is_empty() {
             // Basic format validation for IP:port
             if !self.ip_and_port.contains(':') {
                 errors.push("IP and port must be in format 'IP:PORT'".to_string());

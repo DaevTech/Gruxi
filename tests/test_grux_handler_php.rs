@@ -1,7 +1,5 @@
 use grux::grux_external_request_handlers::grux_handler_php::PHPHandler;
-use grux::grux_external_request_handlers::grux_php_cgi_process::PhpCgiProcess;
 use grux::grux_external_request_handlers::ExternalRequestHandler;
-use grux::grux_port_manager::PortManager;
 
 #[test]
 fn test_php_handler_creation() {
@@ -20,34 +18,25 @@ fn test_php_handler_creation() {
 }
 
 #[test]
-fn test_php_cgi_process_management() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let port_manager = PortManager::instance();
-        let mut process = PhpCgiProcess::new(
-            "echo".to_string(),
-            "test-service".to_string(),
-            port_manager.clone()
-        ); // Use 'echo' as a test executable
+fn test_php_handler_with_single_process() {
+    let handler = PHPHandler::new(
+        "echo".to_string(), // Use 'echo' as a test executable
+        "".to_string(), // Empty string means use internal PHP-CGI process
+        30,
+        2,
+        "./www-default".to_string(),
+        vec![],
+        vec![]
+    );
 
-        // Test starting a process
-        let result = process.start().await;
-        // This might fail if echo is not available, but that's okay for this test
-        match result {
-            Ok(_) => {
-                // Process started successfully
-                assert!(process.is_alive().await);
-                assert!(process.get_port().is_some());
-            }
-            Err(_) => {
-                // Process failed to start (expected on systems without the executable)
-                assert!(!process.is_alive().await);
-            }
-        }
+    // Test that handler can be created and will use single internal process
+    assert_eq!(handler.get_max_concurrent_requests(), 2);
+    assert_eq!(handler.get_handler_type(), "php");
+    assert_eq!(handler.get_file_matches(), vec![".php".to_string()]);
 
-        // Clean up
-        process.stop().await;
-    });
+    // Start and stop the handler (internal process management is now hidden)
+    handler.start();
+    handler.stop();
 }
 
 #[test]
