@@ -3,6 +3,7 @@ use crate::grux_file_cache::get_file_cache;
 use crate::grux_file_util::get_full_file_path;
 use crate::grux_http_admin::*;
 use crate::grux_http_util::*;
+use http_body_util::BodyExt;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Body;
 use hyper::body::Bytes;
@@ -12,7 +13,7 @@ use log::debug;
 use log::trace;
 
 // Handle the incoming request
-pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding, remote_ip: String) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     //  return Ok(empty_response_with_status(hyper::StatusCode::OK));
 
     // Extract data for the request before we borrow/move
@@ -114,6 +115,37 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
         }
     }
 
+    // Extract the information we need before consuming the request for body extraction
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let headers = req.headers().clone();
+
+    // Get HTTP version
+    let http_version = match req.version() {
+        hyper::Version::HTTP_09 => "HTTP/0.9".to_string(),
+        hyper::Version::HTTP_10 => "HTTP/1.0".to_string(),
+        hyper::Version::HTTP_11 => "HTTP/1.1".to_string(),
+        hyper::Version::HTTP_2 => "HTTP/2.0".to_string(),
+        hyper::Version::HTTP_3 => "HTTP/3.0".to_string(),
+        _ => "HTTP/1.1".to_string(),
+    };
+
+    // Extract body for POST/PUT requests
+    let body_bytes = if method == hyper::Method::POST || method == hyper::Method::PUT {
+        match req.collect().await {
+            Ok(collected) => {
+                let bytes = collected.to_bytes();
+                bytes.to_vec()
+            }
+            Err(e) => {
+                debug!("Failed to collect request body: {}", e);
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
     // We check if is a request we need to handle another way, such as PHP intepreter
     // We only go through the handlers that are active for this site
     let mut handler_response = Response::new(full(""));
@@ -124,7 +156,7 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
             let file_matches = handler.get_file_matches();
             if file_matches.iter().any(|m| file_path.ends_with(m)) {
                 trace!("Passing request to external handler {} for file {}", handler_id, file_path);
-                handler_response = handler.handle_request(&req, &site, &file_path);
+                handler_response = handler.handle_request(&method, &uri, &headers, body_bytes.clone(), &site, &file_path, &remote_ip, &http_version);
                 handler_did_stuff = true;
                 break; // Only handle with the first matching handler
             }

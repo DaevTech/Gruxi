@@ -4,7 +4,6 @@ use crate::grux_file_util::{get_full_file_path, replace_web_root_in_path, split_
 use crate::grux_http_util::*;
 use crate::grux_port_manager::PortManager;
 use http_body_util::combinators::BoxBody;
-use hyper::Request;
 use log::{error, trace, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,7 +29,7 @@ struct PhpCgiProcess {
     assigned_port: Option<u16>,
     port_manager: PortManager,
     last_activity: Instant,
-    extra_environment: Vec<(String, String)>
+    extra_environment: Vec<(String, String)>,
 }
 
 impl PhpCgiProcess {
@@ -289,9 +288,14 @@ struct PHPRequest {
     cgi_web_root: String,
     method: String,
     uri: String,
+    path: String,
     headers: HashMap<String, String>,
     body: Vec<u8>,
     response_tx: oneshot::Sender<hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>>>,
+    is_https: bool,
+    remote_ip: String,
+    server_port: u16,
+    http_version: String,
 }
 
 /// PHP handler that manages a single persistent PHP-CGI process with FastCGI children.
@@ -431,18 +435,16 @@ impl PHPHandler {
         params.push(("QUERY_STRING".to_string(), query_string.to_string()));
         params.push(("CONTENT_LENGTH".to_string(), php_request.body.len().to_string()));
         params.push(("SERVER_SOFTWARE".to_string(), "Grux".to_string()));
-        //        params.push(("SERVER_NAME".to_string(), "localhost".to_string()));
-        //        params.push(("SERVER_PORT".to_string(), "80".to_string()));
-        //        params.push(("HTTPS".to_string(), "".to_string()));
+        params.push(("SERVER_NAME".to_string(), "".to_string()));
+        params.push(("SERVER_PORT".to_string(), php_request.server_port.to_string()));
+        params.push(("HTTPS".to_string(), if php_request.is_https { "on" } else { "off" }.to_string()));
         params.push(("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string()));
-        params.push(("SERVER_PROTOCOL".to_string(), "HTTP/1.1".to_string()));
-        //       params.push(("REMOTE_ADDR".to_string(), "127.0.0.1".to_string()));
-        //  params.push(("REMOTE_HOST".to_string(), "localhost".to_string()));
+        params.push(("SERVER_PROTOCOL".to_string(), php_request.http_version.to_string()));
+        params.push(("REMOTE_ADDR".to_string(), php_request.remote_ip));
+        params.push(("REMOTE_HOST".to_string(), "".to_string()));
 
         // Additional important FastCGI variables for PHP
-        //    params.push(("PATH_INFO".to_string(), "".to_string()));
-        //        params.push(("PATH_TRANSLATED".to_string(), full_file_path.clone()));
-        //     params.push(("PATH_TRANSLATED".to_string(), "/var/www/html/index.php".to_string()));
+        params.push(("PATH_INFO".to_string(), php_request.path));
         params.push(("REDIRECT_STATUS".to_string(), "200".to_string())); // Important for PHP-CGI security
 
         // Add HTTP headers as CGI variables
@@ -736,25 +738,24 @@ impl ExternalRequestHandler for PHPHandler {
     /// 3. Spawn an async task in the existing runtime to wait for the response
     /// 4. Use std::sync channels to get the result back to the sync context
     /// 5. Return the HTTP response synchronously
-    fn handle_request(&self, request: &Request<hyper::body::Incoming>, site: &Site, full_file_path: &String) -> hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
-        trace!("PHP request received: {} {}", request.method(), request.uri());
+    fn handle_request(&self, method: &hyper::Method, uri: &hyper::Uri, headers: &hyper::HeaderMap, body: Vec<u8>, site: &Site, full_file_path: &String, remote_ip: &String, http_version: &String) -> hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
+        trace!("PHP request received: {} {}", method, uri);
 
         // Extract request data
-        let method = request.method().to_string();
-        let uri = request.uri().to_string();
+        let method_str = method.to_string();
+        let uri_str = uri.to_string();
+        let path = uri.path();
 
         // Convert headers to HashMap
-        let mut headers = HashMap::new();
-        for (key, value) in request.headers() {
+        let mut headers_map = HashMap::new();
+        for (key, value) in headers {
             if let Ok(value_str) = value.to_str() {
-                headers.insert(key.to_string(), value_str.to_string());
+                headers_map.insert(key.to_string(), value_str.to_string());
             }
         }
 
-        // For now, we'll handle the body extraction as empty
-        // In a complete implementation, you would need to handle this asynchronously
-        // This is a limitation of the current sync interface
-        let body = Vec::new(); // TODO: Extract body properly for POST requests
+        // Body is now provided as a parameter, extracted by the main request handler
+        trace!("PHP handler received body of {} bytes", body.len());
 
         // Create a channel for the response
         let (response_tx, response_rx) = oneshot::channel();
@@ -767,16 +768,35 @@ impl ExternalRequestHandler for PHPHandler {
         }
         let full_web_root = full_web_root_result.unwrap();
 
+        // Get some info needed for the fastcgi params
+        let is_https = if let Some(scheme) = uri.scheme_str() {
+            scheme.eq_ignore_ascii_case("https")
+        } else {
+            false
+        };
+
+        // Get server port from ip_and_port if possible
+        let server_port = if let Some(colon_pos) = self.ip_and_port.rfind(':') {
+            if let Ok(port) = self.ip_and_port[colon_pos + 1..].parse::<u16>() { port } else { 80 }
+        } else {
+            80
+        };
+
         // Create the PHP request
         let php_request = PHPRequest {
             script_file: full_file_path.clone(),
             local_web_root: full_web_root,
             cgi_web_root: self.other_webroot.clone(),
-            method,
-            uri,
-            headers,
+            method: method_str,
+            uri: uri_str,
+            path: path.to_string(),
+            headers: headers_map.clone(),
             body,
             response_tx,
+            is_https,
+            remote_ip: remote_ip.clone(),
+            server_port,
+            http_version: http_version.clone(),
         };
 
         // Send the request to the worker queue

@@ -1,6 +1,6 @@
 use crate::grux_configuration::{get_current_configuration_from_db, save_configuration};
 use crate::grux_configuration_struct::*;
-use log::{info, warn};
+use log::{warn};
 use rand::Rng;
 use rustls_pki_types::pem::PemObject; // for from_pem_file, etc.
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -73,8 +73,6 @@ pub async fn persist_generated_tls_for_site(binding: &Binding, site: &Site, cert
     if updated {
         if let Err(e) = save_configuration(&configuration) {
             warn!("Failed to persist TLS paths to configuration: {}", e);
-        } else {
-            info!("Persisted generated TLS certificate and key to configuration.");
         }
     }
 

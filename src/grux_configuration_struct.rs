@@ -124,10 +124,18 @@ impl Configuration {
             port: 80,
             is_admin: false,
             is_tls: false,
-            sites: vec![default_site],
+            sites: vec![default_site.clone()],
         };
 
-        let default_server = Server { bindings: vec![default_binding] };
+        let default_binding_tls = Binding {
+            ip: "0.0.0.0".to_string(),
+            port: 443,
+            is_admin: false,
+            is_tls: true,
+            sites: vec![default_site.clone()],
+        };
+
+        let default_server = Server { bindings: vec![default_binding, default_binding_tls] };
         let admin_server = Server { bindings: vec![admin_binding] };
 
         let admin_site = AdminSite { is_admin_portal_enabled: true };

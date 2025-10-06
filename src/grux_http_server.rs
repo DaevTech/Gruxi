@@ -8,8 +8,8 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use log::{error, info, trace, warn};
 use std::net::SocketAddr;
-use tokio::net::TcpListener;
 use tls_listener::rustls as tokio_rustls;
+use tokio::net::TcpListener;
 
 // Main function, starting all the Grux magic
 #[tokio::main(flavor = "multi_thread")]
@@ -83,16 +83,22 @@ fn start_server_binding(binding: Binding) -> impl std::future::Future<Output = (
             };
             loop {
                 let (tcp_stream, _) = listener.accept().await.unwrap();
+                let remote_addr = tcp_stream.peer_addr().map(|addr| addr.to_string()).ok();
+                let remote_addr_string = remote_addr.unwrap_or_else(|| "<unknown>".to_string());
+                let remote_addr_ip = remote_addr_string.split(':').next().unwrap_or("").to_string();
+
                 let acceptor = acceptor.clone();
                 tokio::task::spawn({
                     let binding = binding.clone();
+                    let remote_addr_ip = remote_addr_ip.clone();
+
                     async move {
                         match acceptor.accept(tcp_stream).await {
                             Ok(tls_stream) => {
                                 // Decide protocol based on ALPN
                                 let is_h2 = negotiated_h2(&tls_stream);
                                 let io = TokioIo::new(tls_stream);
-                                let svc = service_fn(move |req| handle_request(req, binding.clone()));
+                                let svc = service_fn(move |req| handle_request(req, binding.clone(), remote_addr_ip.clone()));
                                 if is_h2 {
                                     if let Err(err) = http2::Builder::new(TokioExecutor::new()).serve_connection(io, svc).await {
                                         trace!("TLS h2 error serving connection: {:?}", err);
@@ -114,12 +120,16 @@ fn start_server_binding(binding: Binding) -> impl std::future::Future<Output = (
             // Non-TLS path
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
+                let remote_addr = stream.peer_addr().map(|addr| addr.to_string()).ok();
+                let remote_addr_string = remote_addr.clone().unwrap_or_else(|| "<unknown>".to_string());
+                let remote_addr_ip = remote_addr_string.split(':').next().unwrap_or("").to_string();
                 let io = TokioIo::new(stream);
 
                 tokio::task::spawn({
                     let binding = binding.clone();
+                    let remote_addr_ip = remote_addr_ip.clone();
                     async move {
-                        let svc = service_fn(move |req| handle_request(req, binding.clone()));
+                        let svc = service_fn(move |req| handle_request(req, binding.clone(), remote_addr_ip.clone()));
                         if let Err(err) = http1::Builder::new().serve_connection(io, svc).await {
                             trace!("Error serving connection: {:?}", err);
                         }
