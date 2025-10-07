@@ -241,6 +241,7 @@ fn test_configuration_full_validation() {
         enabled_handlers: vec!["php_handler".to_string()],
         tls_cert_path: None,
         tls_key_path: None,
+        rewrite_functions: vec![],
     };
 
     let binding = Binding {

@@ -117,7 +117,7 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
                 trace!("Index files in dir does not exist: {}", file_path);
                 continue;
             }
-            let file_data = file_data_result.unwrap();
+            file_data = file_data_result.unwrap();
             file_path = file_data.file_path.clone();
             trace!("Found index file: {}", file_path);
             found_index = true;
@@ -125,6 +125,7 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
         }
 
         if !found_index {
+            trace!("Did not find index file: {}", file_path);
             return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
         }
     }

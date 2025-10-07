@@ -189,10 +189,10 @@ impl Configuration {
             max_concurrent_threads: 0, // 0 = automatically based on CPU cores
             file_match: vec![".php".to_string()],
             executable: "D:/dev/php/8.2.9/php-cgi.exe".to_string(), // Path to the PHP CGI executable (windows only)
-            ip_and_port: "127.0.0.1:9000".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
-            //ip_and_port: "".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
-            other_webroot: "/var/www/html".to_string(),
-            //other_webroot: "".to_string(),
+            //ip_and_port: "127.0.0.1:9000".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
+            ip_and_port: "".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
+            //other_webroot: "/var/www/html".to_string(),
+            other_webroot: "".to_string(),
             extra_handler_config: vec![],
             extra_environment: vec![],
         }];

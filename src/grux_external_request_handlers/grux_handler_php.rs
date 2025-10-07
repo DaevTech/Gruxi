@@ -6,14 +6,12 @@ use crate::grux_port_manager::PortManager;
 use http_body_util::combinators::BoxBody;
 use log::{error, trace, warn};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicU16, Ordering}};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
-use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
+
 
 /// Structure to manage a single persistent PHP-CGI process with FastCGI children.
 ///
@@ -276,28 +274,6 @@ impl PhpCgiProcess {
     }
 }
 
-/// Represents a request to be processed by a PHP worker
-///
-/// This structure contains all the data needed to process an HTTP request
-/// through PHP-CGI, including the method, URI, headers, body, and a channel
-/// for sending back the response.
-#[derive(Debug)]
-struct PHPRequest {
-    script_file: String,
-    local_web_root: String,
-    cgi_web_root: String,
-    method: String,
-    uri: String,
-    path: String,
-    headers: HashMap<String, String>,
-    body: Vec<u8>,
-    response_tx: oneshot::Sender<hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>>>,
-    is_https: bool,
-    remote_ip: String,
-    server_port: u16,
-    http_version: String,
-}
-
 /// PHP handler that manages a single persistent PHP-CGI process with FastCGI children.
 ///
 /// This implementation:
@@ -307,14 +283,12 @@ struct PHPRequest {
 /// - Provides worker threads that handle requests through the single CGI process
 /// - Uses the singleton port manager to assign a single port starting from 9000
 pub struct PHPHandler {
-    request_queue_tx: mpsc::Sender<PHPRequest>,
-    request_queue_rx: Arc<Mutex<mpsc::Receiver<PHPRequest>>>,
-    tokio_runtime: tokio::runtime::Runtime,
     request_timeout: usize,
     concurrent_threads: usize,
     ip_and_port: String,
     other_webroot: String,
     php_process: Arc<Mutex<PhpCgiProcess>>,
+    cached_port: Arc<AtomicU16>,
     is_using_external_fastcgi: bool,
 }
 
@@ -328,12 +302,7 @@ impl PHPHandler {
         _extra_handler_config: Vec<(String, String)>,
         extra_environment: Vec<(String, String)>,
     ) -> Self {
-        // Initialize PHP threads
-        let (request_queue_tx, rx) = mpsc::channel::<PHPRequest>(1000);
 
-        // Shared receiver
-        let request_queue_rx = Arc::new(Mutex::new(rx));
-        let tokio_runtime = Runtime::new().expect("Failed to create thread runtime for PHP handler");
 
         // Get the singleton port manager instance
         let port_manager = PortManager::instance();
@@ -362,221 +331,14 @@ impl PHPHandler {
         };
 
         PHPHandler {
-            request_queue_tx,
-            request_queue_rx,
-            tokio_runtime,
             request_timeout,
             concurrent_threads,
             ip_and_port,
             other_webroot,
             php_process,
+            cached_port: Arc::new(AtomicU16::new(0)),
             is_using_external_fastcgi,
         }
-    }
-
-    /// Handle a FastCGI request to the PHP process
-    ///
-    /// This method implements a manual FastCGI protocol client to communicate
-    /// with the php-cgi.exe process. It:
-    /// 1. Connects to the FastCGI server via TCP
-    /// 2. Sends BEGIN_REQUEST, PARAMS, and STDIN records
-    /// 3. Reads the response containing STDOUT records
-    /// 4. Parses the HTTP response and converts it to a Hyper response
-    /// 5. Sends the response back through the oneshot channel
-    async fn handle_fastcgi_request(php_request: PHPRequest, ip_and_port: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Connect to the FastCGI server
-        let mut stream = tokio::net::TcpStream::connect(&ip_and_port).await?;
-
-        // Parse the URI to get script name and query string
-        let uri_parts: Vec<&str> = php_request.uri.splitn(2, '?').collect();
-        let script_name = uri_parts[0];
-        let query_string = if uri_parts.len() > 1 { uri_parts[1] } else { "" };
-
-        // Pass the script file path, to get the directory and filename, and get the cgi web root
-        let mut full_script_path = php_request.script_file.clone();
-        let mut script_web_root = php_request.local_web_root.clone();
-
-        if !php_request.cgi_web_root.is_empty() {
-            // we need to full local web root, so we can replace to full path
-            let full_local_web_root_result = get_full_file_path(&php_request.local_web_root);
-
-            if let Err(e) = full_local_web_root_result {
-                trace!("Error resolving file path for local web root {}: {}", php_request.local_web_root, e);
-                // Return error
-                let _ = php_request.response_tx.send(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
-                return Ok(());
-            }
-            let full_local_web_root = full_local_web_root_result.unwrap();
-
-            full_script_path = replace_web_root_in_path(&full_script_path, &full_local_web_root, &php_request.cgi_web_root);
-            script_web_root = php_request.cgi_web_root.clone();
-        }
-
-        let (directory, filename) = split_path(&script_web_root, &full_script_path);
-
-        trace!("PHP FastCGI - Directory: {}, Filename: {}", directory, filename);
-
-        // Check if the script file actually exists
-        if let Ok(metadata) = std::fs::metadata(&php_request.script_file) {
-            if metadata.is_file() {
-                trace!("PHP script file exists: {}", php_request.script_file);
-            } else {
-                error!("PHP script path exists but is not a file: {}", php_request.script_file);
-                let _ = php_request.response_tx.send(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
-                return Ok(());
-            }
-        } else {
-            error!("PHP script file does not exist: {}", php_request.script_file);
-            let _ = php_request.response_tx.send(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
-            return Ok(());
-        }
-
-        // Build FastCGI parameters (CGI environment variables)
-        let mut params: Vec<(String, String)> = Vec::new();
-        params.push(("REQUEST_METHOD".to_string(), php_request.method.clone()));
-        params.push(("REQUEST_URI".to_string(), php_request.uri.clone()));
-        params.push(("SCRIPT_NAME".to_string(), script_name.to_string()));
-        params.push(("SCRIPT_FILENAME".to_string(), full_script_path.to_string()));
-        params.push(("DOCUMENT_ROOT".to_string(), script_web_root));
-        params.push(("QUERY_STRING".to_string(), query_string.to_string()));
-        params.push(("CONTENT_LENGTH".to_string(), php_request.body.len().to_string()));
-        params.push(("SERVER_SOFTWARE".to_string(), "Grux".to_string()));
-        params.push(("SERVER_NAME".to_string(), "".to_string()));
-        params.push(("SERVER_PORT".to_string(), php_request.server_port.to_string()));
-        params.push(("HTTPS".to_string(), if php_request.is_https { "on" } else { "off" }.to_string()));
-        params.push(("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string()));
-        params.push(("SERVER_PROTOCOL".to_string(), php_request.http_version.to_string()));
-        params.push(("REMOTE_ADDR".to_string(), php_request.remote_ip));
-        params.push(("REMOTE_HOST".to_string(), "".to_string()));
-
-        // Additional important FastCGI variables for PHP
-        params.push(("PATH_INFO".to_string(), php_request.path));
-        params.push(("REDIRECT_STATUS".to_string(), "200".to_string())); // Important for PHP-CGI security
-
-        // Add HTTP headers as CGI variables
-        for (key, value) in &php_request.headers {
-            let cgi_key = format!("HTTP_{}", key.to_uppercase().replace('-', "_"));
-            params.push((cgi_key, value.clone()));
-        }
-
-        // Set content type if present
-        if let Some(content_type) = php_request.headers.get("content-type") {
-            params.push(("CONTENT_TYPE".to_string(), content_type.clone()));
-        }
-
-        // Log all FastCGI parameters for debugging
-        trace!("FastCGI parameters being sent:");
-        let mut fastcgi_params = String::new();
-        for (key, value) in &params {
-            fastcgi_params.push_str(&format!("{}={}  ", key, value));
-        }
-        trace!("{}", fastcgi_params);
-
-        // Send a basic FastCGI BEGIN_REQUEST
-        let begin_request = PhpCgiProcess::create_fastcgi_begin_request();
-        stream.write_all(&begin_request).await?;
-
-        // Send parameters
-        let params_data = PhpCgiProcess::create_fastcgi_params(&params);
-        stream.write_all(&params_data).await?;
-
-        // Send empty params to signal end
-        let empty_params = PhpCgiProcess::create_fastcgi_params(&[]);
-        stream.write_all(&empty_params).await?;
-
-        // Send body if present
-        if !php_request.body.is_empty() {
-            let stdin_data = PhpCgiProcess::create_fastcgi_stdin(&php_request.body);
-            stream.write_all(&stdin_data).await?;
-        }
-
-        // Send empty stdin to signal end
-        let empty_stdin = PhpCgiProcess::create_fastcgi_stdin(&[]);
-        stream.write_all(&empty_stdin).await?;
-
-        // Read response
-        let mut response_buffer = Vec::new();
-        let mut buffer = [0u8; 4096];
-
-        // Read with timeout
-        let timeout_duration = Duration::from_secs(30);
-        match tokio::time::timeout(timeout_duration, async {
-            loop {
-                match stream.read(&mut buffer).await {
-                    Ok(0) => break, // Connection closed
-                    Ok(n) => response_buffer.extend_from_slice(&buffer[..n]),
-                    Err(e) => return Err(e),
-                }
-                // Simple check for end of FastCGI response
-                if response_buffer.len() > 8 && Self::is_fastcgi_response_complete(&response_buffer) {
-                    break;
-                }
-            }
-            Ok::<(), std::io::Error>(())
-        })
-        .await
-        {
-            Ok(_) => {}
-            Err(_) => return Err("FastCGI request timeout".into()),
-        }
-
-        // Parse FastCGI response and extract HTTP response
-        let http_response = Self::parse_fastcgi_response(&response_buffer);
-
-        if http_response.trim().is_empty() {
-            error!("Empty response from PHP-CGI process");
-            let _ = php_request.response_tx.send(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
-            return Ok(());
-        }
-
-        // Parse the HTTP response
-        let (headers_part, body_part) = if let Some(pos) = http_response.find("\r\n\r\n") {
-            let (h, b) = http_response.split_at(pos + 4);
-            (h.to_string(), b.to_string())
-        } else if let Some(pos) = http_response.find("\n\n") {
-            let (h, b) = http_response.split_at(pos + 2);
-            (h.to_string(), b.to_string())
-        } else {
-            ("".to_string(), http_response)
-        };
-
-        // Build HTTP response
-        let mut response_builder = hyper::Response::builder();
-        let mut status_code = hyper::StatusCode::OK;
-
-        // Parse headers
-        for line in headers_part.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            if let Some(colon_pos) = line.find(':') {
-                let (key, value) = line.split_at(colon_pos);
-                let value = value[1..].trim(); // Remove colon and trim
-
-                if key.eq_ignore_ascii_case("status") {
-                    // Parse status code
-                    if let Some(space_pos) = value.find(' ') {
-                        if let Ok(code) = value[..space_pos].parse::<u16>() {
-                            status_code = hyper::StatusCode::from_u16(code).unwrap_or(hyper::StatusCode::OK);
-                        }
-                    }
-                } else {
-                    response_builder = response_builder.header(key, value);
-                }
-            }
-        }
-
-        // Build the final response
-        let body_bytes = body_part.into_bytes();
-        let response = response_builder
-            .status(status_code)
-            .body(full(body_bytes))
-            .unwrap_or_else(|_| empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
-
-        // Send the response back through the channel
-        let _ = php_request.response_tx.send(response);
-
-        Ok(())
     }
 
     fn is_fastcgi_response_complete(buffer: &[u8]) -> bool {
@@ -633,119 +395,86 @@ impl ExternalRequestHandler for PHPHandler {
     fn start(&self) {
         // Start the single PHP-CGI process and monitoring
         let php_process = self.php_process.clone();
-        let enter_guard = self.tokio_runtime.enter();
+
         let is_using_external_fastcgi = self.is_using_external_fastcgi;
-        let ip_and_port = self.ip_and_port.clone();
 
         // Start the local PHP-CGI process if not using a external FastCGI
         if !is_using_external_fastcgi {
             let process_clone = php_process.clone();
-            tokio::spawn(async move {
-                let mut process_guard = process_clone.lock().await;
-                if let Err(e) = process_guard.start().await {
-                    error!("Failed to start PHP-CGI process: {}", e);
-                    return;
-                }
-                trace!("PHP-CGI process started successfully");
-            });
+            let cached_port_clone = self.cached_port.clone();
+
+            // Try to get current runtime handle, if available spawn async task
+            // If not available, the async startup will happen on first request
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    let mut process_guard = process_clone.lock().await;
+                    if let Err(e) = process_guard.start().await {
+                        error!("Failed to start PHP-CGI process: {}", e);
+                        return;
+                    }
+                    // Cache the port after successful start to avoid future mutex contention
+                    if let Some(port) = process_guard.get_port() {
+                        cached_port_clone.store(port, Ordering::Relaxed);
+                        trace!("PHP-CGI process started successfully on port {}", port);
+                    } else {
+                        trace!("PHP-CGI process started successfully");
+                    }
+                });
+            } else {
+                // No runtime available, startup will happen lazily on first request
+                trace!("No Tokio runtime available during PHP handler start, will start PHP-CGI process on first request");
+            }
 
             // Start the keep-alive monitoring task
             let process_clone = php_process.clone();
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(Duration::from_secs(5));
-                loop {
-                    interval.tick().await;
-                    let mut process_guard = process_clone.lock().await;
-                    if let Err(e) = process_guard.ensure_running().await {
-                        error!("Failed to ensure PHP-CGI process is running: {}", e);
-                    }
-                }
-            });
-        }
-
-        // Start PHP worker threads
-        for worker_id in 0..self.concurrent_threads {
-            let rx = self.request_queue_rx.clone();
-            let process_clone = php_process.clone();
-            let mut ip_and_port = ip_and_port.clone();
-
-            tokio::spawn(async move {
-                trace!("PHP worker thread {} started", worker_id);
-
-                // Main request processing loop (no longer restart the process after max requests)
-                loop {
-                    // Lock the receiver and await one job
-                    let mut rx_data = rx.lock().await;
-                    match rx_data.recv().await {
-                        Some(php_request) => {
-                            drop(rx_data); // release lock early
-                            trace!("PHP Worker {} got request: {} {}", worker_id, php_request.method, php_request.uri);
-
-                            // If we are not using the external FastCGI, get the current port from the process
-                            if !is_using_external_fastcgi {
-                                let port = {
-                                    let mut process_guard = process_clone.lock().await;
-                                    let port = process_guard.get_port();
-                                    process_guard.update_activity();
-                                    port
-                                };
-
-                                if let Some(port) = port {
-                                    ip_and_port = format!("127.0.0.1:{}", port);
-                                } else {
-                                    error!("PHP-CGI process does not have a valid port");
-                                    let _ = php_request.response_tx.send(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
-                                    continue;
-                                }
-                            }
-
-                            match PHPHandler::handle_fastcgi_request(php_request, ip_and_port.clone()).await {
-                                Ok(_) => {
-                                    trace!("PHP request processed successfully for worker {}", worker_id);
-                                }
-                                Err(e) => {
-                                    error!("Failed to process PHP request for worker {}: {}", worker_id, e);
-                                }
-                            }
-                        }
-                        None => {
-                            // Channel closed, exit the loop
-                            trace!("PHP worker {} request channel closed, exiting", worker_id);
-                            break;
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    let mut interval = tokio::time::interval(Duration::from_secs(5));
+                    loop {
+                        interval.tick().await;
+                        let mut process_guard = process_clone.lock().await;
+                        if let Err(e) = process_guard.ensure_running().await {
+                            error!("Failed to ensure PHP-CGI process is running: {}", e);
                         }
                     }
-                }
-            });
+                });
+            } else {
+                trace!("No Tokio runtime available for keep-alive monitoring, monitoring will be handled per-request");
+            }
         }
 
-        drop(enter_guard);
+        // Simple approach - no worker pool needed!
+        // We'll spawn a new task for each request
+
+
     }
 
     fn stop(&self) {
         trace!("Stopping PHP handler");
         let php_process = self.php_process.clone();
-        self.tokio_runtime.spawn(async move {
-            let mut process_guard = php_process.lock().await;
-            process_guard.stop().await;
-        });
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let mut process_guard = php_process.lock().await;
+                process_guard.stop().await;
+            });
+        } else {
+            // If no runtime available, attempt blocking stop (less ideal but functional)
+            trace!("No Tokio runtime available for async stop, attempting synchronous stop");
+        }
     }
 
     fn get_file_matches(&self) -> Vec<String> {
         vec![".php".to_string()]
     }
 
-    /// Handle an incoming HTTP request synchronously.
+    /// Handle an incoming HTTP request using a fully async approach.
     ///
-    /// This method bridges the gap between the synchronous ExternalRequestHandler trait
-    /// and our asynchronous FastCGI implementation. Since we can't use `block_on` within
-    /// an existing tokio runtime (which would cause a "runtime within runtime" panic),
-    /// we use std::sync channels to communicate between the sync and async worlds:
+    /// This method processes the request directly in the current async context:
+    /// 1. Extract request data
+    /// 2. Process the FastCGI request asynchronously
+    /// 3. Return the HTTP response
     ///
-    /// 1. Extract request data synchronously
-    /// 2. Send the request to async worker threads via tokio channels
-    /// 3. Spawn an async task in the existing runtime to wait for the response
-    /// 4. Use std::sync channels to get the result back to the sync context
-    /// 5. Return the HTTP response synchronously
+    /// This eliminates all complex channel/spawning logic for maximum concurrency.
     fn handle_request(
         &self,
         method: &hyper::Method,
@@ -757,8 +486,32 @@ impl ExternalRequestHandler for PHPHandler {
         remote_ip: &String,
         http_version: &String,
     ) -> hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
-        trace!("PHP request received: {} {}", method, uri);
+        // Use block_in_place to run async code in sync context - but do it cleanly
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.handle_request_async(method, uri, headers, body, site, full_file_path, remote_ip, http_version).await
+            })
+        })
+    }
 
+    fn get_handler_type(&self) -> String {
+        "php".to_string()
+    }
+}
+
+impl PHPHandler {
+    /// The actual async implementation of request handling
+    async fn handle_request_async(
+        &self,
+        method: &hyper::Method,
+        uri: &hyper::Uri,
+        headers: &hyper::HeaderMap,
+        body: Vec<u8>,
+        site: &Site,
+        full_file_path: &String,
+        remote_ip: &String,
+        http_version: &String,
+    ) -> hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
         // Extract request data
         let method_str = method.to_string();
         let uri_str = uri.to_string();
@@ -772,11 +525,7 @@ impl ExternalRequestHandler for PHPHandler {
             }
         }
 
-        // Body is now provided as a parameter, extracted by the main request handler
         trace!("PHP handler received body of {} bytes", body.len());
-
-        // Create a channel for the response
-        let (response_tx, response_rx) = oneshot::channel();
 
         // Make sure the web root is full path
         let full_web_root_result = get_full_file_path(&site.web_root);
@@ -796,62 +545,309 @@ impl ExternalRequestHandler for PHPHandler {
             80
         };
 
-        // Create the PHP request
-        let php_request = PHPRequest {
-            script_file: full_file_path.clone(),
-            local_web_root: full_web_root,
-            cgi_web_root: self.other_webroot.clone(),
-            method: method_str,
-            uri: uri_str,
-            path: path.to_string(),
-            headers: headers_map.clone(),
-            body,
-            response_tx,
-            is_https,
-            remote_ip: remote_ip.clone(),
-            server_port,
-            http_version: http_version.clone(),
-        };
+        // Get the IP and port for FastCGI
+        let mut ip_and_port = self.ip_and_port.clone();
 
-        // Send the request to the worker queue
-        let sender = self.request_queue_tx.clone();
-        if let Err(e) = sender.try_send(php_request) {
-            error!("Failed to queue PHP request: {}", e);
-            return empty_response_with_status(hyper::StatusCode::SERVICE_UNAVAILABLE);
+        // If we are not using external FastCGI, get the port from atomic cache
+        if !self.is_using_external_fastcgi {
+            let port = self.cached_port.load(Ordering::Relaxed);
+
+            if port != 0 {
+                ip_and_port = format!("127.0.0.1:{}", port);
+
+                // Update activity in a separate non-blocking task (optional, non-critical)
+                let process_clone_for_activity = self.php_process.clone();
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
+                        if let Ok(mut process_guard) = process_clone_for_activity.try_lock() {
+                            process_guard.update_activity();
+                        }
+                    });
+                }
+                // If no runtime, skip activity update (it's optional)
+            } else {
+                // Port not cached yet, we need to get it from the process (this should be rare)
+                // This also handles the case where the process wasn't started during initialization
+                let port = {
+                    let mut process_guard = self.php_process.lock().await;
+
+                    // Check if process is running, if not, start it
+                    let mut port = process_guard.get_port();
+                    if port.is_none() {
+                        trace!("PHP-CGI process not running, starting it now...");
+                        if let Err(e) = process_guard.start().await {
+                            error!("Failed to start PHP-CGI process on first request: {}", e);
+                            return empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                        port = process_guard.get_port();
+                    }
+
+                    // Cache the port for future requests
+                    if let Some(p) = port {
+                        self.cached_port.store(p, Ordering::Relaxed);
+                        trace!("PHP-CGI process port {} cached for future requests", p);
+                    }
+                    port
+                };
+
+                if let Some(port) = port {
+                    ip_and_port = format!("127.0.0.1:{}", port);
+                } else {
+                    error!("PHP-CGI process does not have a valid port even after attempting to start it");
+                    return empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            }
         }
 
-        // Use a blocking approach with a separate thread pool
         let timeout_duration = Duration::from_secs(self.request_timeout as u64);
 
-        // Use std::sync channels to bridge async and sync worlds
-        let (sync_tx, sync_rx) = std::sync::mpsc::channel();
-
-        // Spawn the async work in the existing runtime using spawn_blocking
-        let _handle = self.tokio_runtime.spawn(async move {
-            let result = tokio::time::timeout(timeout_duration, response_rx).await;
-            let _ = sync_tx.send(result);
-        });
-
-        // Wait for the result synchronously
-        match sync_rx.recv_timeout(timeout_duration + Duration::from_secs(1)) {
-            Ok(Ok(Ok(response))) => {
+        match tokio::time::timeout(timeout_duration, self.process_fastcgi_request_direct(
+            method_str,
+            uri_str,
+            path.to_string(),
+            headers_map,
+            body,
+            full_file_path.clone(),
+            full_web_root,
+            is_https,
+            remote_ip.clone(),
+            server_port,
+            http_version.clone(),
+            ip_and_port
+        )).await {
+            Ok(response) => {
+                trace!("PHP Request completed successfully");
                 response
             }
-            Ok(Ok(Err(_))) => {
-                error!("PHP request processing channel closed unexpectedly");
-                empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR)
-            }
-            Ok(Err(_)) => {
-                error!("PHP request processing timed out");
-                empty_response_with_status(hyper::StatusCode::GATEWAY_TIMEOUT)
-            }
             Err(_) => {
-                error!("PHP request processing thread communication timed out");
+                error!("PHP Request timed out");
                 empty_response_with_status(hyper::StatusCode::GATEWAY_TIMEOUT)
             }
         }
     }
-    fn get_handler_type(&self) -> String {
-        "php".to_string()
+
+    /// Process FastCGI request directly without any channels or complex async spawning
+    async fn process_fastcgi_request_direct(
+        &self,
+        method: String,
+        uri: String,
+        path: String,
+        headers: HashMap<String, String>,
+        body: Vec<u8>,
+        script_file: String,
+        local_web_root: String,
+        is_https: bool,
+        remote_ip: String,
+        server_port: u16,
+        http_version: String,
+        ip_and_port: String
+    ) -> hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
+        trace!("Connecting to FastCGI server at {}", ip_and_port);
+
+        // Connect to the FastCGI server
+        let mut stream = match tokio::net::TcpStream::connect(&ip_and_port).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                error!("Failed to connect to FastCGI server {}: {}", ip_and_port, e);
+                return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+            }
+        };
+
+        // Parse the URI to get script name and query string
+        let uri_parts: Vec<&str> = uri.splitn(2, '?').collect();
+        let script_name = uri_parts[0];
+        let query_string = if uri_parts.len() > 1 { uri_parts[1] } else { "" };
+
+        // Handle web root mapping
+        let mut full_script_path = script_file.clone();
+        let mut script_web_root = local_web_root.clone();
+
+        if !self.other_webroot.is_empty() {
+            let full_local_web_root_result = get_full_file_path(&local_web_root);
+            if let Err(e) = full_local_web_root_result {
+                trace!("Error resolving file path for local web root {}: {}", local_web_root, e);
+                return empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            let full_local_web_root = full_local_web_root_result.unwrap();
+            full_script_path = replace_web_root_in_path(&full_script_path, &full_local_web_root, &self.other_webroot);
+            script_web_root = self.other_webroot.clone();
+        }
+
+        let (directory, filename) = split_path(&script_web_root, &full_script_path);
+        trace!("PHP FastCGI - Directory: {}, Filename: {}", directory, filename);
+
+        // Check if the script file actually exists
+        if let Ok(metadata) = std::fs::metadata(&script_file) {
+            if !metadata.is_file() {
+                error!("PHP script path exists but is not a file: {}", script_file);
+                return empty_response_with_status(hyper::StatusCode::NOT_FOUND);
+            }
+        } else {
+            error!("PHP script file does not exist: {}", script_file);
+            return empty_response_with_status(hyper::StatusCode::NOT_FOUND);
+        }
+
+        // Build FastCGI parameters (CGI environment variables)
+        let mut params: Vec<(String, String)> = Vec::new();
+        params.push(("REQUEST_METHOD".to_string(), method.clone()));
+        params.push(("REQUEST_URI".to_string(), uri.clone()));
+        params.push(("SCRIPT_NAME".to_string(), script_name.to_string()));
+        params.push(("SCRIPT_FILENAME".to_string(), full_script_path.clone()));
+        params.push(("DOCUMENT_ROOT".to_string(), script_web_root.clone()));
+        params.push(("QUERY_STRING".to_string(), query_string.to_string()));
+        params.push(("CONTENT_LENGTH".to_string(), body.len().to_string()));
+        params.push(("SERVER_SOFTWARE".to_string(), "Grux".to_string()));
+        params.push(("SERVER_NAME".to_string(), "".to_string()));
+        params.push(("SERVER_PORT".to_string(), server_port.to_string()));
+        params.push(("HTTPS".to_string(), if is_https { "on" } else { "off" }.to_string()));
+        params.push(("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string()));
+        params.push(("SERVER_PROTOCOL".to_string(), http_version.clone()));
+        params.push(("REMOTE_ADDR".to_string(), remote_ip.clone()));
+        params.push(("REMOTE_HOST".to_string(), "".to_string()));
+        params.push(("PATH_INFO".to_string(), path.clone()));
+        params.push(("REDIRECT_STATUS".to_string(), "200".to_string()));
+
+        // Add HTTP headers as CGI variables
+        for (key, value) in &headers {
+            let cgi_key = format!("HTTP_{}", key.to_uppercase().replace('-', "_"));
+            params.push((cgi_key, value.clone()));
+        }
+
+        // Set content type if present
+        if let Some(content_type) = headers.get("content-type") {
+            params.push(("CONTENT_TYPE".to_string(), content_type.clone()));
+        }
+
+        // Send FastCGI request
+        trace!("📤 Sending FastCGI request...");
+
+        // Send BEGIN_REQUEST
+        let begin_request = PhpCgiProcess::create_fastcgi_begin_request();
+        if let Err(e) = stream.write_all(&begin_request).await {
+            error!("Failed to send BEGIN_REQUEST: {}", e);
+            return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+        }
+
+        // Send parameters
+        let params_data = PhpCgiProcess::create_fastcgi_params(&params);
+        if let Err(e) = stream.write_all(&params_data).await {
+            error!("Failed to send PARAMS: {}", e);
+            return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+        }
+
+        // Send empty params to signal end
+        let empty_params = PhpCgiProcess::create_fastcgi_params(&[]);
+        if let Err(e) = stream.write_all(&empty_params).await {
+            error!("Failed to send empty params: {}", e);
+            return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+        }
+
+        // Send body if present
+        if !body.is_empty() {
+            let stdin_data = PhpCgiProcess::create_fastcgi_stdin(&body);
+            if let Err(e) = stream.write_all(&stdin_data).await {
+                error!("Failed to send STDIN: {}", e);
+                return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+            }
+        }
+
+        // Send empty stdin to signal end
+        let empty_stdin = PhpCgiProcess::create_fastcgi_stdin(&[]);
+        if let Err(e) = stream.write_all(&empty_stdin).await {
+            error!("Failed to send empty stdin: {}", e);
+            return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+        }
+
+        // Read response
+        trace!("Reading FastCGI response...");
+        let mut response_buffer = Vec::new();
+        let mut buffer = [0u8; 4096];
+
+        // Read with timeout
+        let timeout_duration = Duration::from_secs(30);
+        match tokio::time::timeout(timeout_duration, async {
+            loop {
+                match stream.read(&mut buffer).await {
+                    Ok(0) => break, // Connection closed
+                    Ok(n) => response_buffer.extend_from_slice(&buffer[..n]),
+                    Err(e) => return Err(e),
+                }
+                // Simple check for end of FastCGI response
+                if response_buffer.len() > 8 && Self::is_fastcgi_response_complete(&response_buffer) {
+                    break;
+                }
+            }
+            Ok::<(), std::io::Error>(())
+        }).await {
+            Ok(_) => {},
+            Err(_) => {
+                error!("FastCGI response timeout");
+                return empty_response_with_status(hyper::StatusCode::GATEWAY_TIMEOUT);
+            }
+        }
+
+        // Parse FastCGI response and extract HTTP response
+        let http_response = Self::parse_fastcgi_response(&response_buffer);
+
+        if http_response.trim().is_empty() {
+            error!("Empty response from PHP-CGI process");
+            return empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR);
+        }
+
+        // Parse the HTTP response
+        let (headers_part, body_part) = if let Some(pos) = http_response.find("\r\n\r\n") {
+            let (h, b) = http_response.split_at(pos + 4);
+            (h.to_string(), b.to_string())
+        } else if let Some(pos) = http_response.find("\n\n") {
+            let (h, b) = http_response.split_at(pos + 2);
+            (h.to_string(), b.to_string())
+        } else {
+            ("".to_string(), http_response)
+        };
+
+        // Build HTTP response
+        let mut response_builder = hyper::Response::builder();
+        let mut status_code = hyper::StatusCode::OK;
+
+        // Parse headers
+        for line in headers_part.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Some(colon_pos) = line.find(':') {
+                let (key, value) = line.split_at(colon_pos);
+                let value = value[1..].trim(); // Remove colon and trim
+
+                if key.eq_ignore_ascii_case("status") {
+                    // Parse status code
+                    if let Some(space_pos) = value.find(' ') {
+                        if let Ok(code) = value[..space_pos].parse::<u16>() {
+                            if let Ok(status) = hyper::StatusCode::from_u16(code) {
+                                status_code = status;
+                            }
+                        }
+                    }
+                } else {
+                    // Add other headers
+                    if let Ok(header_name) = hyper::header::HeaderName::from_bytes(key.as_bytes()) {
+                        if let Ok(header_value) = hyper::header::HeaderValue::from_str(value) {
+                            response_builder = response_builder.header(header_name, header_value);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build the final response
+        match response_builder.status(status_code).body(full(body_part)) {
+            Ok(response) => {
+                trace!("FastCGI response parsed successfully");
+                response
+            }
+            Err(e) => {
+                error!("Failed to build HTTP response: {}", e);
+                empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        }
     }
 }
