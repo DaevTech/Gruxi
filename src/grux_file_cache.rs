@@ -24,6 +24,7 @@ pub struct FileCache {
 
 #[derive(Clone, Debug)]
 pub struct CachedFile {
+    pub file_path: String,
     pub is_directory: bool,
     pub exists: bool,
     pub length: u64,
@@ -134,6 +135,7 @@ impl FileCache {
             }
 
             let new_cached_file = CachedFile {
+                file_path: file_path.to_string(),
                 is_directory: is_directory,
                 exists: exists,
                 length: length,

@@ -13,8 +13,8 @@ use crate::grux_core::grux_operation_mode::OperationMode;
 
 // Initilize the logging
 pub fn init_logging(operation_mode: OperationMode) -> Result<log4rs::Handle, String> {
-    let file_path = get_log_location().map_err(|e| format!("Failed to get log location: {}", e))?;
-    let file_path = format!("{}/system.log", file_path);
+    let log_path = get_log_location().map_err(|e| format!("Failed to get log location: {}", e))?;
+    let file_path = format!("{}/system.log", &log_path);
 
     // Build a stderr logger.
     let stderr = ConsoleAppender::builder()
@@ -26,7 +26,7 @@ pub fn init_logging(operation_mode: OperationMode) -> Result<log4rs::Handle, Str
     let logfile = FileAppender::builder()
         // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/indeonex.html
         .encoder(Box::new(PatternEncoder::new("{h({d(%d-%m-%Y %H:%M:%S)(utc)} - {l}: {m}{n})}")))
-        .build(file_path)
+        .build(&file_path)
         .unwrap();
 
     // Log Trace level output to file where trace is the default level
@@ -40,6 +40,11 @@ pub fn init_logging(operation_mode: OperationMode) -> Result<log4rs::Handle, Str
 
     match operation_mode {
         OperationMode::DEV => {
+            // We truncate the log files on each start in dev mode
+            use std::fs::OpenOptions;
+            let _ = OpenOptions::new().write(true).truncate(true).create(true).open(format!("{}/system.log", &log_path)).unwrap();
+            let _ = OpenOptions::new().write(true).truncate(true).create(true).open(format!("{}/trace.log", &log_path)).unwrap();
+
             config = Config::builder()
                 .appender(Appender::builder().filter(Box::new(ThresholdFilter::new(LevelFilter::Info))).build("logfile", Box::new(logfile)))
                 .appender(Appender::builder().filter(Box::new(ThresholdFilter::new(LevelFilter::Info))).build("stderr", Box::new(stderr)))

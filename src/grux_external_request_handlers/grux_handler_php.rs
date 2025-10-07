@@ -311,7 +311,7 @@ pub struct PHPHandler {
     request_queue_rx: Arc<Mutex<mpsc::Receiver<PHPRequest>>>,
     tokio_runtime: tokio::runtime::Runtime,
     request_timeout: usize,
-    max_concurrent_requests: usize,
+    concurrent_threads: usize,
     ip_and_port: String,
     other_webroot: String,
     php_process: Arc<Mutex<PhpCgiProcess>>,
@@ -323,13 +323,14 @@ impl PHPHandler {
         executable: String,
         ip_and_port: String,
         request_timeout: usize,
-        max_concurrent_requests: usize,
+        concurrent_threads: usize,
         other_webroot: String,
         _extra_handler_config: Vec<(String, String)>,
         extra_environment: Vec<(String, String)>,
     ) -> Self {
         // Initialize PHP threads
         let (request_queue_tx, rx) = mpsc::channel::<PHPRequest>(1000);
+
         // Shared receiver
         let request_queue_rx = Arc::new(Mutex::new(rx));
         let tokio_runtime = Runtime::new().expect("Failed to create thread runtime for PHP handler");
@@ -350,22 +351,27 @@ impl PHPHandler {
             }
         }
 
+        // Determine the concurrent threads we want to spawn to handle requests
+        let concurrent_threads = if concurrent_threads == 0 {
+            let cpus = num_cpus::get_physical();
+            cpus
+        } else if concurrent_threads < 1 {
+            1
+        } else {
+            concurrent_threads
+        };
+
         PHPHandler {
             request_queue_tx,
             request_queue_rx,
             tokio_runtime,
             request_timeout,
-            max_concurrent_requests,
+            concurrent_threads,
             ip_and_port,
             other_webroot,
             php_process,
             is_using_external_fastcgi,
         }
-    }
-
-    /// Get the maximum number of concurrent requests this handler supports
-    pub fn get_max_concurrent_requests(&self) -> usize {
-        self.max_concurrent_requests
     }
 
     /// Handle a FastCGI request to the PHP process
@@ -460,9 +466,11 @@ impl PHPHandler {
 
         // Log all FastCGI parameters for debugging
         trace!("FastCGI parameters being sent:");
+        let mut fastcgi_params = String::new();
         for (key, value) in &params {
-            trace!("  {} = {}", key, value);
+            fastcgi_params.push_str(&format!("{}={}  ", key, value));
         }
+        trace!("{}", fastcgi_params);
 
         // Send a basic FastCGI BEGIN_REQUEST
         let begin_request = PhpCgiProcess::create_fastcgi_begin_request();
@@ -656,13 +664,13 @@ impl ExternalRequestHandler for PHPHandler {
         }
 
         // Start PHP worker threads
-        for worker_id in 0..self.max_concurrent_requests {
+        for worker_id in 0..self.concurrent_threads {
             let rx = self.request_queue_rx.clone();
             let process_clone = php_process.clone();
             let mut ip_and_port = ip_and_port.clone();
 
             tokio::spawn(async move {
-                trace!("PHP worker thread {} started using PHP interpreter at {}", worker_id, ip_and_port);
+                trace!("PHP worker thread {} started", worker_id);
 
                 // Main request processing loop (no longer restart the process after max requests)
                 loop {
@@ -738,7 +746,17 @@ impl ExternalRequestHandler for PHPHandler {
     /// 3. Spawn an async task in the existing runtime to wait for the response
     /// 4. Use std::sync channels to get the result back to the sync context
     /// 5. Return the HTTP response synchronously
-    fn handle_request(&self, method: &hyper::Method, uri: &hyper::Uri, headers: &hyper::HeaderMap, body: Vec<u8>, site: &Site, full_file_path: &String, remote_ip: &String, http_version: &String) -> hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
+    fn handle_request(
+        &self,
+        method: &hyper::Method,
+        uri: &hyper::Uri,
+        headers: &hyper::HeaderMap,
+        body: Vec<u8>,
+        site: &Site,
+        full_file_path: &String,
+        remote_ip: &String,
+        http_version: &String,
+    ) -> hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
         trace!("PHP request received: {} {}", method, uri);
 
         // Extract request data
@@ -769,11 +787,7 @@ impl ExternalRequestHandler for PHPHandler {
         let full_web_root = full_web_root_result.unwrap();
 
         // Get some info needed for the fastcgi params
-        let is_https = if let Some(scheme) = uri.scheme_str() {
-            scheme.eq_ignore_ascii_case("https")
-        } else {
-            false
-        };
+        let is_https = if let Some(scheme) = uri.scheme_str() { scheme.eq_ignore_ascii_case("https") } else { false };
 
         // Get server port from ip_and_port if possible
         let server_port = if let Some(colon_pos) = self.ip_and_port.rfind(':') {

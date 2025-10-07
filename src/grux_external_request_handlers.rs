@@ -3,23 +3,38 @@ use crate::{
     grux_configuration_struct::{RequestHandler, Server, Site},
     grux_external_request_handlers::grux_handler_php::PHPHandler,
 };
+use http_body_util::combinators::BoxBody;
+use hyper::Response;
+use hyper::body::Bytes;
 use log::debug;
 use std::{collections::HashMap, sync::OnceLock};
-use hyper::{Response};
-use hyper::body::Bytes;
-use http_body_util::combinators::BoxBody;
 pub mod grux_handler_php;
 
 pub struct ExternalRequestHandlers {
     handlers: HashMap<String, Box<dyn ExternalRequestHandler>>,
 }
 
+// Supported rewrite functions
+pub static REWRITE_FUNCTIONS: &[&str] = &[
+    "OnlyWebRootIndexForSubdirs",
+];
+
 // A trait for external request handlers
 pub trait ExternalRequestHandler: Send + Sync {
     fn start(&self);
     fn stop(&self);
     fn get_file_matches(&self) -> Vec<String>;
-    fn handle_request(&self, method: &hyper::Method, uri: &hyper::Uri, headers: &hyper::HeaderMap, body: Vec<u8>, site: &Site, full_file_path: &String, remote_ip: &String, http_version: &String) -> Response<BoxBody<Bytes, hyper::Error>>;
+    fn handle_request(
+        &self,
+        method: &hyper::Method,
+        uri: &hyper::Uri,
+        headers: &hyper::HeaderMap,
+        body: Vec<u8>,
+        site: &Site,
+        full_file_path: &String,
+        remote_ip: &String,
+        http_version: &String,
+    ) -> Response<BoxBody<Bytes, hyper::Error>>;
     fn get_handler_type(&self) -> String;
 }
 

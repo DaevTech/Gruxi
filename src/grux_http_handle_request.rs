@@ -1,4 +1,7 @@
+use std::collections::HashMap;
+
 use crate::grux_configuration_struct::*;
+use crate::grux_file_cache::CachedFile;
 use crate::grux_file_cache::get_file_cache;
 use crate::grux_file_util::get_full_file_path;
 use crate::grux_http_admin::*;
@@ -19,7 +22,7 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
     // Extract data for the request before we borrow/move
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let path = uri.path();
+    let mut path = uri.path();
     let query = uri.query().unwrap_or("");
     let body_size = req.body().size_hint().upper().unwrap_or(0);
 
@@ -35,6 +38,16 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
         return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
     }
     let site = site.unwrap();
+    trace!("Matched site with request: {:?}", site);
+
+    // Put the rewrite functions in a hashmap, so we can easily check them
+    let rewrite_functions = {
+        let mut map = HashMap::new();
+        for rewrite in &site.rewrite_functions {
+            map.insert(rewrite.clone(), ());
+        }
+        map
+    };
 
     // Check if the request is for the admin portal - handle these first
     if binding.is_admin {
@@ -60,57 +73,58 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
         "Received request: method={}, path={}, query={}, body_size={}, headers={:?}",
         method, path, query, body_size, headers_map
     );
-    trace!("Matched site with request: {:?}", site);
 
     // First, check if there is a specific file requested
     let web_root = &site.web_root;
 
-    // Check if if request is for path or file
-    let path_cleaned = clean_url_path(path);
-
-    let mut file_path = format!("{}/{}", web_root, path_cleaned);
-
-    // Expand it to full path
-    let resolved_path = get_full_file_path(&file_path);
-    if let Err(e) = resolved_path {
-        trace!("Error resolving file path {}: {}", file_path, e);
+    // Get the cached file, if it exists
+    let file_data_result = resolve_web_root_and_path_and_get_file(web_root.clone(), path.to_string());
+    if let Err(_) = file_data_result {
         return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
     }
-    file_path = resolved_path.unwrap();
-
-    trace!("Checking file path: {}", file_path);
-
-    // Check if the file/dir exists using direct tokio::fs calls
-    let file_cache = get_file_cache();
-    let mut file_data = file_cache.get_file(&file_path).unwrap();
+    let mut file_data = file_data_result.unwrap();
+    let mut file_path = file_data.file_path.clone();
 
     if !file_data.exists {
         trace!("File does not exist: {}", file_path);
-        return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+        if rewrite_functions.contains_key("OnlyWebRootIndexForSubdirs") {
+            trace!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path);
+            // We rewrite the path to just "/" which will make it serve the index file
+            path = "/";
+
+            // Get the cached file, if it exists
+            let file_data_result = resolve_web_root_and_path_and_get_file(web_root.clone(), path.to_string());
+            if let Err(_) = file_data_result {
+                return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+            }
+            file_data = file_data_result.unwrap();
+            file_path = file_data.file_path.clone();
+        } else {
+            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+        }
     }
 
     if file_data.is_directory {
         // If it's a directory, we will try to return the index file
         trace!("File is a directory: {}", file_path);
 
-        let index_file = {
-            let mut found_index = None;
-            for file in &site.web_root_index_file_list {
-                let index_path = format!("{}/{}", file_path, file);
-                let index_data = file_cache.get_file(&index_path).unwrap();
-                if index_data.exists {
-                    trace!("Returning index file: {}", index_path);
-                    file_data = index_data;
-                    file_path = index_path;
-                    found_index = Some(file.clone());
-                    break;
-                }
+        // Check if we can find a index file in the directory
+        let mut found_index = false;
+        for file in &site.web_root_index_file_list {
+            // Get the cached file, if it exists
+            let file_data_result = resolve_web_root_and_path_and_get_file(file_path.clone(), file.to_string());
+            if let Err(_) = file_data_result {
+                trace!("Index files in dir does not exist: {}", file_path);
+                continue;
             }
-            found_index
-        };
+            let file_data = file_data_result.unwrap();
+            file_path = file_data.file_path.clone();
+            trace!("Found index file: {}", file_path);
+            found_index = true;
+            break;
+        }
 
-        if index_file.is_none() {
-            trace!("Index files in dir does not exist: {}", file_path);
+        if !found_index {
             return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
         }
     }
@@ -168,7 +182,7 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
     let mut response;
     if handler_did_stuff {
         response = handler_response;
-        additional_headers.push(("Content-Type", "text/html; charset=utf-8"));
+        // We do not set a default Content-Type here, as the handler should do that
     } else {
         additional_headers.push(("Content-Type", &file_data.mime_type));
 
@@ -191,6 +205,17 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
     add_standard_headers_to_response(&mut response);
 
     Ok(response)
+}
+
+// Combine the web root and path, and resolve to a full path
+fn resolve_web_root_and_path_and_get_file(web_root: String, path: String) -> Result<CachedFile, std::io::Error> {
+    let path_cleaned = clean_url_path(&path);
+    let mut file_path = format!("{}/{}", web_root, path_cleaned);
+    trace!("Resolved file path for resolving: {}", file_path);
+    file_path = get_full_file_path(&file_path)?;
+    let file_cache = get_file_cache();
+    let file_data = file_cache.get_file(&file_path).unwrap();
+    Ok(file_data)
 }
 
 // Find a best match site for the requested hostname

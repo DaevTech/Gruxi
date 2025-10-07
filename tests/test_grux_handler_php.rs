@@ -30,7 +30,6 @@ fn test_php_handler_with_single_process() {
     );
 
     // Test that handler can be created and will use single internal process
-    assert_eq!(handler.get_max_concurrent_requests(), 2);
     assert_eq!(handler.get_handler_type(), "php");
     assert_eq!(handler.get_file_matches(), vec![".php".to_string()]);
 
@@ -54,9 +53,6 @@ fn test_php_handler_lifecycle() {
     // Test that we can call start and stop methods
     handler.start();
     handler.stop();
-
-    // Just verify the handler was created properly
-    assert_eq!(handler.get_max_concurrent_requests(), 1);
 }
 
 #[test]
@@ -70,9 +66,6 @@ fn test_php_handler_concurrent_processing() {
         vec![],
         vec![]
     );
-
-    // Test that handler can be created with multiple concurrent requests
-    assert_eq!(handler.get_max_concurrent_requests(), 3);
 
     // Start and stop the handler
     handler.start();

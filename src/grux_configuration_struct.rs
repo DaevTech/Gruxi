@@ -31,6 +31,7 @@ pub struct Site {
     pub tls_cert_path: Option<String>,
     #[serde(default)]
     pub tls_key_path: Option<String>,
+    pub rewrite_functions: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,12 +73,12 @@ pub struct Core {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RequestHandler {
-    pub id: String,             // Generated id, unique, so it can be referenced from sites as a handler
-    pub is_enabled: bool,       // Whether it is enabled or not
-    pub name: String,           // A name to identify the handler, self chosen
-    pub handler_type: String,   // e.g., "php", "python", etc. Used by the handlers to identify if they should handle requests
-    pub request_timeout: usize, // Seconds
-    pub max_concurrent_requests: usize,
+    pub id: String,                                  // Generated id, unique, so it can be referenced from sites as a handler
+    pub is_enabled: bool,                            // Whether it is enabled or not
+    pub name: String,                                // A name to identify the handler, self chosen
+    pub handler_type: String,                        // e.g., "php", "python", etc. Used by the handlers to identify if they should handle requests
+    pub request_timeout: usize,                      // Seconds
+    pub max_concurrent_requests: usize,              // 0 = automatically based on CPU cores
     pub file_match: Vec<String>,                     // .php, .html, etc
     pub executable: String,                          // Path to the executable or script that handles the request, like php-cgi.exe location for PHP on windows
     pub ip_and_port: String,                         // IP and port to connect to the handler, e.g. 127.0.0.1:9000 for FastCGI passthrough
@@ -98,6 +99,7 @@ impl Configuration {
             //enabled_handlers: vec![], // No specific handlers enabled by default
             tls_cert_path: None,
             tls_key_path: None,
+            rewrite_functions: vec![],
         };
 
         let admin_site = Site {
@@ -109,6 +111,19 @@ impl Configuration {
             enabled_handlers: vec![], // No specific handlers enabled by default
             tls_cert_path: None,
             tls_key_path: None,
+            rewrite_functions: vec![],
+        };
+
+        let test_wp_site = Site {
+            hostnames: vec!["gruxsite".to_string()],
+            is_default: false,
+            is_enabled: true,
+            web_root: "D:/dev/test-sites/grux-wp-site1".to_string(),
+            web_root_index_file_list: vec!["index.php".to_string()],
+            enabled_handlers: vec!["php_handler".to_string()], // For testing
+            tls_cert_path: None,
+            tls_key_path: None,
+            rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
         };
 
         let admin_binding = Binding {
@@ -124,7 +139,7 @@ impl Configuration {
             port: 80,
             is_admin: false,
             is_tls: false,
-            sites: vec![default_site.clone()],
+            sites: vec![default_site.clone(), test_wp_site],
         };
 
         let default_binding_tls = Binding {
@@ -135,7 +150,9 @@ impl Configuration {
             sites: vec![default_site.clone()],
         };
 
-        let default_server = Server { bindings: vec![default_binding, default_binding_tls] };
+        let default_server = Server {
+            bindings: vec![default_binding, default_binding_tls],
+        };
         let admin_server = Server { bindings: vec![admin_binding] };
 
         let admin_site = AdminSite { is_admin_portal_enabled: true };
@@ -168,8 +185,8 @@ impl Configuration {
             is_enabled: true,
             name: "PHP Handler".to_string(),
             handler_type: "php".to_string(),
-            request_timeout: 30, // seconds
-            max_concurrent_requests: 10,
+            request_timeout: 30,        // seconds
+            max_concurrent_requests: 0, // 0 = automatically based on CPU cores
             file_match: vec![".php".to_string()],
             executable: "D:/dev/php/8.2.9/php-cgi.exe".to_string(), // Path to the PHP CGI executable (windows only)
             //ip_and_port: "127.0.0.1:10001".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
