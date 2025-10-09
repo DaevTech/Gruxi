@@ -90,7 +90,7 @@ fn start_external_request_handlers() -> Result<ExternalRequestHandlers, String> 
     for (handler_type, handler) in handler_type_to_load {
         // Determine the concurrent threads. Can be set in config or we determine it based on CPU cores
         // 0 = automatically based on CPU cores
-        let concurrent_threads = if handler.concurrent_threads == 0 {
+        let mut concurrent_threads = if handler.concurrent_threads == 0 {
             let cpus = num_cpus::get_physical();
             cpus
         } else if handler.concurrent_threads < 1 {
@@ -98,6 +98,9 @@ fn start_external_request_handlers() -> Result<ExternalRequestHandlers, String> 
         } else {
             handler.concurrent_threads
         };
+        if concurrent_threads > 3 {
+            concurrent_threads -= 1;
+        }
 
         match handler_type.as_str() {
             "php" => {

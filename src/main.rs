@@ -8,7 +8,8 @@ use grux::grux_http_server;
 use grux::grux_log;
 use log::{error, info};
 
-fn main() {
+#[tokio::main(flavor = "multi_thread")]
+async fn main() {
     let logo = r#"
   ________
  /  _____/______ __ _____  ___
@@ -60,7 +61,7 @@ fn main() {
     info!("External request handlers initialized");
 
     // Init server bindings and start serving those bits
-    if let Err(e) = grux_http_server::initialize_server() {
+    if let Err(e) = grux_http_server::initialize_server().await {
         error!("Error initializing server: {}", e);
         std::process::exit(1);
     }

@@ -6,12 +6,14 @@ use crate::grux_port_manager::PortManager;
 use http_body_util::combinators::BoxBody;
 use log::{error, trace, warn};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicU16, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU16, Ordering},
+};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, Semaphore};
-
 
 /// Structure to manage a single persistent PHP-CGI process with FastCGI children.
 ///
@@ -296,8 +298,6 @@ impl PHPHandler {
         _extra_handler_config: Vec<(String, String)>,
         extra_environment: Vec<(String, String)>,
     ) -> Self {
-
-
         // Get the singleton port manager instance
         let port_manager = PortManager::instance();
 
@@ -468,13 +468,10 @@ impl ExternalRequestHandler for PHPHandler {
         http_version: &String,
     ) -> hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
         // Use block_in_place to run async code in sync context - but do it cleanly
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                self.handle_request_async(method, uri, headers, body, site, full_file_path, remote_ip, http_version).await
-            })
-        })
+        tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(async { self.handle_request_async(method, uri, headers, body, site, full_file_path, remote_ip, http_version).await }))
     }
 
+    // Return the handle type identifier
     fn get_handler_type(&self) -> String {
         "php".to_string()
     }
@@ -582,20 +579,25 @@ impl PHPHandler {
 
         let timeout_duration = Duration::from_secs(self.request_timeout as u64);
 
-        match tokio::time::timeout(timeout_duration, self.process_fastcgi_request_direct(
-            method_str,
-            uri_str,
-            path.to_string(),
-            headers_map,
-            body,
-            full_file_path.clone(),
-            full_web_root,
-            is_https,
-            remote_ip.clone(),
-            server_port,
-            http_version.clone(),
-            ip_and_port
-        )).await {
+        match tokio::time::timeout(
+            timeout_duration,
+            self.process_fastcgi_request_direct(
+                method_str,
+                uri_str,
+                path.to_string(),
+                headers_map,
+                body,
+                full_file_path.clone(),
+                full_web_root,
+                is_https,
+                remote_ip.clone(),
+                server_port,
+                http_version.clone(),
+                ip_and_port,
+            ),
+        )
+        .await
+        {
             Ok(response) => {
                 trace!("PHP Request completed successfully");
                 response
@@ -621,7 +623,7 @@ impl PHPHandler {
         remote_ip: String,
         server_port: u16,
         http_version: String,
-        ip_and_port: String
+        ip_and_port: String,
     ) -> hyper::Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
         let available_permits = self.connection_semaphore.available_permits();
         trace!("Acquiring connection permit for FastCGI server at {} (available permits: {})", ip_and_port, available_permits);
@@ -775,8 +777,10 @@ impl PHPHandler {
                 }
             }
             Ok::<(), std::io::Error>(())
-        }).await {
-            Ok(_) => {},
+        })
+        .await
+        {
+            Ok(_) => {}
             Err(_) => {
                 error!("FastCGI response timeout");
                 return empty_response_with_status(hyper::StatusCode::GATEWAY_TIMEOUT);
@@ -847,8 +851,10 @@ impl PHPHandler {
                 trace!("FastCGI response parsed successfully in {:?}", duration);
 
                 // _permit will be automatically dropped here, releasing the semaphore permit
-                trace!("Connection permit will be released (available permits after release: {})",
-                       self.connection_semaphore.available_permits() + 1);
+                trace!(
+                    "Connection permit will be released (available permits after release: {})",
+                    self.connection_semaphore.available_permits() + 1
+                );
                 response
             }
             Err(e) => {

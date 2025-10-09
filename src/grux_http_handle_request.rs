@@ -8,6 +8,7 @@ use crate::grux_http_admin::*;
 use crate::grux_http_util::*;
 use http_body_util::BodyExt;
 use http_body_util::combinators::BoxBody;
+use hyper::HeaderMap;
 use hyper::body::Body;
 use hyper::body::Bytes;
 use hyper::header::HeaderValue;
@@ -25,12 +26,16 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
     let mut path = uri.path();
     let query = uri.query().unwrap_or("");
     let body_size = req.body().size_hint().upper().unwrap_or(0);
+    let scheme = uri.scheme_str().unwrap_or("");
+    let headers = req.headers();
 
     // Extract hostname from headers
-    let requested_hostname = {
-        let headers = req.headers();
-        headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("").to_string()
-    };
+    let requested_hostname = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("").to_string();
+
+    // Validate the request
+    if let Err(resp) = validate_request(&headers, &method.to_string(), &uri.to_string(), &path.to_string(), &query.to_string(), body_size).await {
+        return Ok(resp);
+    }
 
     // Figure out which site we are serving
     let site = find_best_match_site(&binding.sites, &requested_hostname);
@@ -73,6 +78,26 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
         "Received request: method={}, path={}, query={}, body_size={}, headers={:?}",
         method, path, query, body_size, headers_map
     );
+
+    // Handle special case for OPTIONS * request, which is stupid but valid
+    if method == hyper::Method::OPTIONS && path == "*" {
+        // Special case for OPTIONS * request
+        let mut resp = Response::new(full(""));
+        *resp.status_mut() = hyper::StatusCode::OK;
+        resp.headers_mut()
+            .insert("Allow", HeaderValue::from_static("GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT, PATCH"));
+        add_standard_headers_to_response(&mut resp);
+        return Ok(resp);
+    }
+    // Handle EXPECT: 100-continue header
+    if let Some(expect_header) = headers.get("expect") {
+        if expect_header.to_str().unwrap_or("").eq_ignore_ascii_case("100-continue") {
+            // Send 100 Continue response
+            let mut resp = empty_response_with_status(hyper::StatusCode::CONTINUE);
+            add_standard_headers_to_response(&mut resp);
+            return Ok(resp);
+        }
+    }
 
     // First, check if there is a specific file requested
     let web_root = &site.web_root;
@@ -199,11 +224,20 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
         *response.status_mut() = hyper::StatusCode::OK;
     }
 
+    // If method is OPTIONS, we add the Allow header if not already present
+    if method == hyper::Method::OPTIONS {
+        if !response.headers().iter().any(|(k, _)| k.as_str().to_lowercase() == "allow") {
+            additional_headers.push(("Allow", "GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT, PATCH"));
+        }
+    }
+
     for (key, value) in additional_headers {
         response.headers_mut().insert(key, HeaderValue::from_str(value).unwrap());
     }
 
     add_standard_headers_to_response(&mut response);
+
+    trace!("Responding with: {:?}", response);
 
     Ok(response)
 }
@@ -242,10 +276,27 @@ fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &'a str) -> O
     site
 }
 
-/*
-fn validate_requests(req: &Request<hyper::body::Incoming>) -> Result<(), hyper::Error> {
+async fn validate_request(headers: &HeaderMap, method: &str, uri: &str, path: &str, query: &str, body_size: u64) -> Result<(), Response<BoxBody<Bytes, hyper::Error>>> {
     // Here we can add any request validation logic if needed
-    // For now, we will just return Ok
+
+    // [HTTP1.1] Basic validation: check for valid method
+    if method != "GET" && method != "POST" && method != "HEAD" && method != "PUT" && method != "DELETE" && method != "OPTIONS" && method != "TRACE" && method != "CONNECT" && method != "PATCH" {
+        // Return a error for unsupported method
+        trace!("Unsupported HTTP method, return HTTP 501: {}", method);
+        return Err(empty_response_with_status(hyper::StatusCode::NOT_IMPLEMENTED));
+    }
+
+    // [HTTP1.1] Requires a Host header
+    if !headers.contains_key("Host") {
+        trace!("Missing Host header, return HTTP 400");
+        return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
+    }
+
+    // [HTTP1.1] If there is multiple host headers, we return a 400 error
+    if headers.get_all("Host").iter().count() > 1 {
+        trace!("Multiple Host headers, return HTTP 400");
+        return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
+    }
 
     /*
       // Protect our server from overly large bodies
@@ -259,4 +310,3 @@ fn validate_requests(req: &Request<hyper::body::Incoming>) -> Result<(), hyper::
 
     Ok(())
 }
-*/

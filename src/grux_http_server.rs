@@ -11,8 +11,7 @@ use std::net::SocketAddr;
 use tls_listener::rustls as tokio_rustls;
 use tokio::net::TcpListener;
 
-// Main function, starting all the Grux magic
-#[tokio::main(flavor = "multi_thread")]
+// Starting all the Grux magic
 pub async fn initialize_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Get configuration
     let config = get_configuration();

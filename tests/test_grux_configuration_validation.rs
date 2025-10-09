@@ -99,17 +99,6 @@ fn test_request_handler_validation_excessive_timeout() {
 }
 
 #[test]
-fn test_request_handler_validation_zero_concurrent_requests() {
-    let mut handler = create_valid_handler();
-    handler.concurrent_threads = 0;
-
-    let result = handler.validate();
-    assert!(result.is_err());
-    let errors = result.unwrap_err();
-    assert!(errors.iter().any(|e| e.contains("Max concurrent requests cannot be 0")));
-}
-
-#[test]
 fn test_request_handler_validation_excessive_concurrent_requests() {
     let mut handler = create_valid_handler();
     handler.concurrent_threads = 2000;
