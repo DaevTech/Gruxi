@@ -66,9 +66,15 @@ pub struct Gzip {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ServerSettings {
+    pub max_body_size: usize, // in bytes
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Core {
     pub file_cache: FileCache,
     pub gzip: Gzip,
+    pub server_settings: ServerSettings,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -178,7 +184,9 @@ impl Configuration {
             ],
         };
 
-        let core = Core { file_cache: file_cache, gzip: gzip };
+        let server_settings = ServerSettings { max_body_size: 10 * 1024 * 1024 }; // 10 MB
+
+        let core = Core { file_cache: file_cache, gzip: gzip, server_settings: server_settings };
 
         let request_handlers = vec![RequestHandler {
             id: "php_handler".to_string(),

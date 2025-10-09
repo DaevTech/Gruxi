@@ -9,7 +9,7 @@ use log4rs::{
     filter::threshold::ThresholdFilter,
 };
 use std::fs::OpenOptions;
-use crate::grux_core::grux_operation_mode::OperationMode;
+use crate::grux_core::operation_mode::OperationMode;
 
 // Initilize the logging
 pub fn init_logging(operation_mode: OperationMode) -> Result<log4rs::Handle, String> {

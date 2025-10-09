@@ -1,2 +1,2 @@
-pub mod grux_operation_mode;
-pub mod grux_command_line_args;
+pub mod operation_mode;
+pub mod command_line_args;

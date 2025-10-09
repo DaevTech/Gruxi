@@ -1,7 +1,7 @@
 use clap::Parser;
 use grux::grux_configuration;
-use grux::grux_core::grux_command_line_args::GruxCommandLineArgs;
-use grux::grux_core::grux_operation_mode::load_operation_mode;
+use grux::grux_core::command_line_args::CommandLineArgs;
+use grux::grux_core::operation_mode::load_operation_mode;
 use grux::grux_database;
 use grux::grux_external_request_handlers;
 use grux::grux_http_server;
@@ -22,7 +22,7 @@ async fn main() {
     println!("{}", logo);
 
     // Parse command line args
-    let cli = GruxCommandLineArgs::parse();
+    let cli = CommandLineArgs::parse();
 
     // Load operation mode
     let operation_mode = load_operation_mode(cli.opmode);
@@ -41,6 +41,13 @@ async fn main() {
     info!("Starting Grux {}...", version);
     info!("Operation mode: {:?}", operation_mode);
 
+    // Initialize database tables and migrations
+    if let Err(e) = grux_database::initialize_database() {
+        error!("Failed to initialize database: {}", e);
+        std::process::exit(1);
+    }
+    info!("Database initialized");
+
     // Load configuration and check for errors
     let configuration_check_result = grux_configuration::check_configuration();
     if let Err(e) = configuration_check_result {
@@ -49,12 +56,6 @@ async fn main() {
     }
     info!("Configuration loaded");
 
-    // Initialize database tables and migrations
-    if let Err(e) = grux_database::initialize_database() {
-        error!("Failed to initialize database: {}", e);
-        std::process::exit(1);
-    }
-    info!("Database initialized");
 
     // Initialize any external handlers, such as PHP, if needed
     grux_external_request_handlers::get_request_handlers();
