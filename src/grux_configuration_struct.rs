@@ -91,7 +91,37 @@ pub struct RequestHandler {
 }
 
 impl Configuration {
-    pub fn new() -> Self {
+    pub fn get_testing() -> Self {
+        let mut configuration = Self::get_default();
+
+        let test_wp_site = Site {
+            id: 0,
+            hostnames: vec!["gruxsite".to_string()],
+            is_default: false,
+            is_enabled: true,
+            web_root: "D:/dev/test-sites/grux-wp-site1".to_string(),
+            web_root_index_file_list: vec!["index.php".to_string()],
+            enabled_handlers: vec!["1".to_string()], // For testing
+            tls_cert_path: "".to_string(),
+            tls_cert_content: "".to_string(),
+            tls_key_path: "".to_string(),
+            tls_key_content: "".to_string(),
+            rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
+        };
+
+        // Push test site to the first server's first binding
+        if let Some(first_server) = configuration.servers.get_mut(0) {
+            if let Some(first_binding) = first_server.bindings.get_mut(0) {
+                first_binding.sites.push(test_wp_site);
+            }
+        }
+
+        configuration
+    }
+
+    pub fn get_default() -> Self {
+        let mut configuration = Self::new();
+
         let default_site = Site {
             id: 0,
             hostnames: vec!["*".to_string()],
@@ -99,8 +129,7 @@ impl Configuration {
             is_enabled: true,
             web_root: "./www-default".to_string(),
             web_root_index_file_list: vec!["index.html".to_string()],
-            enabled_handlers: vec!["1".to_string()], // For testing
-            //enabled_handlers: vec![], // No specific handlers enabled by default
+            enabled_handlers: vec![], // No specific handlers enabled by default
             tls_cert_path: "".to_string(),
             tls_cert_content: "".to_string(),
             tls_key_path: "".to_string(),
@@ -123,21 +152,6 @@ impl Configuration {
             rewrite_functions: vec![],
         };
 
-        let test_wp_site = Site {
-            id: 0,
-            hostnames: vec!["gruxsite".to_string()],
-            is_default: false,
-            is_enabled: true,
-            web_root: "D:/dev/test-sites/grux-wp-site1".to_string(),
-            web_root_index_file_list: vec!["index.php".to_string()],
-            enabled_handlers: vec!["1".to_string()], // For testing
-            tls_cert_path: "".to_string(),
-            tls_cert_content: "".to_string(),
-            tls_key_path: "".to_string(),
-            tls_key_content: "".to_string(),
-            rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
-        };
-
         let admin_binding = Binding {
             id: 0,
             ip: "0.0.0.0".to_string(),
@@ -153,7 +167,7 @@ impl Configuration {
             port: 80,
             is_admin: false,
             is_tls: false,
-            sites: vec![default_site.clone(), test_wp_site],
+            sites: vec![default_site.clone()],
         };
 
         let default_binding_tls = Binding {
@@ -170,38 +184,7 @@ impl Configuration {
         };
         let admin_server = Server { bindings: vec![admin_binding] };
 
-        let file_cache = FileCache {
-            is_enabled: false,
-            cache_item_size: 1000,
-            cache_max_size_per_file: 1024 * 1024 * 1,
-            cache_item_time_between_checks: 20, // seconds
-            cleanup_thread_interval: 10,        // seconds
-            max_item_lifetime: 60,              // seconds
-            forced_eviction_threshold: 70,      // 1-99 %
-        };
-
-        let gzip = Gzip {
-            is_enabled: true,
-            compressible_content_types: vec![
-                "text/".to_string(),
-                "application/json".to_string(),
-                "application/javascript".to_string(),
-                "application/xml".to_string(),
-                "image/svg+xml".to_string(),
-            ],
-        };
-
-        let server_settings = ServerSettings {
-            max_body_size: 10 * 1024 * 1024, // 10 MB
-        };
-
-        let core = Core {
-            file_cache: file_cache,
-            gzip: gzip,
-            server_settings: server_settings,
-        };
-
-        let request_handlers = vec![RequestHandler {
+        let php_request_handler = RequestHandler {
             id: "1".to_string(),
             is_enabled: true,
             name: "PHP Handler".to_string(),
@@ -216,12 +199,37 @@ impl Configuration {
             other_webroot: "".to_string(),
             extra_handler_config: vec![],
             extra_environment: vec![],
-        }];
+        };
 
+        configuration.servers.push(default_server);
+        configuration.servers.push(admin_server);
+        configuration.request_handlers.push(php_request_handler);
+
+        configuration
+    }
+
+    pub fn new() -> Self {
         Configuration {
-            servers: vec![default_server, admin_server],
-            core,
-            request_handlers,
+            servers: vec![],
+            core: Core {
+                file_cache: FileCache {
+                    is_enabled: false,
+                    cache_item_size: 1000,
+                    cache_max_size_per_file: 1024 * 1024 * 1,
+                    cache_item_time_between_checks: 20, // seconds
+                    cleanup_thread_interval: 10,        // seconds
+                    max_item_lifetime: 60,              // seconds
+                    forced_eviction_threshold: 70,      // 1-99 %
+                },
+                gzip: Gzip {
+                    is_enabled: false,
+                    compressible_content_types: vec![],
+                },
+                server_settings: ServerSettings {
+                    max_body_size: 10 * 1024 * 1024, // 10 MB
+                },
+            },
+            request_handlers: vec![],
         }
     }
 

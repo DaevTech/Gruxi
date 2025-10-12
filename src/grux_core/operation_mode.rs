@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 // Operation mode
 #[derive(Debug, Clone, Copy)]
 pub enum OperationMode {
@@ -21,4 +23,10 @@ pub fn load_operation_mode(from_cli: Option<String>) -> OperationMode {
         "SPEEDTEST" => OperationMode::SPEEDTEST,
         _ => OperationMode::DEV,
     }).unwrap_or(OperationMode::PRODUCTION)
+}
+
+static OPERATION_MODE_SINGLETON: OnceLock<OperationMode> = OnceLock::new();
+
+pub fn get_operation_mode() -> OperationMode {
+    *OPERATION_MODE_SINGLETON.get_or_init(|| load_operation_mode(None))
 }

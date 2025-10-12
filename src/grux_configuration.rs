@@ -25,8 +25,19 @@ fn init() -> Result<Configuration, String> {
     let configuration = {
         if schema_version == 0 {
             // No schema version found, likely first run - create default configuration
+            let operation_mode = crate::grux_core::operation_mode::get_operation_mode();
             info!("No configuration found, creating default configuration");
-            let mut default_configuration = Configuration::new();
+
+            // Load default configuration based on operation mode
+            let mut default_configuration = {
+                if matches!(operation_mode, crate::grux_core::operation_mode::OperationMode::DEV) {
+                    info!("Loading dev configuration");
+                    Configuration::get_testing()
+                } else {
+                    Configuration::get_default()
+                }
+            };
+
             save_configuration(&mut default_configuration)?;
 
             // Update schema version to 1
@@ -174,7 +185,9 @@ fn save_binding(connection: &Connection, binding: &mut Binding) -> Result<(), St
             ))
             .map_err(|e| format!("Failed to insert binding: {}", e))?;
         trace!("Inserted new binding: {:?}", binding);
-        let mut last_inserted_id_statement = connection.prepare("SELECT last_insert_rowid()").map_err(|e| format!("Failed to prepare last_insert_rowid query: {}", e))?;
+        let mut last_inserted_id_statement = connection
+            .prepare("SELECT last_insert_rowid()")
+            .map_err(|e| format!("Failed to prepare last_insert_rowid query: {}", e))?;
 
         match last_inserted_id_statement.next().map_err(|e| format!("Failed to execute last_insert_rowid query: {}", e))? {
             State::Row => binding.id = last_inserted_id_statement.read::<i64, _>(0).map_err(|e| format!("Failed to read last inserted id: {}", e))? as usize,
@@ -194,7 +207,6 @@ fn save_binding(connection: &Connection, binding: &mut Binding) -> Result<(), St
             ))
             .map_err(|e| format!("Failed to update binding: {}", e))?;
     }
-
 
     // After saving the bindings, we save the sites
     for site in &mut binding.sites {
@@ -218,7 +230,9 @@ fn save_binding(connection: &Connection, binding: &mut Binding) -> Result<(), St
                 ))
                 .map_err(|e| format!("Failed to insert site: {}", e))?;
             trace!("Inserted new site: {:?}", site);
-            let mut last_inserted_id_statement = connection.prepare("SELECT last_insert_rowid()").map_err(|e| format!("Failed to prepare last_insert_rowid query: {}", e))?;
+            let mut last_inserted_id_statement = connection
+                .prepare("SELECT last_insert_rowid()")
+                .map_err(|e| format!("Failed to prepare last_insert_rowid query: {}", e))?;
 
             match last_inserted_id_statement.next().map_err(|e| format!("Failed to execute last_insert_rowid query: {}", e))? {
                 State::Row => site.id = last_inserted_id_statement.read::<i64, _>(0).map_err(|e| format!("Failed to read last inserted id: {}", e))? as usize,
@@ -413,7 +427,9 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
 }
 
 fn load_sites(connection: &Connection, binding_id: i64) -> Result<Vec<Site>, String> {
-    let mut statement = connection.prepare("SELECT * FROM sites WHERE binding_id = ?").map_err(|e| format!("Failed to prepare sites query: {}", e))?;
+    let mut statement = connection
+        .prepare("SELECT * FROM sites WHERE binding_id = ?")
+        .map_err(|e| format!("Failed to prepare sites query: {}", e))?;
 
     statement.bind((1, binding_id)).map_err(|e| format!("Failed to bind binding_id: {}", e))?;
 
