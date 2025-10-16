@@ -8,9 +8,9 @@ Grux is a Rust-based, async web server and admin platform with modular request h
 - **Configuration:** Managed via `src/grux_configuration.rs` and `src/grux_configuration_struct.rs`. Config is loaded from the `grux_config` table in SQLite. If missing, a default is generated and persisted.
 - **HTTP Server:** `src/grux_http_server.rs` starts async servers (using `tokio`/`hyper`) for each configured binding. Admin endpoints are always served over TLS.
 - **Request Handling:**
-  - `src/grux_http_handle_request.rs` routes requests to static file serving, admin endpoints, or external handlers (e.g., PHP).
+  - `src/grux_http/handle_request.rs` routes requests to static file serving, admin endpoints, or external handlers (e.g., PHP).
   - `src/grux_external_request_handlers/` contains modular handlers (notably `grux_handler_php.rs` for PHP-CGI via persistent processes).
-- **Admin Portal:** Served from `www-admin/` and handled in `src/grux_http_admin.rs`. Supports login/logout, config management, and session handling.
+- **Admin Portal:** Served from `www-admin/` and handled in `src/grux_admin/http_admin_api.rs`. Supports login/logout, config management, and session handling.
 - **File Cache:** `src/grux_file_cache.rs` implements an in-memory cache for static files, configurable via the core config.
 - **Logging:** Uses `log4rs` with logs written to `logs/system.log` and `logs/trace.log`.
 

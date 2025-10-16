@@ -1,7 +1,7 @@
 use crate::grux_configuration::*;
 use crate::grux_configuration_struct::*;
-use crate::grux_http_handle_request::*;
-use crate::grux_http_tls::build_tls_acceptor;
+use crate::grux_http::handle_request::handle_request;
+use crate::grux_http::http_tls::build_tls_acceptor;
 use futures::future::join_all;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;

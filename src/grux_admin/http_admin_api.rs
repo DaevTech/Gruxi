@@ -1,12 +1,28 @@
 use crate::grux_configuration_struct::Site;
 use crate::grux_core::admin_user::{LoginRequest, authenticate_user, create_session, invalidate_session, verify_session_token};
-use crate::grux_http_util::full;
+use crate::grux_core::monitoring::get_monitoring_state;
+use crate::grux_http::http_util::full;
 use http_body_util::BodyExt;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::{Request, Response};
 use log::{debug, error, info};
 use serde_json;
+use std::fs;
+use std::path::Path;
+
+pub fn initialize_admin_site() {
+    // Check if there is at least one admin user
+    let connection_result = crate::grux_core::database_connection::get_database_connection();
+    if connection_result.is_err() {
+        error!("Failed to get database connection: {}", connection_result.err().unwrap());
+        return;
+    }
+    let connection = connection_result.unwrap();
+    crate::grux_core::admin_user::create_default_admin_user(&connection).unwrap_or_else(|e| {
+        error!("Failed to create default admin user: {}", e);
+    });
+}
 
 pub async fn handle_login_request(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check if this is a POST request
@@ -308,5 +324,236 @@ pub async fn require_authentication(req: &Request<hyper::body::Incoming>) -> Res
         *resp.status_mut() = hyper::StatusCode::UNAUTHORIZED;
         resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         Err(resp)
+    }
+}
+
+// Admin monitoring endpoint - returns monitoring data as JSON
+pub async fn admin_monitoring_endpoint(req: &Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    // Check authentication first
+    match require_authentication(req).await {
+        Ok(Some(_session)) => {
+            debug!("User authenticated, retrieving monitoring data");
+        }
+        Ok(None) => {
+            let mut resp = Response::new(full(r#"{"error": "Authentication required"}"#));
+            *resp.status_mut() = hyper::StatusCode::UNAUTHORIZED;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+        Err(auth_response) => {
+            return Ok(auth_response);
+        }
+    }
+
+    // Get monitoring data
+    let monitoring_data = get_monitoring_state().get_json();
+
+    let mut resp = Response::new(full(monitoring_data.to_string()));
+    *resp.status_mut() = hyper::StatusCode::OK;
+    resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    Ok(resp)
+}
+
+// Admin healthcheck endpoint - returns simple status without authentication
+pub async fn admin_healthcheck_endpoint(_req: &Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    let mut resp = Response::new(full("absolutely"));
+    resp.headers_mut().insert("Content-Type", "text/plain".parse().unwrap());
+    *resp.status_mut() = hyper::StatusCode::OK;
+    Ok(resp)
+}
+
+// Admin logs endpoint - lists available log files or returns specific log content
+pub async fn admin_logs_endpoint(req: &Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    // Check authentication first
+    match require_authentication(req).await {
+        Ok(Some(_session)) => {
+            debug!("User authenticated, retrieving logs");
+        }
+        Ok(None) => {
+            let mut resp = Response::new(full(r#"{"error": "Authentication required"}"#));
+            *resp.status_mut() = hyper::StatusCode::UNAUTHORIZED;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+        Err(auth_response) => {
+            return Ok(auth_response);
+        }
+    }
+
+    let path = req.uri().path();
+    let path_parts: Vec<&str> = path.split('/').collect();
+
+    // Parse the request path: /logs or /logs/{filename}
+    if path_parts.len() == 2 && path_parts[1] == "logs" {
+        // List all available log files
+        list_log_files().await
+    } else if path_parts.len() == 3 && path_parts[1] == "logs" {
+        // Return specific log file content
+        let filename = path_parts[2];
+        get_log_file_content(filename).await
+    } else {
+        let mut resp = Response::new(full(r#"{"error": "Invalid logs endpoint path"}"#));
+        *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+        resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        Ok(resp)
+    }
+}
+
+// Helper function to list all .log files in the logs directory
+async fn list_log_files() -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    let logs_dir = Path::new("logs");
+
+    match fs::read_dir(logs_dir) {
+        Ok(entries) => {
+            let mut log_files = Vec::new();
+
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if let Some(extension) = path.extension() {
+                        if extension == "log" {
+                            if let Some(filename) = path.file_name() {
+                                if let Some(filename_str) = filename.to_str() {
+                                    let metadata = fs::metadata(&path);
+                                    let file_size = metadata.map(|m| m.len()).unwrap_or(0);
+
+                                    log_files.push(serde_json::json!({
+                                        "filename": filename_str,
+                                        "size": file_size,
+                                        "path": path.to_string_lossy()
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let response_json = serde_json::json!({
+                "success": true,
+                "files": log_files
+            });
+
+            let mut resp = Response::new(full(response_json.to_string()));
+            *resp.status_mut() = hyper::StatusCode::OK;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            Ok(resp)
+        }
+        Err(e) => {
+            error!("Failed to read logs directory: {}", e);
+            let error_response = serde_json::json!({
+                "error": "Failed to read logs directory",
+                "details": e.to_string()
+            });
+            let mut resp = Response::new(full(error_response.to_string()));
+            *resp.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            Ok(resp)
+        }
+    }
+}
+
+// Helper function to get log file content with 1MB limit
+async fn get_log_file_content(filename: &str) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    // Validate filename to prevent directory traversal
+    if filename.contains("..") || filename.contains("/") || filename.contains("\\") {
+        let mut resp = Response::new(full(r#"{"error": "Invalid filename"}"#));
+        *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+        resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        return Ok(resp);
+    }
+
+    // Ensure filename ends with .log
+    if !filename.ends_with(".log") {
+        let mut resp = Response::new(full(r#"{"error": "Only .log files are allowed"}"#));
+        *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+        resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        return Ok(resp);
+    }
+
+    let log_path = Path::new("logs").join(filename);
+
+    if !log_path.exists() {
+        let mut resp = Response::new(full(r#"{"error": "Log file not found"}"#));
+        *resp.status_mut() = hyper::StatusCode::NOT_FOUND;
+        resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        return Ok(resp);
+    }
+
+    match fs::metadata(&log_path) {
+        Ok(metadata) => {
+            let file_size = metadata.len();
+            let max_size = 1024 * 1024; // 1MB limit
+
+            match fs::read_to_string(&log_path) {
+                Ok(content) => {
+                    let (log_content, is_truncated) = if file_size > max_size {
+                        // If file is larger than 1MB, return only the last 1MB
+                        let bytes = content.as_bytes();
+                        let start_pos = if bytes.len() > max_size as usize {
+                            bytes.len() - max_size as usize
+                        } else {
+                            0
+                        };
+
+                        // Try to start from a newline to avoid cutting mid-line
+                        let start_pos = if start_pos > 0 {
+                            match bytes[start_pos..].iter().position(|&b| b == b'\n') {
+                                Some(newline_pos) => start_pos + newline_pos + 1,
+                                None => start_pos
+                            }
+                        } else {
+                            start_pos
+                        };
+
+                        let truncated_content = String::from_utf8_lossy(&bytes[start_pos..]).to_string();
+                        (truncated_content, true)
+                    } else {
+                        (content, false)
+                    };
+
+                    let response_json = serde_json::json!({
+                        "success": true,
+                        "filename": filename,
+                        "content": log_content,
+                        "file_size": file_size,
+                        "is_truncated": is_truncated,
+                        "full_path": log_path.to_string_lossy(),
+                        "message": if is_truncated {
+                            format!("File is larger than 1MB. Showing last ~1MB. Full file is available at: {}", log_path.to_string_lossy())
+                        } else {
+                            "".to_string()
+                        }
+                    });
+
+                    let mut resp = Response::new(full(response_json.to_string()));
+                    *resp.status_mut() = hyper::StatusCode::OK;
+                    resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                    Ok(resp)
+                }
+                Err(e) => {
+                    error!("Failed to read log file {}: {}", filename, e);
+                    let error_response = serde_json::json!({
+                        "error": "Failed to read log file",
+                        "details": e.to_string()
+                    });
+                    let mut resp = Response::new(full(error_response.to_string()));
+                    *resp.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
+                    resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                    Ok(resp)
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to get metadata for log file {}: {}", filename, e);
+            let error_response = serde_json::json!({
+                "error": "Failed to access log file",
+                "details": e.to_string()
+            });
+            let mut resp = Response::new(full(error_response.to_string()));
+            *resp.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            Ok(resp)
+        }
     }
 }

@@ -1,7 +1,10 @@
 use std::sync::OnceLock;
+use clap::Parser;
+
+use crate::grux_core::command_line_args::CommandLineArgs;
 
 // Operation mode
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OperationMode {
     DEV,
     DEBUG,
@@ -13,10 +16,11 @@ pub enum OperationMode {
 // Or set via an environment variable or config file as needed
 pub static GRUX_OPERATION_MODE: OperationMode = OperationMode::PRODUCTION;
 
-pub fn load_operation_mode(from_cli: Option<String>) -> OperationMode {
-    // Here you can implement logic to set the operation mode based on environment variables or config files
-    // For example, read an environment variable and set GRUX_OPERATION_MODE accordingly
-    from_cli.map(|s| match s.as_str() {
+pub fn load_operation_mode() -> OperationMode {
+     // Parse command line args
+    let cli = CommandLineArgs::parse();
+
+    cli.opmode.map(|s| match s.as_str() {
         "DEV" => OperationMode::DEV,
         "DEBUG" => OperationMode::DEBUG,
         "PRODUCTION" => OperationMode::PRODUCTION,
@@ -28,5 +32,5 @@ pub fn load_operation_mode(from_cli: Option<String>) -> OperationMode {
 static OPERATION_MODE_SINGLETON: OnceLock<OperationMode> = OnceLock::new();
 
 pub fn get_operation_mode() -> OperationMode {
-    *OPERATION_MODE_SINGLETON.get_or_init(|| load_operation_mode(None))
+    *OPERATION_MODE_SINGLETON.get_or_init(|| load_operation_mode())
 }

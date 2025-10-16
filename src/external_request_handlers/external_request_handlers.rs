@@ -1,14 +1,14 @@
 use crate::{
     grux_configuration::get_configuration,
     grux_configuration_struct::{RequestHandler, Server, Site},
-    grux_external_request_handlers::grux_handler_php::PHPHandler,
+    external_request_handlers::php_handler::PHPHandler,
 };
 use http_body_util::combinators::BoxBody;
 use hyper::Response;
 use hyper::body::Bytes;
 use log::debug;
 use std::{collections::HashMap, sync::OnceLock};
-pub mod grux_handler_php;
+
 
 pub struct ExternalRequestHandlers {
     handlers: HashMap<String, Box<dyn ExternalRequestHandler>>,

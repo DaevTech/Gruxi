@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc, Duration};
 use serde::{Serialize, Deserialize};
 use sqlite::Connection;
 use uuid::Uuid;
+use random_password_generator::generate_password;
 
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -31,7 +32,7 @@ pub struct LoginRequest {
     pub password: String,
 }
 
-fn create_default_admin_user(connection: &Connection) -> Result<(), String> {
+pub fn create_default_admin_user(connection: &Connection) -> Result<(), String> {
     // Check if admin user already exists
     let mut statement = connection
         .prepare("SELECT COUNT(*) FROM users WHERE username = 'admin'")
@@ -46,8 +47,10 @@ fn create_default_admin_user(connection: &Connection) -> Result<(), String> {
     };
 
     if !admin_exists {
-        // Create default admin user with password "admin123" (should be changed in production)
-        let password_hash = bcrypt::hash("admin123", bcrypt::DEFAULT_COST)
+        let random_password = generate_password(true, true, false, 10);
+
+        // Create default admin user with generated password
+        let password_hash = bcrypt::hash(&random_password, bcrypt::DEFAULT_COST)
             .map_err(|e| format!("Failed to hash default password: {}", e))?;
 
         let created_at = Utc::now().to_rfc3339();
@@ -59,7 +62,7 @@ fn create_default_admin_user(connection: &Connection) -> Result<(), String> {
             ))
             .map_err(|e| format!("Failed to create default admin user: {}", e))?;
 
-        info!("Default admin user created with username 'admin' and password 'admin123'");
+        info!("Default admin user created with username 'admin' and password '{}'", random_password);
     }
 
     Ok(())

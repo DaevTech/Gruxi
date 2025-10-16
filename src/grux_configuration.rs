@@ -1,3 +1,4 @@
+use crate::grux_core::operation_mode::{get_operation_mode, OperationMode};
 use crate::{grux_configuration_struct::*, grux_core::database_connection::get_database_connection};
 use log::trace;
 use log::{info, warn};
@@ -22,35 +23,34 @@ fn init() -> Result<Configuration, String> {
         }
     };
 
-    let configuration = {
+    let mut configuration = {
         if schema_version == 0 {
             // No schema version found, likely first run - create default configuration
-            let operation_mode = crate::grux_core::operation_mode::get_operation_mode();
+
             info!("No configuration found, creating default configuration");
 
-            // Load default configuration based on operation mode
-            let mut default_configuration = {
-                if matches!(operation_mode, crate::grux_core::operation_mode::OperationMode::DEV) {
-                    info!("Loading dev configuration");
-                    Configuration::get_testing()
-                } else {
-                    Configuration::get_default()
-                }
-            };
+            let mut configuration = Configuration::get_default();
 
-            save_configuration(&mut default_configuration)?;
+            save_configuration(&mut configuration)?;
 
             // Update schema version to 1
             connection
                 .execute(format!("UPDATE schema_version SET version = 1",))
                 .map_err(|e| format!("Failed to update schema version: {}", e))?;
 
-            default_configuration
+            configuration
         } else {
             // Load existing configuration
             load_configuration()?
         }
     };
+
+    // Load default configuration based on operation mode
+    let operation_mode = get_operation_mode();
+    if operation_mode == OperationMode::DEV {
+        info!("Loading dev configuration");
+        Configuration::add_testing_to_configuration(&mut configuration);
+    }
 
     Ok(configuration)
 }

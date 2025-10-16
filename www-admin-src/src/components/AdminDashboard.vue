@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import ConfigEditor from './ConfigEditor.vue'
+import LogViewer from './LogViewer.vue'
 
 // Define props and emits
 const props = defineProps({
@@ -13,573 +13,709 @@ const props = defineProps({
 const emit = defineEmits(['logout'])
 
 // Dashboard state
-const isLoading = ref(false)
-const error = ref('')
-const activeTab = ref('dashboard')
+const activeView = ref('server-status')
+const sidebarCollapsed = ref(false)
 
-// Server stats
+// Menu items
+const menuItems = [
+  { id: 'server-status', name: 'Server Status' },
+  { id: 'configuration', name: 'Configuration' },
+  { id: 'logs', name: 'Logs' },
+]
+
+// Server stats (real data from monitoring endpoint)
 const stats = reactive({
-  uptime: '0 minutes',
+  serverStatus: 'Loading...',
+  uptime: '...',
   requests: 0,
+  requestsPerSec: 0,
   activeConnections: 0,
   lastUpdated: new Date()
 })
-
-// Load server configuration (for stats only)
-const loadServerStats = async () => {
-  isLoading.value = true
-  error.value = ''
-
-  try {
-    const response = await fetch('/config', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${props.user.sessionToken}`,
-        'Content-Type': 'application/json'
-      }
-    })
-
-    if (response.ok) {
-      // We can use this for stats if needed in the future
-      // For now just clear any errors
-      error.value = ''
-    } else {
-      error.value = 'Failed to load server stats'
-    }
-  } catch (err) {
-    console.error('Server stats loading error:', err)
-    error.value = 'Network error while loading server stats'
-  } finally {
-    isLoading.value = false
-  }
-}
-
-// Mock function to update stats (in a real app, this would fetch from the server)
-const updateStats = () => {
-  stats.lastUpdated = new Date()
-  // These would be real metrics in a production environment
-}
 
 // Handle logout
 const handleLogout = () => {
   emit('logout')
 }
 
-// Tab navigation
-const setActiveTab = (tab) => {
-  activeTab.value = tab
+// Navigation
+const setActiveView = (viewId) => {
+  activeView.value = viewId
 }
 
-// Close configuration editor
-const closeConfigEditor = () => {
-  showConfigEditor.value = false
-  // Reload config after potential changes
-  loadConfiguration()
+// Toggle sidebar
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
+// Function to fetch real monitoring data from API
+const updateStats = async () => {
+  // First check if server is healthy
+  const isHealthy = await checkHealth()
+
+  if (!isHealthy) {
+    stats.serverStatus = 'Unavailable'
+    return
+  }
+
+  try {
+    const token = localStorage.getItem('grux_session_token')
+    if (!token) {
+      console.error('No session token available')
+      stats.serverStatus = 'Running'
+      return
+    }
+
+    const response = await fetch('/monitoring', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    })
+
+    if (response.ok) {
+      const data = await response.json()
+
+      // Update stats with real monitoring data
+      stats.serverStatus = 'Running'
+      stats.requests = data.requests_served || 0
+      stats.requestsPerSec = data.requests_per_sec || 0
+      stats.activeConnections = data.waiting_requests || 0
+
+      // Convert uptime seconds to human readable format
+      const uptimeSeconds = data.uptime_seconds || 0
+      const days = Math.floor(uptimeSeconds / (24 * 3600))
+      const hours = Math.floor((uptimeSeconds % (24 * 3600)) / 3600)
+      const minutes = Math.floor((uptimeSeconds % 3600) / 60)
+
+      if (days > 0) {
+        stats.uptime = `${days} day${days !== 1 ? 's' : ''}, ${hours} hour${hours !== 1 ? 's' : ''}`
+      } else if (hours > 0) {
+        stats.uptime = `${hours} hour${hours !== 1 ? 's' : ''}, ${minutes} minute${minutes !== 1 ? 's' : ''}`
+      } else {
+        stats.uptime = `${minutes} minute${minutes !== 1 ? 's' : ''}`
+      }
+
+      stats.lastUpdated = new Date()
+    } else if (response.status === 401) {
+      // Session expired, redirect to login
+      stats.serverStatus = 'Running' // Server is up, just auth issue
+      emit('logout')
+    } else {
+      console.error('Failed to fetch monitoring data:', response.status)
+      stats.serverStatus = 'Running' // Server responded, so it's running
+    }
+  } catch (error) {
+    console.error('Error fetching monitoring data:', error)
+    // If healthcheck passed but monitoring failed, server is still running
+    stats.serverStatus = 'Running'
+  }
+}
+
+// Function to check server health using the healthcheck endpoint
+const checkHealth = async () => {
+  try {
+    const response = await fetch('/healthcheck', {
+      method: 'GET'
+    })
+
+    if (response.ok) {
+      const text = await response.text()
+      if (text === 'absolutely') {
+        return true // Server is healthy
+      }
+    }
+    return false // Server is not healthy
+  } catch (error) {
+    console.error('Health check failed:', error)
+    return false // Server is not reachable
+  }
+}
+
+// Format request count with suffixes
+const formatRequestCount = (count) => {
+  if (count >= 1000000000) {
+    return (count / 1000000000).toFixed(0) + 'B'
+  } else if (count >= 1000000) {
+    return (count / 1000000).toFixed(0) + 'M'
+  } else if (count >= 1000) {
+    return (count / 1000).toFixed(0) + 'K'
+  } else {
+    return count.toString()
+  }
 }
 
 // Initialize dashboard
 onMounted(() => {
   updateStats()
-  setInterval(updateStats, 30000) // Update stats every 30 seconds
+  setInterval(updateStats, 10000) // Update stats every 10 seconds
 })
 </script>
 
 <template>
-  <div class="dashboard">
-    <!-- Header -->
-    <header class="dashboard-header">
-      <div class="header-content">
+  <div class="admin-layout">
+    <!-- Left Sidebar -->
+    <aside :class="['sidebar', { collapsed: sidebarCollapsed }]">
+      <div class="sidebar-header">
+        <div class="logo">
+          <span class="logo-icon">🚀</span>
+          <span v-if="!sidebarCollapsed" class="logo-text">Grux webserver</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <ul class="nav-list">
+          <li v-for="item in menuItems" :key="item.id" class="nav-item">
+            <button
+              :class="['nav-link', { active: activeView === item.id }]"
+              @click="setActiveView(item.id)"
+            >
+              <span v-if="!sidebarCollapsed" class="nav-text">
+                {{ item.name }}
+                <span v-if="item.id === 'server-status'" :class="['menu-status-indicator', stats.serverStatus === 'Running' ? 'online' : 'offline']">
+                  {{ stats.serverStatus === 'Running' ? 'Online' : 'Offline' }}
+                </span>
+              </span>
+              <span v-else class="nav-text-collapsed">{{ item.name.charAt(0) }}</span>
+            </button>
+          </li>
+        </ul>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-info" v-if="!sidebarCollapsed">
+          <div class="user-avatar">👤</div>
+          <div class="user-details">
+            <div class="user-name">{{ user.username }}</div>
+            <div class="user-role">Administrator</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="main-content">
+      <!-- Top Header -->
+      <header class="top-header">
         <div class="header-left">
-          <h1>Grux Administration</h1>
+          <h1 class="page-title">
+            {{ menuItems.find(item => item.id === activeView)?.name || 'Overview' }}
+          </h1>
         </div>
         <div class="header-right">
-          <button @click="handleLogout" class="logout-button">
-            <span class="logout-icon">🚪</span>
-            Logout
+          <button @click="handleLogout" class="logout-btn">
+            <span class="logout-text">Logout</span>
           </button>
         </div>
-      </div>
-    </header>
+      </header>
 
-    <!-- Navigation -->
-    <nav class="dashboard-nav">
-      <button
-        :class="['nav-button', { active: activeTab === 'dashboard' }]"
-        @click="setActiveTab('dashboard')"
-      >
-        📊 Dashboard
-      </button>
-      <button
-        :class="['nav-button', { active: activeTab === 'config' }]"
-        @click="setActiveTab('config')"
-      >
-        ⚙️ Configuration
-      </button>
-      <button
-        :class="['nav-button', { active: activeTab === 'logs' }]"
-        @click="setActiveTab('logs')"
-      >
-        📝 Logs
-      </button>
-    </nav>
+      <!-- Content Area -->
+      <main class="content-area">
+        <!-- Server Status -->
+        <div v-if="activeView === 'server-status'" class="view-content">
+          <div class="stats-overview">
+            <div class="stats-row">
+              <div class="stat-card primary">
+                <div class="stat-header">
+                  <h3>Server Status</h3>
+                  <span class="stat-icon">🚀</span>
+                </div>
+                <div class="stat-value large">{{ stats.serverStatus }}</div>
+              </div>
 
-    <!-- Main Content -->
-    <main class="dashboard-main">
-      <!-- Dashboard Tab -->
-      <div v-if="activeTab === 'dashboard'" class="dashboard-content">
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-icon">🚀</div>
-            <div class="stat-content">
-              <h3>Server Status</h3>
-              <p class="stat-value">Running</p>
-            </div>
-          </div>
+              <div class="stat-card">
+                <div class="stat-header">
+                  <h3>Uptime</h3>
+                  <span class="stat-icon">⏱️</span>
+                </div>
+                <div class="stat-value">{{ stats.uptime }}</div>
+              </div>
 
-          <div class="stat-card">
-            <div class="stat-icon">⏱️</div>
-            <div class="stat-content">
-              <h3>Uptime</h3>
-              <p class="stat-value">{{ stats.uptime }}</p>
-            </div>
-          </div>
+              <div class="stat-card">
+                <div class="stat-header">
+                  <h3>Total Requests Served</h3>
+                  <span class="stat-icon">📊</span>
+                </div>
+                <div class="stat-value">{{ formatRequestCount(stats.requests) }}</div>
+                <div class="stat-subtitle">~ {{ stats.requestsPerSec }} req/sec</div>
+              </div>
 
-          <div class="stat-card">
-            <div class="stat-icon">📈</div>
-            <div class="stat-content">
-              <h3>Requests Today</h3>
-              <p class="stat-value">{{ stats.requests.toLocaleString() }}</p>
-            </div>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">🔗</div>
-            <div class="stat-content">
-              <h3>Active Connections</h3>
-              <p class="stat-value">{{ stats.activeConnections }}</p>
+              <div class="stat-card">
+                <div class="stat-header">
+                  <h3>Active Threads</h3>
+                  <span class="stat-icon">🔗</span>
+                </div>
+                <div class="stat-value">{{ stats.activeConnections }}</div>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="info-section">
-          <h2>System Information</h2>
-          <div class="info-grid">
-            <div class="info-item">
-              <strong>Server Version:</strong> Grux v0.1.0
-            </div>
-            <div class="info-item">
-              <strong>Admin Portal:</strong> Enabled
-            </div>
-            <div class="info-item">
-              <strong>Last Updated:</strong> {{ stats.lastUpdated.toLocaleString() }}
-            </div>
+        <!-- Logs View -->
+        <div v-else-if="activeView === 'logs'" class="view-content">
+          <LogViewer :user="user" />
+        </div>
+
+        <!-- Other Views -->
+        <div v-else class="view-content">
+          <div class="placeholder-content">
+            <div class="placeholder-icon">{{ menuItems.find(item => item.id === activeView)?.icon || '�' }}</div>
+            <h2>{{ menuItems.find(item => item.id === activeView)?.name || 'Page' }}</h2>
+            <p>This section is under development and will be implemented in future updates.</p>
           </div>
         </div>
-      </div>
-
-      <!-- Configuration Tab -->
-      <div v-else-if="activeTab === 'config'" class="config-content">
-        <!-- Inline Configuration Editor -->
-        <div class="inline-config-editor">
-          <ConfigEditor :user="user" :inline="true" />
-        </div>
-      </div>
-
-      <!-- Logs Tab -->
-      <div v-else-if="activeTab === 'logs'" class="logs-content">
-        <h2>Server Logs</h2>
-        <div class="feature-placeholder">
-          <div class="placeholder-icon">📝</div>
-          <h3>Log Viewer</h3>
-          <p>Log viewing functionality will be implemented in a future version.</p>
-          <p>For now, please check the server logs directly on the file system.</p>
-        </div>
-      </div>
-    </main>
+      </main>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.dashboard {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+/* Main Layout */
+.admin-layout {
+  display: flex;
+  height: 100vh;
+  background: #f5f6fa;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 280px;
+  background: #1f2937;
+  color: white;
   display: flex;
   flex-direction: column;
+  border-right: 1px solid #374151;
+  transition: width 0.3s ease;
 }
 
-.dashboard-header {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-  padding: 1rem 2rem;
+.sidebar.collapsed {
+  width: 70px;
 }
 
-.header-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
-.header-left h1 {
-  margin: 0;
-  color: #333;
-  font-size: 1.8rem;
-  font-weight: 700;
-}
-
-.header-left p {
-  margin: 0.25rem 0 0 0;
-  color: #666;
-  font-size: 1rem;
-}
-
-.logout-button {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
-  background: linear-gradient(135deg, #ff6b6b, #ee5a24);
-  color: white;
-  border: none;
-  border-radius: 10px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.logout-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(255, 107, 107, 0.3);
-}
-
-.logout-icon {
-  font-size: 1.2rem;
-}
-
-.dashboard-nav {
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(10px);
-  padding: 1rem 2rem;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-  display: flex;
-  gap: 1rem;
-  justify-content: center;
-}
-
-.nav-button {
-  padding: 0.75rem 1.5rem;
-  background: transparent;
-  border: 2px solid transparent;
-  border-radius: 10px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  color: #666;
-}
-
-.nav-button:hover {
-  color: #333;
-  background: rgba(102, 126, 234, 0.1);
-}
-
-.nav-button.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border-color: transparent;
-}
-
-.dashboard-main {
-  flex: 1;
-  padding: 2rem;
-  max-width: 1200px;
-  margin: 0 auto;
-  width: 100%;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 2rem;
-}
-
-.stat-card {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(10px);
-  border-radius: 15px;
+.sidebar-header {
   padding: 1.5rem;
+  border-bottom: 1px solid #374151;
   display: flex;
   align-items: center;
-  gap: 1rem;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  justify-content: space-between;
 }
 
-.stat-icon {
-  font-size: 2.5rem;
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.logo-icon {
+  font-size: 2rem;
   flex-shrink: 0;
 }
 
-.stat-content h3 {
-  margin: 0 0 0.5rem 0;
-  color: #666;
-  font-size: 0.9rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+.logo-text {
+  font-size: 1.25rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
-.stat-value {
+.sidebar-nav {
+  flex: 1;
+  padding: 1rem 0;
+}
+
+.nav-list {
+  list-style: none;
+  padding: 0;
   margin: 0;
-  color: #333;
+}
+
+.nav-item {
+  margin-bottom: 0.25rem;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  justify-content: left;
+  width: 100%;
+  padding: 0.75rem 1.5rem;
+  background: transparent;
+  border: none;
+  color: #d1d5db;
+  text-decoration: none;
+  transition: all 0.2s;
+  cursor: pointer;
+  text-align: center;
+}
+
+.nav-link:hover {
+  background: #374151;
+  color: white;
+}
+
+.nav-link.active {
+  background: #3b82f6;
+  color: white;
+}
+
+.nav-text {
+  font-weight: 500;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.nav-text-collapsed {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: inherit;
+}
+
+.sidebar-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #374151;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.user-avatar {
+  width: 40px;
+  height: 40px;
+  background: #3b82f6;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+
+.user-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-role {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Main Content */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #f5f6fa;
+}
+
+.top-header {
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.page-title {
+  margin: 0;
   font-size: 1.5rem;
   font-weight: 700;
+  color: #1f2937;
 }
 
-.info-section {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(10px);
-  border-radius: 15px;
-  padding: 2rem;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.info-section h2 {
-  margin: 0 0 1.5rem 0;
-  color: #333;
-  font-size: 1.4rem;
-}
-
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1rem;
-}
-
-.info-item {
-  padding: 1rem;
-  background: rgba(102, 126, 234, 0.05);
-  border-radius: 10px;
-  border: 1px solid rgba(102, 126, 234, 0.1);
-}
-
-.config-content,
-.logs-content {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(10px);
-  border-radius: 15px;
-  padding: 2rem;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.config-content h2,
-.logs-content h2 {
-  margin: 0 0 1.5rem 0;
-  color: #333;
-  font-size: 1.4rem;
-}
-
-.loading-message {
+.header-right {
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding: 2rem;
-  text-align: center;
-  justify-content: center;
 }
 
-.loading-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid #f3f3f3;
-  border-top: 2px solid #667eea;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-.error-message {
-  background: #fee2e2;
-  border: 1px solid #fecaca;
-  color: #dc2626;
-  padding: 1rem;
-  border-radius: 10px;
-  text-align: center;
+.logout-btn {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 1rem;
-}
-
-.retry-button,
-.load-config-button {
-  padding: 0.5rem 1rem;
-  background: #667eea;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: #ef4444;
   color: white;
   border: none;
   border-radius: 8px;
-  cursor: pointer;
   font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.config-actions {
+.logout-btn:hover {
+  background: #dc2626;
+  transform: translateY(-1px);
+}
+
+.logout-icon {
+  font-size: 1rem;
+}
+
+.logout-text {
+  font-size: 0.875rem;
+}
+
+/* Content Area */
+.content-area {
+  flex: 1;
+  padding: 2rem;
+  overflow-y: auto;
+}
+
+.view-content {
+  max-width: 1700px;
+  margin: 0 auto;
+}
+
+/* Stats Overview */
+.stats-overview {
   display: flex;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  flex-direction: column;
+  gap: 1.5rem;
 }
 
-.edit-config-button {
-  padding: 0.75rem 1.5rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  border-radius: 10px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
 }
 
-.edit-config-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(102, 126, 234, 0.3);
-}
-
-.refresh-button {
-  padding: 0.75rem 1.5rem;
-  background: #10b981;
-  color: white;
-  border: none;
-  border-radius: 10px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.refresh-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(16, 185, 129, 0.3);
-}
-
-.config-viewer {
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 10px;
+.stat-card {
+  background: white;
+  border-radius: 12px;
   padding: 1.5rem;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e5e7eb;
+  transition: all 0.2s;
 }
 
-.config-viewer h3 {
-  margin: 0 0 1rem 0;
-  color: #333;
+.stat-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
 }
 
-.config-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 1000;
+.stat-card.primary {
+  border-left: 4px solid #3b82f6;
+}
+
+.stat-card.resource {
+  border-left: 4px solid #10b981;
+}
+
+.stat-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 2rem;
-}
-
-.config-modal-backdrop {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-}
-
-.config-modal-content {
-  position: relative;
-  width: 100%;
-  max-width: 1200px;
-  max-height: 90vh;
-  z-index: 1001;
-}
-
-.config-note {
-  background: rgba(255, 193, 7, 0.1);
-  border: 1px solid rgba(255, 193, 7, 0.3);
-  color: #856404;
-  padding: 1rem;
-  border-radius: 10px;
+  justify-content: space-between;
   margin-bottom: 1rem;
 }
 
-.config-text {
-  background: #f8f9fa;
-  border: 1px solid #e9ecef;
-  border-radius: 10px;
-  padding: 1rem;
-  white-space: pre-wrap;
-  overflow-x: auto;
-  font-family: 'Courier New', monospace;
-  font-size: 0.9rem;
-  line-height: 1.4;
+.stat-header h3 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.feature-placeholder {
+.stat-icon {
+  font-size: 1.5rem;
+}
+
+.stat-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0;
+}
+
+.stat-value.large {
+  font-size: 2.5rem;
+}
+
+.stat-value.small {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.stat-indicator {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-top: 0.5rem;
+}
+
+.stat-indicator.online {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.stat-indicator.offline {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.server-status-indicator {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
   text-align: center;
-  padding: 3rem;
-  color: #666;
+  align-self: flex-start;
+}
+
+.server-status-indicator.online {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.server-status-indicator.offline {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.menu-status-indicator {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  margin-left: 0.5rem;
+}
+
+.menu-status-indicator.online {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.menu-status-indicator.offline {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.stat-subtitle {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #6b7280;
+  margin-top: 0.25rem;
+}
+
+.stat-progress {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 8px;
+  background: #f3f4f6;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981, #059669);
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+/* Placeholder Content */
+.placeholder-content {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: #6b7280;
 }
 
 .placeholder-icon {
   font-size: 4rem;
-  margin-bottom: 1rem;
+  margin-bottom: 1.5rem;
+  opacity: 0.5;
 }
 
-.feature-placeholder h3 {
+.placeholder-content h2 {
   margin: 0 0 1rem 0;
-  color: #333;
+  font-size: 1.5rem;
+  color: #374151;
 }
 
-.feature-placeholder p {
-  margin: 0.5rem 0;
-  max-width: 500px;
+.placeholder-content p {
+  margin: 0;
+  font-size: 1rem;
+  max-width: 400px;
   margin-left: auto;
   margin-right: auto;
 }
 
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-/* Responsive design */
+/* Responsive Design */
 @media (max-width: 768px) {
-  .dashboard-nav {
-    flex-wrap: wrap;
-    justify-content: center;
+  .sidebar {
+    width: 100%;
+    position: fixed;
+    top: 0;
+    left: -100%;
+    z-index: 1000;
+    transition: left 0.3s ease;
   }
 
-  .stats-grid {
+  .sidebar.collapsed {
+    width: 70px;
+    left: -70px;
+  }
+
+  .admin-layout.sidebar-open .sidebar {
+    left: 0;
+  }
+
+  .main-content {
+    width: 100%;
+  }
+
+  .top-header {
+    padding: 1rem;
+  }
+
+  .content-area {
+    padding: 1rem;
+  }
+
+  .stats-row {
     grid-template-columns: 1fr;
   }
 
-  .header-content {
-    flex-direction: column;
-    gap: 1rem;
-    text-align: center;
+  .page-title {
+    font-size: 1.25rem;
   }
-
-  .dashboard-main {
-    padding: 1rem;
-  }
-}
-
-.config-content {
-  background: #f8fafc;
-  min-height: calc(100vh - 200px);
-  padding: 1.5rem;
 }
 </style>

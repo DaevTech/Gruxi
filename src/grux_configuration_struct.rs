@@ -91,9 +91,7 @@ pub struct RequestHandler {
 }
 
 impl Configuration {
-    pub fn get_testing() -> Self {
-        let mut configuration = Self::get_default();
-
+    pub fn add_testing_to_configuration(configuration: &mut Configuration) {
         let test_wp_site = Site {
             id: 0,
             hostnames: vec!["gruxsite".to_string()],
@@ -109,14 +107,24 @@ impl Configuration {
             rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
         };
 
-        // Push test site to the first server's first binding
-        if let Some(first_server) = configuration.servers.get_mut(0) {
-            if let Some(first_binding) = first_server.bindings.get_mut(0) {
-                first_binding.sites.push(test_wp_site);
-            }
-        }
+        let testing_site = Site {
+            id: 0,
+            hostnames: vec!["gruxtest".to_string()],
+            is_default: false,
+            is_enabled: true,
+            web_root: "./www-testing".to_string(),
+            web_root_index_file_list: vec!["index.php".to_string()],
+            enabled_handlers: vec!["1".to_string()], // For testing
+            tls_cert_path: "".to_string(),
+            tls_cert_content: "".to_string(),
+            tls_key_path: "".to_string(),
+            tls_key_content: "".to_string(),
+            rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
+        };
 
-        configuration
+        // Push test site to the first server's first binding
+        configuration.servers[0].bindings[0].sites.push(test_wp_site);
+        configuration.servers[0].bindings[0].sites.push(testing_site);
     }
 
     pub fn get_default() -> Self {

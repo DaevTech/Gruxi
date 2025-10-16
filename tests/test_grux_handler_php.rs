@@ -1,5 +1,5 @@
-use grux::grux_external_request_handlers::grux_handler_php::PHPHandler;
-use grux::grux_external_request_handlers::ExternalRequestHandler;
+use grux::external_request_handlers::grux_handler_php::PHPHandler;
+use grux::external_request_handlers::ExternalRequestHandler;
 
 #[test]
 fn test_php_handler_creation() {
@@ -103,7 +103,7 @@ fn test_fastcgi_binary_response_parsing() {
     fastcgi_response.extend(&[0u8; 8]); // end request body
 
     // Parse the response using our updated function
-    use grux::grux_external_request_handlers::grux_handler_php::PHPHandler;
+    use grux::external_request_handlers::grux_handler_php::PHPHandler;
     let parsed_response = PHPHandler::parse_fastcgi_response(&fastcgi_response);
 
     // Verify the binary data is preserved

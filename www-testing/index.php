@@ -1,7 +1,6 @@
 <?php
 //phpinfo();
 echo "Hello, World!";
-sleep(10);
 echo '<h1>$_SERVER</h1>';
 var_dump($_SERVER);
 echo '<h1>$_GET</h1>';

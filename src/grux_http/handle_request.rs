@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use crate::external_request_handlers::external_request_handlers;
 use crate::grux_configuration_struct::*;
+use crate::grux_core::monitoring::get_monitoring_state;
 use crate::grux_file_cache::CachedFile;
 use crate::grux_file_cache::get_file_cache;
 use crate::grux_file_util::get_full_file_path;
-use crate::grux_http_admin::*;
-use crate::grux_http_util::*;
+use crate::grux_admin::http_admin_api::*;
+use crate::grux_http::http_util::*;
 use http_body_util::BodyExt;
 use http_body_util::combinators::BoxBody;
 use hyper::HeaderMap;
@@ -20,6 +22,9 @@ use log::trace;
 pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding, remote_ip: String) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     //  return Ok(empty_response_with_status(hyper::StatusCode::OK));
 
+    // Count the request in monitoring
+    get_monitoring_state().increment_requests_served();
+
     // Extract data for the request before we borrow/move
     let method = req.method().clone();
     let uri = req.uri().clone();
@@ -32,8 +37,28 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
     // Extract hostname from headers
     let requested_hostname = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("").to_string();
 
+    // Get HTTP version
+    let http_version = match req.version() {
+        hyper::Version::HTTP_09 => "HTTP/0.9".to_string(),
+        hyper::Version::HTTP_10 => "HTTP/1.0".to_string(),
+        hyper::Version::HTTP_11 => "HTTP/1.1".to_string(),
+        hyper::Version::HTTP_2 => "HTTP/2.0".to_string(),
+        hyper::Version::HTTP_3 => "HTTP/3.0".to_string(),
+        _ => "HTTP/1.1".to_string(),
+    };
+
     // Validate the request
-    if let Err(resp) = validate_request(&headers, &method.to_string(), &uri.to_string(), &path.to_string(), &query.to_string(), body_size).await {
+    if let Err(resp) = validate_request(
+        &http_version,
+        &headers,
+        &method.to_string(),
+        &uri.to_string(),
+        &path.to_string(),
+        &query.to_string(),
+        body_size.try_into().unwrap_or(0),
+    )
+    .await
+    {
         return Ok(resp);
     }
 
@@ -68,6 +93,12 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
             return admin_get_configuration_endpoint(&req, site).await;
         } else if path_cleaned == "config" && method == hyper::Method::POST {
             return admin_post_configuration_endpoint(req, site).await;
+        } else if path_cleaned == "monitoring" && method == hyper::Method::GET {
+            return admin_monitoring_endpoint(&req, site).await;
+        } else if path_cleaned == "healthcheck" && method == hyper::Method::GET {
+            return admin_healthcheck_endpoint(&req, site).await;
+        } else if (path_cleaned == "logs" || path_cleaned.starts_with("logs/")) && method == hyper::Method::GET {
+            return admin_logs_endpoint(&req, site).await;
         }
     }
 
@@ -160,16 +191,6 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
     let uri = req.uri().clone();
     let headers = req.headers().clone();
 
-    // Get HTTP version
-    let http_version = match req.version() {
-        hyper::Version::HTTP_09 => "HTTP/0.9".to_string(),
-        hyper::Version::HTTP_10 => "HTTP/1.0".to_string(),
-        hyper::Version::HTTP_11 => "HTTP/1.1".to_string(),
-        hyper::Version::HTTP_2 => "HTTP/2.0".to_string(),
-        hyper::Version::HTTP_3 => "HTTP/3.0".to_string(),
-        _ => "HTTP/1.1".to_string(),
-    };
-
     // Extract body for POST/PUT requests
     let body_bytes = if method == hyper::Method::POST || method == hyper::Method::PUT {
         match req.collect().await {
@@ -191,7 +212,7 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
     let mut handler_response = Response::new(full(""));
     let mut handler_did_stuff = false;
     for handler_id in &site.enabled_handlers {
-        let handler = crate::grux_external_request_handlers::get_request_handler_by_id(handler_id);
+        let handler = external_request_handlers::get_request_handler_by_id(handler_id);
         if let Some(handler) = handler {
             let file_matches = handler.get_file_matches();
             if file_matches.iter().any(|m| file_path.ends_with(m)) {
@@ -276,37 +297,53 @@ fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &'a str) -> O
     site
 }
 
-async fn validate_request(headers: &HeaderMap, method: &str, _uri: &str, _path: &str, _query: &str, _body_size: u64) -> Result<(), Response<BoxBody<Bytes, hyper::Error>>> {
+async fn validate_request(http_version: &str, headers: &HeaderMap, method: &str, _uri: &str, _path: &str, _query: &str, body_size: usize) -> Result<(), Response<BoxBody<Bytes, hyper::Error>>> {
     // Here we can add any request validation logic if needed
+    let configuration = crate::grux_configuration::get_configuration();
 
-    // [HTTP1.1] Basic validation: check for valid method
+    // Validation for HTTP/1.1 only
+    if http_version == "HTTP/1.1" {
+        // [HTTP1.1] Requires a Host header
+        if !headers.contains_key("Host") {
+            trace!("Missing Host header, return HTTP 400");
+            // return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
+        } // :authority
+
+        // [HTTP1.1] If there is multiple host headers, we return a 400 error
+        if headers.get_all("Host").iter().count() > 1 {
+            trace!("Multiple Host headers, return HTTP 400");
+            return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
+        }
+    }
+
+    // [HTTP1.1 and later] Basic validation: check for valid method
     if method != "GET" && method != "POST" && method != "HEAD" && method != "PUT" && method != "DELETE" && method != "OPTIONS" && method != "TRACE" && method != "CONNECT" && method != "PATCH" {
         // Return a error for unsupported method
         trace!("Unsupported HTTP method, return HTTP 501: {}", method);
         return Err(empty_response_with_status(hyper::StatusCode::NOT_IMPLEMENTED));
     }
 
-    // [HTTP1.1] Requires a Host header
-    if !headers.contains_key("Host") {
-        trace!("Missing Host header, return HTTP 400");
-        return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
-    }
+    // Protect our server from overly large bodies
+    let max_body_size = configuration.core.server_settings.max_body_size;
+    if max_body_size > 0 && (method == "POST" || method == "PUT") {
+        // Check Content-Length header if present
+        if let Some(content_length_header) = headers.get("Content-Length") {
+            if let Ok(content_length_str) = content_length_header.to_str() {
+                if let Ok(content_length) = content_length_str.parse::<usize>() {
+                    if content_length > max_body_size {
+                        println!("1Request body too large: {} > {}", content_length, max_body_size);
+                        return Err(empty_response_with_status(hyper::StatusCode::PAYLOAD_TOO_LARGE));
+                    }
+                }
+            }
+        }
 
-    // [HTTP1.1] If there is multiple host headers, we return a 400 error
-    if headers.get_all("Host").iter().count() > 1 {
-        trace!("Multiple Host headers, return HTTP 400");
-        return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
+        // Also check the actual body size
+        if body_size > max_body_size {
+            println!("2Request body too large: {} > {}", body_size, max_body_size);
+            return Err(empty_response_with_status(hyper::StatusCode::PAYLOAD_TOO_LARGE));
+        }
     }
-
-    /*
-      // Protect our server from overly large bodies
-      let upper = req.body().size_hint().upper().unwrap_or(u64::MAX);
-      if upper > 1024 * 64 {
-          let mut resp = Response::new(full("Body too big"));
-          *resp.status_mut() = hyper::StatusCode::PAYLOAD_TOO_LARGE;
-          return Ok(resp);
-      }
-    */
 
     Ok(())
 }
