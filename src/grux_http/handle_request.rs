@@ -306,8 +306,8 @@ async fn validate_request(http_version: &str, headers: &HeaderMap, method: &str,
         // [HTTP1.1] Requires a Host header
         if !headers.contains_key("Host") {
             trace!("Missing Host header, return HTTP 400");
-            // return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
-        } // :authority
+            return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
+        }
 
         // [HTTP1.1] If there is multiple host headers, we return a 400 error
         if headers.get_all("Host").iter().count() > 1 {

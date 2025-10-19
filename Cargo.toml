@@ -36,3 +36,7 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 tempfile = "3.8"
+tokio-rustls = "0.24"
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
+webpki-roots = "0.25"
+rustls-native-certs = "0.6"

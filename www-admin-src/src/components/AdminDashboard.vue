@@ -238,7 +238,7 @@ onMounted(() => {
                   <span class="stat-icon">📊</span>
                 </div>
                 <div class="stat-value">{{ formatRequestCount(stats.requests) }}</div>
-                <div class="stat-subtitle">~ {{ stats.requestsPerSec }} req/sec</div>
+                <div class="stat-subtitle">~ {{ stats.requestsPerSec }} req/sec right now</div>
               </div>
 
               <div class="stat-card">
@@ -538,7 +538,7 @@ onMounted(() => {
 
 .stat-header h3 {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: 1.2rem;
   font-weight: 600;
   color: #6b7280;
   text-transform: uppercase;
