@@ -465,7 +465,7 @@ impl ExternalRequestHandler for PHPHandler {
         body: &Vec<u8>,
         site: &Site,
         full_file_path: &String,
-        remote_ip: &String,
+        remote_ip: &str,
         http_version: &String,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
         // Clone the necessary data to avoid lifetime issues
@@ -473,7 +473,6 @@ impl ExternalRequestHandler for PHPHandler {
         let uri = uri.clone();
         let site = site.clone();
         let full_file_path = full_file_path.clone();
-        let remote_ip = remote_ip.clone();
         let http_version = http_version.clone();
 
         // Extract request data
@@ -567,7 +566,7 @@ impl ExternalRequestHandler for PHPHandler {
                 full_file_path.clone(),
                 full_web_root,
                 is_https,
-                remote_ip.clone(),
+                remote_ip,
                 server_port,
                 http_version.clone(),
                 ip_and_port,
@@ -604,7 +603,7 @@ impl PHPHandler {
         script_file: String,
         local_web_root: String,
         is_https: bool,
-        remote_ip: String,
+        remote_ip: &str,
         server_port: u16,
         http_version: String,
         ip_and_port: String,
@@ -684,7 +683,7 @@ impl PHPHandler {
         params.push(("HTTPS".to_string(), if is_https { "on" } else { "off" }.to_string()));
         params.push(("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string()));
         params.push(("SERVER_PROTOCOL".to_string(), http_version.clone()));
-        params.push(("REMOTE_ADDR".to_string(), remote_ip.clone()));
+        params.push(("REMOTE_ADDR".to_string(), remote_ip.to_string()));
         params.push(("REMOTE_HOST".to_string(), "".to_string()));
         params.push(("PATH_INFO".to_string(), path.clone()));
         params.push(("REDIRECT_STATUS".to_string(), "200".to_string()));

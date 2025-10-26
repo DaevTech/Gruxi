@@ -23,13 +23,20 @@ fn init() -> Result<Configuration, String> {
         }
     };
 
-    let mut configuration = {
+    let configuration = {
         if schema_version == 0 {
             // No schema version found, likely first run - create default configuration
 
             info!("No configuration found, creating default configuration");
 
             let mut configuration = Configuration::get_default();
+
+            // Load default configuration based on operation mode
+            let operation_mode = get_operation_mode();
+            if operation_mode == OperationMode::DEV {
+                info!("Loading dev configuration");
+                Configuration::add_testing_to_configuration(&mut configuration);
+            }
 
             save_configuration(&mut configuration)?;
 
@@ -44,13 +51,6 @@ fn init() -> Result<Configuration, String> {
             load_configuration()?
         }
     };
-
-    // Load default configuration based on operation mode
-    let operation_mode = get_operation_mode();
-    if operation_mode == OperationMode::DEV {
-        info!("Loading dev configuration");
-        Configuration::add_testing_to_configuration(&mut configuration);
-    }
 
     Ok(configuration)
 }
@@ -228,7 +228,7 @@ fn save_binding(connection: &Connection, binding: &mut Binding) -> Result<(), St
             // New site, insert it
             connection
                 .execute(format!(
-                    "INSERT INTO sites (binding_id, is_default, is_enabled, hostnames, web_root, web_root_index_file_list, enabled_handlers, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, rewrite_functions) VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}')",
+                    "INSERT INTO sites (binding_id, is_default, is_enabled, hostnames, web_root, web_root_index_file_list, enabled_handlers, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, rewrite_functions, access_log_enabled, access_log_path) VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}')",
                     binding.id,
                     if site.is_default { 1 } else { 0 },
                     if site.is_enabled { 1 } else { 0 },
@@ -240,7 +240,9 @@ fn save_binding(connection: &Connection, binding: &mut Binding) -> Result<(), St
                     site.tls_cert_content.replace("'", "''"),
                     site.tls_key_path.replace("'", "''"),
                     site.tls_key_content.replace("'", "''"),
-                    site.rewrite_functions.join(",").replace("'", "''")
+                    site.rewrite_functions.join(",").replace("'", "''"),
+                    if site.access_log_enabled { 1 } else { 0 },
+                    site.access_log_path.replace("'", "''")
                 ))
                 .map_err(|e| format!("Failed to insert site: {}", e))?;
             trace!("Inserted new site: {:?}", site);
@@ -257,7 +259,7 @@ fn save_binding(connection: &Connection, binding: &mut Binding) -> Result<(), St
             // Existing site, update it
             connection
                 .execute(format!(
-                    "UPDATE sites SET is_default = {}, is_enabled = {}, hostnames = '{}', web_root = '{}', web_root_index_file_list = '{}', enabled_handlers = '{}', tls_cert_path = '{}', tls_cert_content = '{}', tls_key_path = '{}', tls_key_content = '{}', rewrite_functions = '{}' WHERE id = {}",
+                    "UPDATE sites SET is_default = {}, is_enabled = {}, hostnames = '{}', web_root = '{}', web_root_index_file_list = '{}', enabled_handlers = '{}', tls_cert_path = '{}', tls_cert_content = '{}', tls_key_path = '{}', tls_key_content = '{}', rewrite_functions = '{}', access_log_enabled = {}, access_log_path = '{}' WHERE id = {}",
                     if site.is_default { 1 } else { 0 },
                     if site.is_enabled { 1 } else { 0 },
                     site.hostnames.join(",").replace("'", "''"),
@@ -269,6 +271,8 @@ fn save_binding(connection: &Connection, binding: &mut Binding) -> Result<(), St
                     site.tls_key_path.replace("'", "''"),
                     site.tls_key_content.replace("'", "''"),
                     site.rewrite_functions.join(",").replace("'", "''"),
+                    if site.access_log_enabled { 1 } else { 0 },
+                    site.access_log_path.replace("'", "''"),
                     site.id
                 ))
                 .map_err(|e| format!("Failed to update site: {}", e))?;
@@ -453,6 +457,10 @@ fn load_sites(connection: &Connection, binding_id: i64) -> Result<Vec<Site>, Str
         let rewrite_functions_str: String = statement.read(12).map_err(|e| format!("Failed to read rewrite_functions: {}", e))?;
         let rewrite_functions: Vec<String> = parse_comma_separated_list(&rewrite_functions_str);
 
+        // Access log
+        let access_log_enabled: i64 = statement.read(13).map_err(|e| format!("Failed to read access_log_enabled: {}", e))?;
+        let access_log_path: String = statement.read(14).map_err(|e| format!("Failed to read access_log_path: {}", e))?;
+
         sites.push(Site {
             id: site_id as usize,
             hostnames,
@@ -466,6 +474,8 @@ fn load_sites(connection: &Connection, binding_id: i64) -> Result<Vec<Site>, Str
             tls_key_path,
             tls_key_content,
             rewrite_functions,
+            access_log_enabled: access_log_enabled != 0,
+            access_log_path,
         });
     }
 

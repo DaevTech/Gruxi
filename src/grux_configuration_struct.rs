@@ -35,6 +35,9 @@ pub struct Site {
     pub tls_key_path: String,
     pub tls_key_content: String,
     pub rewrite_functions: Vec<String>,
+    // Logs
+    pub access_log_enabled: bool,
+    pub access_log_path: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -107,6 +110,8 @@ impl Configuration {
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
             rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
+            access_log_enabled: false,
+            access_log_path: "".to_string(),
         };
 
         let testing_site = Site {
@@ -122,6 +127,8 @@ impl Configuration {
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
             rewrite_functions: vec![],
+            access_log_enabled: true,
+            access_log_path: "./logs/gruxtest-access-log.log".to_string(),
         };
 
         // Push test site to the first server's first binding
@@ -148,6 +155,8 @@ impl Configuration {
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
             rewrite_functions: vec![],
+            access_log_enabled: false,
+            access_log_path: "".to_string(),
         };
 
         let admin_site = Site {
@@ -163,6 +172,8 @@ impl Configuration {
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
             rewrite_functions: vec![],
+            access_log_enabled: false,
+            access_log_path: "".to_string(),
         };
 
         let admin_binding = Binding {

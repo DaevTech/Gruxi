@@ -232,6 +232,8 @@ fn test_configuration_full_validation() {
         tls_key_path: "".to_string(),
         tls_key_content: "".to_string(),
         rewrite_functions: vec![],
+        access_log_enabled: false,
+        access_log_path: "".to_string(),
     };
 
     let binding = Binding {
@@ -264,6 +266,8 @@ fn test_configuration_full_validation() {
 
     let server_settings = ServerSettings {
         max_body_size: 10 * 1024 * 1024,
+        blocked_file_patterns: vec!["".to_string()],
+        whitelisted_file_patterns: vec!["".to_string()],
     };
 
     let core = Core {

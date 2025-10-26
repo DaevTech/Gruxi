@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use crate::external_request_handlers::external_request_handlers;
 use crate::grux_admin::http_admin_api::*;
 use crate::grux_configuration_struct::*;
@@ -8,6 +7,8 @@ use crate::grux_file_cache::get_file_cache;
 use crate::grux_file_util::check_path_secure;
 use crate::grux_file_util::get_full_file_path;
 use crate::grux_http::http_util::*;
+use crate::logging::access_logging::get_access_log_buffer;
+use chrono::Local;
 use http_body_util::BodyExt;
 use http_body_util::combinators::BoxBody;
 use hyper::HeaderMap;
@@ -17,25 +18,19 @@ use hyper::header::HeaderValue;
 use hyper::{Request, Response};
 use log::debug;
 use log::trace;
+use std::collections::HashMap;
 
-// Handle the incoming request
-pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Binding, remote_ip: String) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    //  return Ok(empty_response_with_status(hyper::StatusCode::OK));
-
-    // Count the request in monitoring
-    get_monitoring_state().increment_requests_served();
-
-    // Extract data for the request before we borrow/move
-    let method = req.method().clone();
-    let uri = req.uri().clone();
-    let mut path = uri.path();
-    let query = uri.query().unwrap_or("");
-    let body_size = req.body().size_hint().upper().unwrap_or(0);
-    let _scheme = uri.scheme_str().unwrap_or("");
-    let headers = req.headers();
+// Entry point to handle request, as we need to do post-processing, like access logging etc
+pub async fn handle_request_entry(req: Request<hyper::body::Incoming>, binding: Binding, remote_ip: String) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    // Hashmap that holds calculated request data
+    let mut request_data: HashMap<String, String> = HashMap::new();
 
     // Extract hostname from headers
+    let headers = req.headers();
     let requested_hostname = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("").to_string();
+
+    request_data.insert("remote_ip".to_string(), remote_ip.clone());
+    request_data.insert("requested_hostname".to_string(), requested_hostname.clone());
 
     // Get HTTP version
     let http_version = match req.version() {
@@ -46,6 +41,60 @@ pub async fn handle_request(req: Request<hyper::body::Incoming>, binding: Bindin
         hyper::Version::HTTP_3 => "HTTP/3.0".to_string(),
         _ => "HTTP/1.1".to_string(),
     };
+    request_data.insert("http_version".to_string(), http_version);
+
+    // Figure out which site we are serving
+    let site = find_best_match_site(&binding.sites, &requested_hostname);
+    if let None = site {
+        return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+    }
+    let site = site.unwrap();
+    trace!("Matched site with request: {:?}", &site);
+
+    let method = req.method().clone();
+
+    let uri = req.uri().clone();
+    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("");
+
+    let response = handle_request(req, &binding, &site, &request_data).await;
+
+    // Handle access logging
+    if site.access_log_enabled {
+        let access_log = get_access_log_buffer();
+        // Get current date and time in CLF format, which is like 10/Oct/2000:13:55:36 -0700
+        let now = Local::now();
+        let clf_date = now.format("%d/%b/%Y:%H:%M:%S %z").to_string();
+        let log_entry = format!(
+            "{} - - [{}] \"{} {} {}\" {} {}",
+            &remote_ip,
+            clf_date,
+            method,
+            path_and_query,
+            request_data.get("http_version").cloned().unwrap_or_default(),
+            response.as_ref().map(|resp| resp.status().as_u16()).unwrap_or(0),
+            response.as_ref().map(|resp| resp.size_hint().upper().unwrap_or(0)).unwrap_or(0)
+        );
+        access_log.add_log(site.id.to_string(), log_entry);
+    }
+
+    response
+}
+
+// Handle the incoming request
+async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, _site: &Site, request_data: &HashMap<String, String>) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    // Count the request in monitoring
+    get_monitoring_state().increment_requests_served();
+
+    // Extract data for the request before we borrow/move
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let mut path = uri.path();
+    let query = uri.query().unwrap_or("");
+    let body_size = req.body().size_hint().upper().unwrap_or(0);
+    let headers = req.headers();
+    let http_version = request_data.get("http_version").cloned().unwrap_or_default();
+    let requested_hostname = request_data.get("requested_hostname").cloned().unwrap_or_default();
+    let remote_ip = request_data.get("remote_ip").cloned().unwrap_or_default();
 
     // Validate the request
     if let Err(resp) = validate_request(

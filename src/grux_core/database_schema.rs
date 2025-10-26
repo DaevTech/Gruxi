@@ -72,7 +72,10 @@ fn get_init_sql() -> Vec<String> {
         tls_cert_content TEXT NOT NULL DEFAULT '',
         tls_key_path TEXT NOT NULL DEFAULT '',
         tls_key_content TEXT NOT NULL DEFAULT '',
-        rewrite_functions TEXT NOT NULL DEFAULT ''
+        rewrite_functions TEXT NOT NULL DEFAULT '',
+        access_log_enabled BOOLEAN NOT NULL DEFAULT 0,
+        access_log_path TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (binding_id) REFERENCES bindings (id) ON DELETE CASCADE
     );"
         .to_string(),
         // Request handlers

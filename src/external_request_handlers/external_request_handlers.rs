@@ -31,7 +31,7 @@ pub trait ExternalRequestHandler {
         body: &Vec<u8>,
         site: &Site,
         full_file_path: &String,
-        remote_ip: &String,
+        remote_ip: &str,
         http_version: &String,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>;
     fn get_handler_type(&self) -> String;
@@ -128,7 +128,7 @@ impl ExternalRequestHandlers {
         body: &Vec<u8>,
         site: &Site,
         full_file_path: &String,
-        remote_ip: &String,
+        remote_ip: &str,
         http_version: &String,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
         let handlers = get_request_handlers();

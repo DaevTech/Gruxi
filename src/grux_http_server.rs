@@ -1,6 +1,6 @@
 use crate::grux_configuration::*;
 use crate::grux_configuration_struct::*;
-use crate::grux_http::handle_request::handle_request;
+use crate::grux_http::handle_request::handle_request_entry;
 use crate::grux_http::http_tls::build_tls_acceptor;
 use futures::future::join_all;
 use hyper::server::conn::{http1, http2};
@@ -86,7 +86,7 @@ fn start_server_binding(binding: &Binding) -> impl std::future::Future<Output = 
                                 // Decide protocol based on ALPN
                                 let is_h2 = negotiated_h2(&tls_stream);
                                 let io = TokioIo::new(tls_stream);
-                                let svc = service_fn(move |req| handle_request(req, binding.clone(), remote_addr_ip.clone()));
+                                let svc = service_fn(move |req| handle_request_entry(req, binding.clone(), remote_addr_ip.clone()));
                                 if is_h2 {
                                     if let Err(err) = http2::Builder::new(TokioExecutor::new()).serve_connection(io, svc).await {
                                         trace!("TLS h2 error serving connection: {:?}", err);
@@ -117,7 +117,7 @@ fn start_server_binding(binding: &Binding) -> impl std::future::Future<Output = 
                     let binding = binding.clone();
                     let remote_addr_ip = remote_addr_ip.clone();
                     async move {
-                        let svc = service_fn(move |req| handle_request(req, binding.clone(), remote_addr_ip.clone()));
+                        let svc = service_fn(move |req| handle_request_entry(req, binding.clone(), remote_addr_ip.clone()));
                         if let Err(err) = http1::Builder::new().serve_connection(io, svc).await {
                             trace!("Error serving connection: {:?}", err);
                         }

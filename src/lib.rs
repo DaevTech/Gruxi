@@ -9,3 +9,4 @@ pub mod grux_file_util;
 pub mod grux_core;
 pub mod grux_http;
 pub mod grux_admin;
+pub mod logging;
