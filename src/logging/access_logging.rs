@@ -1,5 +1,6 @@
-use log::{error, trace};
+use log::{error, info, trace};
 use std::thread::sleep;
+use std::time::Instant;
 use std::{collections::HashMap, sync::OnceLock};
 
 use crate::grux_file_util::get_full_file_path;
@@ -39,7 +40,6 @@ impl AccessLogBuffer {
                     };
                     trace!("Initialized access log buffer for site {} at path {}", &site.id, &log_file_path);
                     access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(site_id.clone(), log_file_path));
-
                 }
             }
         }
@@ -67,9 +67,16 @@ impl AccessLogBuffer {
         let buffered_logs = get_access_log_buffer();
         trace!("Starting access log write thread");
         loop {
+            let start_time = Instant::now();
             for (_site_id, log) in buffered_logs.buffered_logs.iter() {
                 log.consider_flush();
             }
+            let elapsed = start_time.elapsed().as_millis();
+            if elapsed > 0 {
+                info!("Access log flush cycle completed in {} ms", elapsed);
+            }
+
+            // Ideally, this would be adjustable according to the work load (such as elapsed time to do a flush in average)
             sleep(std::time::Duration::from_millis(500));
         }
     }

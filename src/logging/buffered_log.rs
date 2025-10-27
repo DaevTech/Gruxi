@@ -1,12 +1,15 @@
 use log::trace;
-use std::sync::{Mutex};
 use std::fs::write;
+use std::sync::Mutex;
+use std::time::Instant;
 
 pub struct BufferedLog {
     pub log_id: String,
     pub log_file_path: String,
     pub buffered_log: Mutex<Vec<String>>,
+    pub seconds_before_force_flush: usize,
     pub log_count_flush: usize,
+    pub last_flush: Mutex<Instant>,
 }
 
 impl BufferedLog {
@@ -15,7 +18,9 @@ impl BufferedLog {
             log_id: id,
             log_file_path: full_file_path,
             buffered_log: Mutex::new(Vec::new()),
-            log_count_flush: 50,
+            seconds_before_force_flush: 5,
+            log_count_flush: 10,
+            last_flush: Mutex::new(Instant::now()),
         };
 
         // Create the log file and path if it does not exist
@@ -35,11 +40,21 @@ impl BufferedLog {
     pub fn consider_flush(&self) {
         // Get lock
         let mut log_buffer = self.buffered_log.lock().unwrap();
-        if log_buffer.len() < self.log_count_flush {
+
+        // If empty, we are done
+        if log_buffer.is_empty() {
             return;
         }
 
-        trace!("Writing {} access log entries for log id {}", log_buffer.len(), &self.log_id);
+        // If not enough time has passed and not enough logs, skip
+        let elapsed = self.last_flush.lock().unwrap().elapsed().as_secs() as usize;
+        if elapsed < self.seconds_before_force_flush && log_buffer.len() < self.log_count_flush {
+            return;
+        }
+
+        // If either condition met, flush
+        let logs_to_write = log_buffer.len();
+        trace!("Writing {} access log entries for log id {}", logs_to_write, &self.log_id);
 
         // Append the log to the file path
         let log_data = log_buffer.join("\n") + "\n";
@@ -52,5 +67,7 @@ impl BufferedLog {
 
         // Clear data and releases the lock
         log_buffer.clear();
+        let mut last_flush = self.last_flush.lock().unwrap();
+        *last_flush = Instant::now();
     }
 }

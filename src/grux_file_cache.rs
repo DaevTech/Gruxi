@@ -149,7 +149,14 @@ impl FileCache {
             };
 
             if self.is_enabled && (length < self.max_file_size) {
-                trace!("New cached file/dir: {:?}", new_cached_file);
+                trace!("New cached file/dir: path={}, is_directory={}, exists={}, length={}, is_too_large={}, mime_type={}",
+                    new_cached_file.file_path,
+                    new_cached_file.is_directory,
+                    new_cached_file.exists,
+                    new_cached_file.length,
+                    new_cached_file.is_too_large,
+                    new_cached_file.mime_type
+                );
                 self.cache.write().unwrap().insert(file_path.to_string(), new_cached_file.clone());
                 self.cached_items_last_checked
                     .write()
