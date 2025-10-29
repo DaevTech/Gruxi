@@ -1,0 +1,35 @@
+services:
+  grux:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: grux:latest
+    ports:
+      - "80:80"     # HTTP
+      - "443:443"   # HTTPS
+      - "8000:8000" # Admin/API port
+    volumes:
+      # Mount project directories for development
+      - ./logs:/app/logs
+      - ./certs:/app/certs
+#      - ./www-default:/app/www-default
+    restart: unless-stopped
+    depends_on:
+      - php-fpm
+    networks:
+      - grux-network
+
+  # PHP-FPM service for handling PHP requests
+  php-fpm:
+    image: php:8.2-fpm-alpine
+    volumes:
+#      - ./www-default:/var/www/html:ro# Web content accessible to PHP-FPM
+    ports:
+      - "9000:9000"
+    restart: unless-stopped
+    networks:
+      - grux-network
+
+networks:
+  grux-network:
+    driver: bridge

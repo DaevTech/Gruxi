@@ -55,8 +55,5 @@ USER grux
 # Expose the required ports
 EXPOSE 80 443 8000
 
-# Create a default volume for configuration
-VOLUME ["/app/logs", "/app/certs", "/app/www-default", "/app/www-admin"]
-
 # Command to run the application
 CMD ["./grux"]

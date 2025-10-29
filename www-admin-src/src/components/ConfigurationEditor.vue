@@ -29,6 +29,7 @@ const config = ref(null);
 const expandedSections = reactive({
     bindings: false,
     sites: false,
+    requestHandlers: false,
     core: false,
 });
 
@@ -36,6 +37,7 @@ const expandedSections = reactive({
 const expandedItems = reactive({
     bindings: {},
     sites: {},
+    requestHandlers: {},
     coreSubsections: {
         fileCache: false,
         gzip: false,
@@ -165,6 +167,13 @@ const toggleSite = (siteIndex) => {
     expandedItems.sites[siteIndex] = !expandedItems.sites[siteIndex];
 };
 
+const toggleRequestHandler = (handlerIndex) => {
+    if (!expandedItems.requestHandlers[handlerIndex]) {
+        expandedItems.requestHandlers[handlerIndex] = false;
+    }
+    expandedItems.requestHandlers[handlerIndex] = !expandedItems.requestHandlers[handlerIndex];
+};
+
 // Helper functions to check if items are expanded
 const isBindingExpanded = (bindingIndex) => {
     return expandedItems.bindings[bindingIndex] || false;
@@ -172,6 +181,10 @@ const isBindingExpanded = (bindingIndex) => {
 
 const isSiteExpanded = (siteIndex) => {
     return expandedItems.sites[siteIndex] || false;
+};
+
+const isRequestHandlerExpanded = (handlerIndex) => {
+    return expandedItems.requestHandlers[handlerIndex] || false;
 };
 
 // Toggle core subsections
@@ -248,6 +261,49 @@ const removeSite = (index) => {
     }
 };
 
+// Add new request handler
+const addRequestHandler = () => {
+    if (!config.value.request_handlers) {
+        config.value.request_handlers = [];
+    }
+
+    // Generate a unique ID
+    const existingIds = config.value.request_handlers.map((h) => parseInt(h.id)).filter((id) => !isNaN(id));
+    const newId = existingIds.length > 0 ? (Math.max(...existingIds) + 1).toString() : '1';
+
+    config.value.request_handlers.push({
+        id: newId,
+        is_enabled: true,
+        name: 'New Handler',
+        handler_type: 'php',
+        request_timeout: 30,
+        concurrent_threads: 0,
+        file_match: ['.php'],
+        executable: '',
+        ip_and_port: '',
+        other_webroot: '',
+        extra_handler_config: [],
+        extra_environment: [],
+    });
+};
+
+// Remove request handler
+const removeRequestHandler = (index) => {
+    if (config.value.request_handlers && config.value.request_handlers.length > index) {
+        const handlerId = config.value.request_handlers[index].id;
+        config.value.request_handlers.splice(index, 1);
+
+        // Remove handler ID from all sites that reference it
+        if (config.value.sites) {
+            config.value.sites.forEach((site) => {
+                if (site.enabled_handlers) {
+                    site.enabled_handlers = site.enabled_handlers.filter((id) => id !== handlerId);
+                }
+            });
+        }
+    }
+};
+
 // Add hostname to site
 const addHostname = (siteIndex) => {
     if (config.value.sites && config.value.sites[siteIndex]) {
@@ -279,7 +335,10 @@ const removeIndexFile = (siteIndex, fileIndex) => {
 // Add enabled handler to site
 const addEnabledHandler = (siteIndex) => {
     if (config.value.sites && config.value.sites[siteIndex]) {
-        config.value.sites[siteIndex].enabled_handlers.push('1');
+        // Add the first available handler ID, or empty string if none available
+        const availableHandlers = getAvailableRequestHandlers();
+        const handlerId = availableHandlers.length > 0 ? availableHandlers[0].id : '';
+        config.value.sites[siteIndex].enabled_handlers.push(handlerId);
     }
 };
 
@@ -312,6 +371,24 @@ const getAvailableBindings = () => {
             label: `${b.ip}:${b.port}${b.is_admin ? ' (Admin)' : ''}${b.is_tls ? ' (TLS)' : ''}`,
         })) || []
     );
+};
+
+// Get available request handlers for site association
+const getAvailableRequestHandlers = () => {
+    return (
+        config.value.request_handlers?.map((h) => ({
+            id: h.id,
+            name: h.name,
+            handler_type: h.handler_type,
+            label: `${h.name} (${h.handler_type})${!h.is_enabled ? ' - DISABLED' : ''}`,
+        })) || []
+    );
+};
+
+// Get handler name by ID
+const getHandlerNameById = (handlerId) => {
+    const handler = config.value.request_handlers?.find((h) => h.id === handlerId);
+    return handler ? `${handler.name} (${handler.handler_type})` : `Handler ID: ${handlerId}`;
 };
 
 // Get bindings associated with a site
@@ -349,6 +426,43 @@ const addGzipContentType = () => {
 const removeGzipContentType = (index) => {
     if (config.value.core && config.value.core.gzip && config.value.core.gzip.compressible_content_types.length > index) {
         config.value.core.gzip.compressible_content_types.splice(index, 1);
+    }
+};
+
+// Request handler helper functions
+const addFileMatch = (handlerIndex) => {
+    if (config.value.request_handlers && config.value.request_handlers[handlerIndex]) {
+        config.value.request_handlers[handlerIndex].file_match.push('.html');
+    }
+};
+
+const removeFileMatch = (handlerIndex, matchIndex) => {
+    if (config.value.request_handlers && config.value.request_handlers[handlerIndex] && config.value.request_handlers[handlerIndex].file_match.length > matchIndex) {
+        config.value.request_handlers[handlerIndex].file_match.splice(matchIndex, 1);
+    }
+};
+
+const addHandlerConfig = (handlerIndex) => {
+    if (config.value.request_handlers && config.value.request_handlers[handlerIndex]) {
+        config.value.request_handlers[handlerIndex].extra_handler_config.push(['key', 'value']);
+    }
+};
+
+const removeHandlerConfig = (handlerIndex, configIndex) => {
+    if (config.value.request_handlers && config.value.request_handlers[handlerIndex] && config.value.request_handlers[handlerIndex].extra_handler_config.length > configIndex) {
+        config.value.request_handlers[handlerIndex].extra_handler_config.splice(configIndex, 1);
+    }
+};
+
+const addEnvironmentVar = (handlerIndex) => {
+    if (config.value.request_handlers && config.value.request_handlers[handlerIndex]) {
+        config.value.request_handlers[handlerIndex].extra_environment.push(['ENV_VAR', 'value']);
+    }
+};
+
+const removeEnvironmentVar = (handlerIndex, envIndex) => {
+    if (config.value.request_handlers && config.value.request_handlers[handlerIndex] && config.value.request_handlers[handlerIndex].extra_environment.length > envIndex) {
+        config.value.request_handlers[handlerIndex].extra_environment.splice(envIndex, 1);
     }
 };
 
@@ -641,11 +755,19 @@ onMounted(() => {
                                 <div class="list-field compact half-width">
                                     <label>Enabled Request Handlers</label>
                                     <div class="list-items">
-                                        <div v-for="(handler, handlerIndex) in site.enabled_handlers" :key="handlerIndex" class="list-item">
-                                            <input v-model="site.enabled_handlers[handlerIndex]" type="text" placeholder="Handler ID" />
+                                        <div v-for="(handlerId, handlerIndex) in site.enabled_handlers" :key="handlerIndex" class="list-item">
+                                            <select v-model="site.enabled_handlers[handlerIndex]" class="handler-select">
+                                                <option value="">-- Select Handler --</option>
+                                                <option v-for="handler in getAvailableRequestHandlers()" :key="handler.id" :value="handler.id">
+                                                    {{ handler.label }}
+                                                </option>
+                                            </select>
                                             <button @click="removeEnabledHandler(siteIndex, handlerIndex)" class="remove-item-button">×</button>
                                         </div>
                                         <button @click="addEnabledHandler(siteIndex)" class="add-item-button">+ Add Handler</button>
+                                    </div>
+                                    <div v-if="site.enabled_handlers.length === 0" class="handler-info">
+                                        <p><strong>Info:</strong> No request handlers are enabled for this site. Static files will be served directly.</p>
                                     </div>
                                 </div>
 
@@ -658,6 +780,136 @@ onMounted(() => {
                                             <button @click="removeRewriteFunction(siteIndex, funcIndex)" class="remove-item-button">×</button>
                                         </div>
                                         <button @click="addRewriteFunction(siteIndex)" class="add-item-button">+ Add Function</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Request Handlers Section -->
+            <div class="config-section">
+                <div class="section-header" @click="toggleSection('requestHandlers')">
+                    <span class="section-icon" :class="{ expanded: expandedSections.requestHandlers }">▶</span>
+                    <span class="section-title-icon">⚙️</span>
+                    <h3>Request Handlers</h3>
+                    <button @click.stop="addRequestHandler" class="add-button">+ Add Handler</button>
+                </div>
+
+                <div v-if="expandedSections.requestHandlers" class="section-content">
+                    <div v-if="!config.request_handlers || config.request_handlers.length === 0" class="empty-state-section">
+                        <div class="empty-icon">⚙️</div>
+                        <p>No request handlers configured</p>
+                        <button @click="addRequestHandler" class="add-button">+ Add First Handler</button>
+                    </div>
+
+                    <!-- Request Handlers List -->
+                    <div v-for="(handler, handlerIndex) in config.request_handlers" :key="handler.id" class="server-item">
+                        <div class="item-header compact" @click="toggleRequestHandler(handlerIndex)">
+                            <div class="header-left">
+                                <span class="section-icon" :class="{ expanded: isRequestHandlerExpanded(handlerIndex) }">▶</span>
+                                <span class="hierarchy-indicator handler-indicator">⚙️</span>
+                                <h4>{{ handler.name }}</h4>
+                                <span class="handler-type-badge">{{ handler.handler_type.toUpperCase() }}</span>
+                                <span v-if="!handler.is_enabled" class="admin-badge">DISABLED</span>
+                            </div>
+                            <button @click.stop="removeRequestHandler(handlerIndex)" class="remove-button compact">Remove</button>
+                        </div>
+
+                        <!-- Request Handler Content -->
+                        <div v-if="isRequestHandlerExpanded(handlerIndex)" class="item-content">
+                            <!-- Enabled checkbox at the top -->
+                            <div class="form-grid compact">
+                                <div class="form-field checkbox-grid compact">
+                                    <label>
+                                        <input v-model="handler.is_enabled" type="checkbox" />
+                                        Enabled
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- Two column layout for main fields -->
+                            <div class="handler-two-column-layout">
+                                <!-- First column -->
+                                <div class="handler-column">
+                                    <div class="form-field">
+                                        <label>Handler Name</label>
+                                        <input v-model="handler.name" type="text" placeholder="e.g., PHP Handler" />
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Handler Type</label>
+                                        <select v-model="handler.handler_type">
+                                            <option value=""></option>
+                                            <option value="php">PHP</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Request Timeout (seconds)</label>
+                                        <input v-model.number="handler.request_timeout" type="number" min="1" max="3600" />
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Concurrent Threads (0 = auto)</label>
+                                        <input v-model.number="handler.concurrent_threads" type="number" min="0" max="1000" />
+                                    </div>
+                                </div>
+
+                                <!-- Second column -->
+                                <div class="handler-column">
+                                    <div class="form-field">
+                                        <label>Executable Path</label>
+                                        <input v-model="handler.executable" type="text" placeholder="Path to executable (e.g., php-cgi.exe)" />
+                                    </div>
+                                    <div class="form-field">
+                                        <label>IP and Port (optional, for FastCGI)</label>
+                                        <input v-model="handler.ip_and_port" type="text" placeholder="e.g., 127.0.0.1:9000" />
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Alternative Web Root (optional - Used in cases like PHP-FPM running in Docker, with its own file system)</label>
+                                        <input v-model="handler.other_webroot" type="text" placeholder="Override site web root for this handler" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- File Match Patterns -->
+                            <div class="two-column-layout">
+                                <div class="list-field compact half-width">
+                                    <label>File Match Patterns</label>
+                                    <div class="list-items">
+                                        <div v-for="(pattern, patternIndex) in handler.file_match" :key="patternIndex" class="list-item">
+                                            <input v-model="handler.file_match[patternIndex]" type="text" placeholder=".php" />
+                                            <button @click="removeFileMatch(handlerIndex, patternIndex)" class="remove-item-button">×</button>
+                                        </div>
+                                        <button @click="addFileMatch(handlerIndex)" class="add-item-button">+ Add Pattern</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Two column layout for config and environment -->
+                            <div class="two-column-layout">
+                                <!-- Extra Handler Config -->
+                                <div class="list-field compact half-width">
+                                    <label>Extra Handler Configuration</label>
+                                    <div class="list-items">
+                                        <div v-for="(configPair, configIndex) in handler.extra_handler_config" :key="configIndex" class="list-item key-value">
+                                            <input v-model="handler.extra_handler_config[configIndex][0]" type="text" placeholder="Key" class="key-input" />
+                                            <input v-model="handler.extra_handler_config[configIndex][1]" type="text" placeholder="Value" class="value-input" />
+                                            <button @click="removeHandlerConfig(handlerIndex, configIndex)" class="remove-item-button">×</button>
+                                        </div>
+                                        <button @click="addHandlerConfig(handlerIndex)" class="add-item-button">+ Add Config</button>
+                                    </div>
+                                </div>
+
+                                <!-- Extra Environment Variables -->
+                                <div class="list-field compact half-width">
+                                    <label>Extra Environment Variables</label>
+                                    <div class="list-items">
+                                        <div v-for="(envPair, envIndex) in handler.extra_environment" :key="envIndex" class="list-item key-value">
+                                            <input v-model="handler.extra_environment[envIndex][0]" type="text" placeholder="ENV_VAR" class="key-input" />
+                                            <input v-model="handler.extra_environment[envIndex][1]" type="text" placeholder="value" class="value-input" />
+                                            <button @click="removeEnvironmentVar(handlerIndex, envIndex)" class="remove-item-button">×</button>
+                                        </div>
+                                        <button @click="addEnvironmentVar(handlerIndex)" class="add-item-button">+ Add Variable</button>
                                     </div>
                                 </div>
                             </div>
@@ -2057,6 +2309,143 @@ onMounted(() => {
     .reset-button.top,
     .reset-button.bottom {
         width: 100%;
+    }
+}
+
+/* Request Handler Specific Styles */
+.handler-type-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: #f3e8ff;
+    color: #7c3aed;
+}
+
+.handler-select {
+    flex: 1;
+    padding: 0.45rem;
+    border: 2px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    background: white;
+    transition: all 0.2s ease;
+}
+
+.handler-select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.form-field select {
+    padding: 0.875rem;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    background: white;
+    transition: all 0.2s ease;
+}
+
+.form-field select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.list-item.key-value {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.key-input,
+.value-input {
+    padding: 0.45rem;
+    border: 2px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    background: white;
+    transition: all 0.2s ease;
+}
+
+.key-input:focus,
+.value-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.handler-info {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 6px;
+    color: #0c4a6e;
+    font-size: 0.875rem;
+}
+
+.handler-info p {
+    margin: 0;
+}
+
+.handler-info strong {
+    color: #0369a1;
+}
+
+/* Request Handler Two Column Layout */
+.handler-two-column-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    padding: 1rem 1.25rem;
+    background: white;
+}
+
+.handler-column {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.handler-column .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.handler-column .form-field label {
+    font-weight: 600;
+    color: #374151;
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+}
+
+.handler-column .form-field input,
+.handler-column .form-field select {
+    padding: 0.875rem;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+    background: white;
+}
+
+.handler-column .form-field input:focus,
+.handler-column .form-field select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+@media (max-width: 1024px) {
+    .handler-two-column-layout {
+        grid-template-columns: 1fr;
+        gap: 1rem;
     }
 }
 </style>

@@ -51,7 +51,7 @@ impl ExternalRequestHandlers {
 
         debug!("Enabled external request handlers found in configuration: {:?}", handler_ids_used);
 
-        // Go through our configured handlers and load the ones we need
+        // Go through our configured handlers and check they are enabled
         let mut handler_type_to_load: HashMap<String, RequestHandler> = HashMap::new();
 
         let external_handlers: &Vec<RequestHandler> = &config.request_handlers;
@@ -59,8 +59,8 @@ impl ExternalRequestHandlers {
             if handler.is_enabled {
                 // Check if the handler is in our enabled list
                 if handler_ids_used.contains_key(&handler.id) {
-                    if !handler_type_to_load.contains_key(&handler.handler_type) {
-                        handler_type_to_load.insert(handler.handler_type.clone(), handler.clone());
+                    if !handler_type_to_load.contains_key(&handler.id) {
+                        handler_type_to_load.insert(handler.id.clone(), handler.clone());
                     }
                 }
             }
@@ -72,10 +72,10 @@ impl ExternalRequestHandlers {
         let mut php = HashMap::new();
         let mut id_to_type = HashMap::new();
 
-        for (handler_type, handler) in handler_type_to_load {
+        for (handler_id, handler) in handler_type_to_load {
             // Determine the concurrent threads. Can be set in config or we determine it based on CPU cores
             // 0 = automatically based on CPU cores
-            let mut concurrent_threads = if handler.concurrent_threads == 0 {
+            let concurrent_threads = if handler.concurrent_threads == 0 {
                 let cpus = num_cpus::get_physical();
                 cpus
             } else if handler.concurrent_threads < 1 {
@@ -83,11 +83,8 @@ impl ExternalRequestHandlers {
             } else {
                 handler.concurrent_threads
             };
-            if concurrent_threads > 3 {
-                concurrent_threads -= 1;
-            }
 
-            match handler_type.as_str() {
+            match handler.handler_type.as_str() {
                 "php" => {
                     let php_handler = PHPHandler::new(
                         handler.executable.clone(),
@@ -99,12 +96,12 @@ impl ExternalRequestHandlers {
                         handler.extra_environment,
                     );
                     php_handler.start();
-                    debug!("PHP handler with id {} started and added to external request handlers.", handler.id);
-                    id_to_type.insert(handler.id.clone(), "php".to_string());
-                    php.insert(handler.id, php_handler);
+                    debug!("PHP handler with id {} started and added to external request handlers.", &handler_id);
+                    id_to_type.insert(handler_id.clone(), "php".to_string());
+                    php.insert(handler_id.clone(), php_handler);
                 }
                 _ => {
-                    debug!("Unknown handler type: {}", handler_type);
+                    error!("Unknown handler type in config: {}", handler.handler_type);
                 }
             }
         }
