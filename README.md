@@ -1,5 +1,6 @@
+<img width="200" src="https://github.com/briansjensen/grux/blob/0c198a580b6d473bfbef642301e069507429be26/assets/logo.svg">
 
-# Grux - High performance web server
+#  Grux - High performance web server
 
 Grux is a web server focused on high performance and ease of administration. It has a built-in web interface to change settings, add websites etc. No more need for complicated configuration files with weird syntax. Written in high performance Rust. Supports PHP right out of the box.
 
@@ -7,12 +8,12 @@ Grux is a web server focused on high performance and ease of administration. It 
 
 ## Features
 
-- Web interface for administration
-- SSL/TLS support for https:// sites
+- Serve files in fastest possible manner
+- Easy web interface for administration built right in
+- SSL/TLS support for secure https:// sites
 - Supports HTTP1.1 and HTTP2.0
-- PHP Support (both FPM and php-cgi on Windows)
-- High performance file cache
-
+- PHP Support (both FPM and php-cgi on Windows (needs to be v7.1+ of PHP for Windows))
+- High performance file cache to really speed up
 
 
 ## Getting started
