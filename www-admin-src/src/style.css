@@ -71,7 +71,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 40px;
+  min-height: 25px;
 }
 
 button:hover {

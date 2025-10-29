@@ -105,7 +105,7 @@ pub fn load_configuration() -> Result<Configuration, String> {
     })
 }
 
-fn handle_relationship_binding_sites(relationships: &Vec<BindingSiteRelationship>, bindings: &mut Vec<Binding>, sites: &mut Vec<Site>) {
+pub fn handle_relationship_binding_sites(relationships: &Vec<BindingSiteRelationship>, bindings: &mut Vec<Binding>, sites: &mut Vec<Site>) {
     // For sites and binding, generate hashmaps for quick lookup
     let mut binding_map = bindings.iter_mut().map(|b| (b.id, b)).collect::<HashMap<_, _>>();
     let site_map = sites.iter().map(|s| (s.id, s)).collect::<HashMap<_, _>>();

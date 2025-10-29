@@ -82,6 +82,16 @@ impl Configuration {
         }
 
         // Validate bindings
+
+        // First check that none of the bindings have duplicate IP/port combinations
+        let mut binding_combinations = std::collections::HashSet::new();
+        for binding in &self.bindings {
+            let combo = format!("{}:{}", binding.ip, binding.port);
+            if !binding_combinations.insert(combo) {
+                errors.push(format!("Duplicate binding for IP/Port combination: {}:{}", binding.ip, binding.port));
+            }
+        }
+        // Check the individual bindings
         for (binding_idx, binding) in self.bindings.iter().enumerate() {
             if let Err(binding_errors) = binding.validate() {
                 for error in binding_errors {

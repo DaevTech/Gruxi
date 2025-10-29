@@ -12,7 +12,9 @@ use tokio_rustls::rustls::sign::CertifiedKey as RustlsCertifiedKey;
 use tokio_rustls::rustls::{self, ServerConfig as RustlsServerConfig};
 
 use crate::configuration::binding::Binding;
+use crate::configuration::save_configuration::save_site;
 use crate::configuration::site::Site;
+use crate::grux_core::database_connection::get_database_connection;
 
 // Persist generated cert/key to disk and update configuration for a specific site
 pub async fn persist_generated_tls_for_site(site: &mut Site, cert_pem: &str, key_pem: &str) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
@@ -49,6 +51,9 @@ pub async fn persist_generated_tls_for_site(site: &mut Site, cert_pem: &str, key
 
     site.tls_cert_path = cert_path.clone();
     site.tls_key_path = key_path.clone();
+
+    let connection = get_database_connection()?;
+    save_site(&connection, site)?;
 
     Ok((cert_path, key_path))
 }

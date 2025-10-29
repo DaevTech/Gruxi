@@ -4,9 +4,9 @@ use crate::configuration::core::Core;
 use crate::configuration::load_configuration::load_configuration;
 use crate::configuration::request_handler::RequestHandler;
 use crate::configuration::site::Site;
-use crate::{ grux_core::database_connection::get_database_connection};
+use crate::grux_core::database_connection::get_database_connection;
+use log::info;
 use log::trace;
-use log::{info};
 use serde_json;
 use sqlite::Connection;
 use sqlite::State;
@@ -42,9 +42,33 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
     for binding in &mut config.bindings {
         save_binding(&connection, binding)?;
     }
+    // Check if any of the bindings need to be deleted, if no longer present in config
+    let current_binding_ids: Vec<usize> = current_config.bindings.iter().map(|b| b.id).collect();
+    let new_binding_ids: Vec<usize> = config.bindings.iter().map(|b| b.id).collect();
+    for binding_id in current_binding_ids {
+        if !new_binding_ids.contains(&binding_id) && binding_id != 0 {
+            // Delete binding
+            connection
+                .execute(format!("DELETE FROM bindings WHERE id = {}", binding_id))
+                .map_err(|e| format!("Failed to delete binding with id {}: {}", binding_id, e))?;
+        }
+    }
 
     // Save sites
-    save_sites(&connection, &mut config.sites)?;
+    for site in &mut config.sites {
+        save_site(&connection, site)?;
+    }
+    // Check if any of the sites need to be deleted, if no longer present in config
+    let current_site_ids: Vec<usize> = current_config.sites.iter().map(|s| s.id).collect();
+    let new_site_ids: Vec<usize> = config.sites.iter().map(|s| s.id).collect();
+    for site_id in current_site_ids {
+        if !new_site_ids.contains(&site_id) && site_id != 0 {
+            // Delete site
+            connection
+                .execute(format!("DELETE FROM sites WHERE id = {}", site_id))
+                .map_err(|e| format!("Failed to delete site with id {}: {}", site_id, e))?;
+        }
+    }
 
     // Save the binding-site relationships
     // First, clear existing relationships
@@ -56,8 +80,7 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
         connection
             .execute(format!(
                 "INSERT OR REPLACE INTO binding_sites (binding_id, site_id) VALUES ({}, {})",
-                relationship.binding_id,
-                relationship.site_id
+                relationship.binding_id, relationship.site_id
             ))
             .map_err(|e| format!("Failed to insert binding-site relationship: {}", e))?;
     }
@@ -77,7 +100,6 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
 
     Ok(true) // Changes were saved
 }
-
 
 fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> {
     // Save file cache settings
@@ -136,51 +158,44 @@ fn save_server_settings(connection: &Connection, key: &str, value: &str) -> Resu
 }
 
 fn save_binding(connection: &Connection, binding: &mut Binding) -> Result<(), String> {
-    // Insert binding with site data
+    // Handle new bindings (id == 0) by setting id to NULL for auto-increment
+    let id_value = if binding.id == 0 { "NULL".to_string() } else { binding.id.to_string() };
+
+    // Use INSERT OR REPLACE to handle both new and existing bindings
+    connection
+        .execute(format!(
+            "INSERT OR REPLACE INTO bindings (id, ip, port, is_admin, is_tls) VALUES ({}, '{}', {}, {}, {})",
+            id_value,
+            binding.ip.replace("'", "''"),
+            binding.port,
+            if binding.is_admin { 1 } else { 0 },
+            if binding.is_tls { 1 } else { 0 }
+        ))
+        .map_err(|e| format!("Failed to insert/replace binding: {}", e))?;
+
+    // If this was a new binding (id == 0), get the auto-generated ID
     if binding.id == 0 {
-        // New binding, insert it
-        connection
-            .execute(format!(
-                "INSERT INTO bindings (ip, port, is_admin, is_tls) VALUES ('{}', {}, {}, {})",
-                binding.ip.replace("'", "''"),
-                binding.port,
-                if binding.is_admin { 1 } else { 0 },
-                if binding.is_tls { 1 } else { 0 }
-            ))
-            .map_err(|e| format!("Failed to insert binding: {}", e))?;
-        trace!("Inserted new binding: {:?}", binding);
         let mut last_inserted_id_statement = connection
             .prepare("SELECT last_insert_rowid()")
             .map_err(|e| format!("Failed to prepare last_insert_rowid query: {}", e))?;
 
         match last_inserted_id_statement.next().map_err(|e| format!("Failed to execute last_insert_rowid query: {}", e))? {
             State::Row => binding.id = last_inserted_id_statement.read::<i64, _>(0).map_err(|e| format!("Failed to read last inserted id: {}", e))? as usize,
-            State::Done => binding.id = 0, // No version found, assume 0
+            State::Done => binding.id = 0, // No ID found, assume 0
         }
-        trace!("Inserted new binding with id: {:?}", binding.id)
+        trace!("Inserted new binding with id: {:?}", binding.id);
     } else {
-        // Existing binding, update it
-        connection
-            .execute(format!(
-                "UPDATE bindings SET ip = '{}', port = {}, is_admin = {}, is_tls = {} WHERE id = {}",
-                binding.ip.replace("'", "''"),
-                binding.port,
-                if binding.is_admin { 1 } else { 0 },
-                if binding.is_tls { 1 } else { 0 },
-                binding.id
-            ))
-            .map_err(|e| format!("Failed to update binding: {}", e))?;
+        trace!("Updated existing binding with id: {:?}", binding.id);
     }
 
     Ok(())
 }
 
-fn save_sites(connection: &Connection, sites: &mut Vec<Site>) -> Result<(), String> {
-    for site in sites {
-        // Insert or update site
-        if site.id == 0 {
-            // New site, insert it
-            connection
+pub fn save_site(connection: &Connection, site: &mut Site) -> Result<(), String> {
+    // Insert or update site
+    if site.id == 0 {
+        // New site, insert it
+        connection
                 .execute(format!(
                     "INSERT INTO sites (is_default, is_enabled, hostnames, web_root, web_root_index_file_list, enabled_handlers, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, rewrite_functions, access_log_enabled, access_log_path) VALUES ({}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}')",
                     if site.is_default { 1 } else { 0 },
@@ -198,19 +213,19 @@ fn save_sites(connection: &Connection, sites: &mut Vec<Site>) -> Result<(), Stri
                     site.access_log_path.replace("'", "''")
                 ))
                 .map_err(|e| format!("Failed to insert site: {}", e))?;
-            trace!("Inserted new site: {:?}", site);
-            let mut last_inserted_id_statement = connection
-                .prepare("SELECT last_insert_rowid()")
-                .map_err(|e| format!("Failed to prepare last_insert_rowid query: {}", e))?;
+        trace!("Inserted new site: {:?}", site);
+        let mut last_inserted_id_statement = connection
+            .prepare("SELECT last_insert_rowid()")
+            .map_err(|e| format!("Failed to prepare last_insert_rowid query: {}", e))?;
 
-            match last_inserted_id_statement.next().map_err(|e| format!("Failed to execute last_insert_rowid query: {}", e))? {
-                State::Row => site.id = last_inserted_id_statement.read::<i64, _>(0).map_err(|e| format!("Failed to read last inserted id: {}", e))? as usize,
-                State::Done => site.id = 0, // No version found, assume 0
-            }
-            trace!("Inserted new site with id: {:?}", site.id);
-        } else {
-            // Existing site, update it
-            connection
+        match last_inserted_id_statement.next().map_err(|e| format!("Failed to execute last_insert_rowid query: {}", e))? {
+            State::Row => site.id = last_inserted_id_statement.read::<i64, _>(0).map_err(|e| format!("Failed to read last inserted id: {}", e))? as usize,
+            State::Done => site.id = 0, // No version found, assume 0
+        }
+        trace!("Inserted new site with id: {:?}", site.id);
+    } else {
+        // Existing site, update it
+        connection
                 .execute(format!(
                     "UPDATE sites SET is_default = {}, is_enabled = {}, hostnames = '{}', web_root = '{}', web_root_index_file_list = '{}', enabled_handlers = '{}', tls_cert_path = '{}', tls_cert_content = '{}', tls_key_path = '{}', tls_key_content = '{}', rewrite_functions = '{}', access_log_enabled = {}, access_log_path = '{}' WHERE id = {}",
                     if site.is_default { 1 } else { 0 },
@@ -229,8 +244,8 @@ fn save_sites(connection: &Connection, sites: &mut Vec<Site>) -> Result<(), Stri
                     site.id
                 ))
                 .map_err(|e| format!("Failed to update site: {}", e))?;
-        }
     }
+
     Ok(())
 }
 

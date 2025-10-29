@@ -29,7 +29,13 @@ pub async fn handle_request_entry(req: Request<hyper::body::Incoming>, binding: 
 
     // Extract hostname from headers
     let headers = req.headers();
-    let requested_hostname = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("").to_string();
+    let requested_hostname = headers.get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_string();
 
     request_data.insert("remote_ip".to_string(), remote_ip.clone());
     request_data.insert("requested_hostname".to_string(), requested_hostname.clone());

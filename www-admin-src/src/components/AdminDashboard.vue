@@ -281,7 +281,7 @@ onMounted(() => {
 
                 <!-- Configuration View -->
                 <div v-else-if="activeView === 'configuration'" class="view-content">
-                    <ConfigurationEditor :user="user" />
+                    <ConfigurationEditor :user="user" :inline="true" />
                 </div>
 
                 <!-- Other Views -->
@@ -519,6 +519,32 @@ onMounted(() => {
 .view-content {
     max-width: 1700px;
     margin: 0 auto;
+}
+
+.view-header {
+    margin-bottom: 2rem;
+    text-align: left;
+}
+
+.view-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0 0 0.5rem 0;
+    font-size: 2rem;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.view-icon {
+    font-size: 2rem;
+}
+
+.view-description {
+    margin: 0;
+    color: #64748b;
+    font-size: 1.1rem;
+    line-height: 1.5;
 }
 
 /* Stats Overview */
