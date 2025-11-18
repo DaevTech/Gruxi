@@ -162,7 +162,11 @@ fn save_binding(connection: &Connection, binding: &Binding) -> Result<(), String
 }
 
 pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
-    // Insert site with explicit ID (all sites are re-inserted after DELETE FROM sites)
+    // Remove any site with the same ID first (to avoid conflicts)
+    connection
+        .execute(format!("DELETE FROM sites WHERE id = {}", site.id))
+        .map_err(|e| format!("Failed to delete existing site with id {}: {}", site.id, e))?;
+
     connection
         .execute(format!(
             "INSERT INTO sites (id, is_default, is_enabled, hostnames, web_root, web_root_index_file_list, enabled_handlers, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, rewrite_functions, access_log_enabled, access_log_path) VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}')",

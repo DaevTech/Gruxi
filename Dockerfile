@@ -4,8 +4,8 @@ FROM rust:alpine AS grux-builder
 # Install required system dependencies for building
 RUN apk add --no-cache \
     musl-dev \
-#    openssl-dev \
-#    openssl-libs-static \
+    openssl-dev \
+    openssl-libs-static \
     pkgconfig \
     ca-certificates
 
@@ -56,11 +56,12 @@ COPY --from=admin-portal /www-admin /app/www-admin/
 
 # Create necessary directories and set ownership
 RUN mkdir -p /app/logs /app/certs /app/www-default /app/db && \
+    chmod 755 /app/certs && \
     chown -R grux:grux /app
 
 # Copy project files and directories (these will be mounted in development)
 # But we'll create the structure for when running standalone
-COPY --chown=grux:grux www-default/ /app/www-default/
+COPY  www-default/ /app/www-default/
 
 # Switch to the non-root user
 USER grux

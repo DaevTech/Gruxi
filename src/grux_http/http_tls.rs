@@ -1,4 +1,4 @@
-use log::warn;
+use log::{debug, info, warn};
 use rand::Rng;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::BufReader;
@@ -10,6 +10,7 @@ use tokio_rustls::rustls::crypto::ring::sign as ring_sign;
 use tokio_rustls::rustls::server::ResolvesServerCertUsingSni;
 use tokio_rustls::rustls::sign::CertifiedKey as RustlsCertifiedKey;
 use tokio_rustls::rustls::{self, ServerConfig as RustlsServerConfig};
+use tokio_rustls::rustls::server::{ResolvesServerCert, ClientHello};
 
 use crate::configuration::binding::Binding;
 use crate::configuration::save_configuration::save_site;
@@ -18,9 +19,9 @@ use crate::grux_core::database_connection::get_database_connection;
 
 // Persist generated cert/key to disk and update configuration for a specific site
 pub async fn persist_generated_tls_for_site(site: &mut Site, cert_pem: &str, key_pem: &str) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
-    // Ensure target directory exists
+    // Ensure target directory exists with appropriate permissions
     let dir = "certs";
-    fs::create_dir_all(dir).await?;
+    fs::create_dir_all(dir).await.map_err(|e| format!("Failed to create certs directory '{}': {}", dir, e))?;
 
     // Generate a random number for this cert
     let mut rng = rand::rng();
@@ -34,18 +35,22 @@ pub async fn persist_generated_tls_for_site(site: &mut Site, cert_pem: &str, key
     let key_tmp = format!("{}.tmp", &key_path);
 
     {
-        let mut f = fs::File::create(&cert_tmp).await?;
-        f.write_all(cert_pem.as_bytes()).await?;
-        f.flush().await?;
+        let mut f = fs::File::create(&cert_tmp).await.map_err(|e| format!("Failed to create temp cert file '{}': {}", cert_tmp, e))?;
+        f.write_all(cert_pem.as_bytes()).await.map_err(|e| format!("Failed to write cert data to '{}': {}", cert_tmp, e))?;
+        f.flush().await.map_err(|e| format!("Failed to flush cert file '{}': {}", cert_tmp, e))?;
     }
-    fs::rename(&cert_tmp, &cert_path).await?;
+    fs::rename(&cert_tmp, &cert_path)
+        .await
+        .map_err(|e| format!("Failed to rename temp cert file '{}' to '{}': {}", cert_tmp, cert_path, e))?;
 
     {
-        let mut f = fs::File::create(&key_tmp).await?;
-        f.write_all(key_pem.as_bytes()).await?;
-        f.flush().await?;
+        let mut f = fs::File::create(&key_tmp).await.map_err(|e| format!("Failed to create temp key file '{}': {}", key_tmp, e))?;
+        f.write_all(key_pem.as_bytes()).await.map_err(|e| format!("Failed to write key data to '{}': {}", key_tmp, e))?;
+        f.flush().await.map_err(|e| format!("Failed to flush key file '{}': {}", key_tmp, e))?;
     }
-    fs::rename(&key_tmp, &key_path).await?;
+    fs::rename(&key_tmp, &key_path)
+        .await
+        .map_err(|e| format!("Failed to rename temp key file '{}' to '{}': {}", key_tmp, key_path, e))?;
 
     // Update configuration in DB so future runs use persisted files
 
@@ -58,6 +63,39 @@ pub async fn persist_generated_tls_for_site(site: &mut Site, cert_pem: &str, key
     Ok((cert_path, key_path))
 }
 
+// Custom certificate resolver that provides fallback when SNI doesn't match
+#[derive(Debug)]
+struct FallbackCertResolver {
+    sni_resolver: ResolvesServerCertUsingSni,
+    fallback_cert: Option<std::sync::Arc<RustlsCertifiedKey>>,
+}
+
+impl FallbackCertResolver {
+    fn new(sni_resolver: ResolvesServerCertUsingSni) -> Self {
+        Self {
+            sni_resolver,
+            fallback_cert: None,
+        }
+    }
+
+    fn with_fallback(mut self, cert: std::sync::Arc<RustlsCertifiedKey>) -> Self {
+        self.fallback_cert = Some(cert);
+        self
+    }
+}
+
+impl ResolvesServerCert for FallbackCertResolver {
+    fn resolve(&self, client_hello: ClientHello) -> Option<std::sync::Arc<RustlsCertifiedKey>> {
+        // First try the SNI resolver
+        if let Some(cert) = self.sni_resolver.resolve(client_hello) {
+            return Some(cert);
+        }
+
+        // If SNI doesn't match, use fallback certificate
+        self.fallback_cert.clone()
+    }
+}
+
 // Build a TLS acceptor that selects certificates per-site using SNI
 pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
     let provider = rustls::crypto::ring::default_provider();
@@ -66,16 +104,35 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
     let mut resolver = ResolvesServerCertUsingSni::new();
     let mut have_default = false;
     let mut site_added = false;
+    let mut fallback_certificate: Option<std::sync::Arc<RustlsCertifiedKey>> = None;
 
-    for site in binding.get_sites() {
+    // We need to work with a mutable copy of the binding to update site configurations
+    let mut binding_copy = binding.clone();
+
+    for site in binding_copy.sites.iter_mut() {
         if !site.is_enabled {
             continue;
         }
 
-        // Determine SANs: filter out wildcard-only
+        // Determine SANs: handle wildcard sites specially
         let mut sans: Vec<String> = site.hostnames.iter().cloned().filter(|h| !h.trim().is_empty() && h != "*").collect();
-        if sans.is_empty() {
-            sans.push("localhost".to_string());
+        let has_wildcard = site.hostnames.contains(&"*".to_string());
+
+        if sans.is_empty() || has_wildcard {
+            // For wildcard sites or empty hostnames, generate a cert that works with common local addresses
+            sans.clear();
+            sans.extend(vec![
+                "localhost".to_string(),
+                "127.0.0.1".to_string(),
+                "::1".to_string(),
+            ]);
+
+            // Add the machine's hostname if available
+            if let Ok(hostname) = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")) {
+                if !hostname.is_empty() && !sans.contains(&hostname) {
+                    sans.push(hostname.to_lowercase());
+                }
+            }
         }
 
         let (cert_chain, priv_key) = if site.tls_cert_path.len() > 0 && site.tls_key_path.len() > 0 {
@@ -106,7 +163,8 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
 
             (cert_chain, priv_key)
         } else {
-            // Generate self-signed cert
+            // Generate self-signed cert with comprehensive SAN list
+            warn!("Generating self-signed certificate for site with hostnames: {:?}", sans);
             let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(sans.clone()).map_err(|e| format!("Failed to generate self-signed cert: {}", e))?;
             let cert_pem = cert.pem();
             let key_pem = signing_key.serialize_pem();
@@ -120,8 +178,15 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
             let key_result = rustls_pemfile::private_key(&mut key_cursor).map_err(|e| format!("Failed to parse generated TLS key PEM content: {}", e))?;
             let priv_key = key_result.ok_or_else(|| "No private key found in generated PEM content".to_string())?;
 
-            // Persist generated cert/key to disk (note: configuration update would need to be handled separately)
-            let _cert_paths = persist_generated_tls_for_site(&mut site.clone(), &cert_pem, &key_pem).await;
+            // Persist generated cert/key to disk and update the site configuration
+            match persist_generated_tls_for_site(site, &cert_pem, &key_pem).await {
+                Ok(cert_paths) => {
+                    info!("Successfully persisted generated certificate to: {:?}", cert_paths);
+                }
+                Err(e) => {
+                    warn!("Failed to persist generated certificate (will continue with in-memory cert): {}", e);
+                }
+            }
 
             (cert_chain, priv_key)
         };
@@ -134,19 +199,44 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
         // Build a signing key and certified key for rustls
         let signing_key = ring_sign::any_supported_type(&priv_key).map_err(|e| format!("Unsupported private key type for: {}", e))?;
         let certified = RustlsCertifiedKey::new(cert_chain.clone(), signing_key);
+        let certified_arc = std::sync::Arc::new(certified);
+
+        // Use the first certificate as fallback for cases where SNI doesn't match
+        if fallback_certificate.is_none() {
+            fallback_certificate = Some(certified_arc.clone());
+        }
 
         // Add each SAN as a mapping
         for name in &sans {
             // Accept wildcard names like "*.example.com" if provided
-            match resolver.add(name, certified.clone()) {
+            match resolver.add(name, certified_arc.as_ref().clone()) {
                 Ok(()) => {
                     site_added = true;
                 }
-                Err(e) => warn!("Failed to add SNI name '{}': {:?}", name, e),
+                Err(e) => debug!("Failed to add SNI name '{}': {:?}", name, e),
             }
         }
 
-        // If site is default or hostname includes wildcard "*", set as default cert
+        // For wildcard sites, also add some common IP addresses and variations
+        if has_wildcard {
+            let additional_names = vec![
+                "0.0.0.0",
+                "127.0.0.1",
+                "::1",
+                "localhost",
+            ];
+
+            for name in additional_names {
+                if !sans.contains(&name.to_string()) {
+                    match resolver.add(name, certified_arc.as_ref().clone()) {
+                        Ok(()) => {
+                            site_added = true;
+                        }
+                        Err(e) => debug!("Failed to add additional SNI name '{}': {:?}", name, e),
+                    }
+                }
+            }
+        }        // If site is default or hostname includes wildcard "*", set as default cert
         if site.is_default && !have_default {
             // No explicit default setter; rely on SNI match. Keep note to add a fallback later.
             have_default = true;
@@ -160,15 +250,39 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
         let cert_der = CertificateDer::from(cert.der().to_vec());
         let key_der = PrivateKeyDer::try_from(signing_key.serialize_der()).map_err(|e| format!("Invalid key DER: {}", e))?;
         let signing_key = ring_sign::any_supported_type(&key_der).map_err(|e| format!("Unsupported private key type for rustls: {}", e))?;
-        let _certified = RustlsCertifiedKey::new(vec![cert_der], signing_key);
-        // No API for explicit default here; omit.
+        let certified = RustlsCertifiedKey::new(vec![cert_der], signing_key);
+
+        let certified_arc = std::sync::Arc::new(certified);
+
+        // Use this as fallback if we don't have one yet
+        if fallback_certificate.is_none() {
+            fallback_certificate = Some(certified_arc.clone());
+        }
+
+        // Add the fallback certificate to the resolver
+        if let Err(e) = resolver.add("localhost", certified_arc.as_ref().clone()) {
+            warn!("Failed to add fallback certificate for localhost: {:?}", e);
+        } else {
+            site_added = true;
+        }
+    }
+
+    // Ensure we have at least one certificate in the resolver
+    if !site_added {
+        return Err("No valid TLS certificates could be configured for this binding".into());
+    }
+
+    // Create a fallback certificate resolver that can handle cases where SNI doesn't match
+    let mut fallback_resolver = FallbackCertResolver::new(resolver);
+    if let Some(fallback_cert) = fallback_certificate {
+        fallback_resolver = fallback_resolver.with_fallback(fallback_cert);
     }
 
     let mut server_config = RustlsServerConfig::builder_with_provider(provider.into())
         .with_safe_default_protocol_versions()
         .map_err(|_| "Protocol versions unavailable")?
         .with_no_client_auth()
-        .with_cert_resolver(std::sync::Arc::new(resolver));
+        .with_cert_resolver(std::sync::Arc::new(fallback_resolver));
 
     // Enable ALPN for HTTP/2 and HTTP/1.1 (prefer h2)
     server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
