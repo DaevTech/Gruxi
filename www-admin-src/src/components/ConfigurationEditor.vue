@@ -244,7 +244,7 @@ const addSite = () => {
         tls_key_content: '',
         rewrite_functions: [],
         access_log_enabled: false,
-        access_log_path: '',
+        access_log_file: '',
     });
 };
 
@@ -681,29 +681,42 @@ onMounted(() => {
 
                             <div class="form-grid compact">
                                 <div class="form-field">
-                                    <label>Web Root</label>
+                                    <label>Web Root
+
+                                        <span class="help-icon" data-tooltip="The file root directory for the website's files. This is where the server will look for the site's content. Can be absolute full path or a relative path to Grux server location, such as './www-default'.">?</span>
+                                    </label>
                                     <input v-model="site.web_root" type="text" />
                                 </div>
                             </div>
 
                             <div class="form-grid compact">
                                 <div v-if="site.access_log_enabled" class="form-field">
-                                    <label>Access Log File</label>
-                                    <input v-model="site.access_log_path" type="text" placeholder="Path to log file" />
+                                    <label>
+                                        Access Log File
+                                        <span class="help-icon" data-tooltip="Path to the access log file. If relative to grux base directory, use it like this './logs/mylog.log'. You can also have a full absolute path like '/var/logs/mylog.log' or 'C:/logs/mylog.log'.">?</span>
+                                    </label>
+                                    <input v-model="site.access_log_file" type="text" placeholder="Path to log file" />
                                 </div>
                             </div>
 
                             <!-- TLS Certificate Settings -->
                             <div class="tls-settings-section">
                                 <h5 class="subsection-title">TLS Certificate Settings (Optional)</h5>
+                                <div class="info-field">
+                                    <p><strong>Note:</strong> You can either specify file paths or paste the certificate/key content directly. If both are provided, the file paths take precedence.</p>
+                                </div>
                                 <div class="tls-grid-full">
                                     <div class="tls-paths-row">
                                         <div class="form-field">
-                                            <label>Certificate Path</label>
+                                            <label>Certificate Path
+                                                <span class="help-icon" data-tooltip="Path to the TLS certificate file. You can specify an absolute path or a path relative to the Grux server base directory. Such as './certs/mycert.pem' or '/etc/ssl/certs/mycert.pem'.">?</span>
+                                            </label>
                                             <input v-model="site.tls_cert_path" type="text" placeholder="Path to certificate file" />
                                         </div>
                                         <div class="form-field">
-                                            <label>Private Key Path</label>
+                                            <label>Private Key Path
+                                                <span class="help-icon" data-tooltip="Path to the TLS private key file. You can specify an absolute path or a path relative to the Grux server base directory. Such as './certs/mykey.pem' or '/etc/ssl/private/mykey.pem'.">?</span>
+                                            </label>
                                             <input v-model="site.tls_key_path" type="text" placeholder="Path to private key file" />
                                         </div>
                                     </div>
@@ -717,9 +730,6 @@ onMounted(() => {
                                             <textarea v-model="site.tls_key_content" placeholder="Paste your private key content here in PEM format (-----BEGIN PRIVATE KEY-----...)" rows="6" class="tls-content-textarea"></textarea>
                                         </div>
                                     </div>
-                                </div>
-                                <div class="tls-info">
-                                    <p><strong>Note:</strong> You can either specify file paths or paste the certificate/key content directly. If both are provided, the content fields take precedence.</p>
                                 </div>
                             </div>
 
@@ -1965,8 +1975,8 @@ onMounted(() => {
     font-size: 0.8rem;
 }
 
-.tls-info {
-    margin-top: 1rem;
+.info-field {
+    margin: 1rem 0rem;
     padding: 0.75rem;
     background: #f0f9ff;
     border: 1px solid #bae6fd;
@@ -1975,11 +1985,11 @@ onMounted(() => {
     font-size: 0.875rem;
 }
 
-.tls-info p {
+.info-field p {
     margin: 0;
 }
 
-.tls-info strong {
+.info-field strong {
     color: #0369a1;
 }
 
@@ -2448,5 +2458,91 @@ onMounted(() => {
         grid-template-columns: 1fr;
         gap: 1rem;
     }
+}
+
+/* Help Icon Styles */
+.help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: help;
+    margin-left: 6px;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(102, 126, 234, 0.2);
+    position: relative;
+}
+
+.help-icon:hover {
+
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+}
+
+/* Enhanced tooltip styling */
+.help-icon[data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1f2937;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    opacity: 0;
+    animation: tooltipFadeIn 0.2s ease forwards;
+    max-width: 400px;
+    min-width: 200px;
+    white-space: normal;
+    line-height: 1.4;
+}
+
+.help-icon[data-tooltip]:hover::before {
+    content: '';
+    position: absolute;
+    bottom: 115%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: #1f2937;
+    z-index: 1000;
+    opacity: 0;
+    animation: tooltipFadeIn 0.2s ease forwards;
+}
+
+@keyframes tooltipFadeIn {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+/* Alternative icon styles for different contexts */
+.help-icon.info {
+    background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+}
+
+.help-icon.warning {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+}
+
+.help-icon.success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
 }
 </style>

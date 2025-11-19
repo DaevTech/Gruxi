@@ -28,12 +28,12 @@ impl AccessLogBuffer {
             }
 
             let site_id = site.id.clone().to_string();
-            let log_file_path_result = get_full_file_path(&site.access_log_path);
+            let log_file_path_result = get_full_file_path(&site.access_log_file);
 
             let log_file_path = match log_file_path_result {
                 Ok(path) => path,
                 Err(_) => {
-                    error!("Invalid access log path for site {}: {}. Using default {}.", site_id, site.access_log_path, default_log_path);
+                    error!("Invalid access log path for site {}: {}. Using default {}.", site_id, site.access_log_file, default_log_path);
                     let default_log_path_plus_site = format!("{}/{}.log", default_log_path, site_id);
                     default_log_path_plus_site
                 }

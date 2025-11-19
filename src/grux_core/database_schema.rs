@@ -73,7 +73,7 @@ fn get_init_sql() -> Vec<String> {
         tls_key_content TEXT NOT NULL DEFAULT '',
         rewrite_functions TEXT NOT NULL DEFAULT '',
         access_log_enabled BOOLEAN NOT NULL DEFAULT 0,
-        access_log_path TEXT NOT NULL DEFAULT ''
+        access_log_file TEXT NOT NULL DEFAULT ''
     );"
         .to_string(),
         // Junction table for many-to-many relationship between bindings and sites

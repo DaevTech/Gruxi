@@ -142,7 +142,7 @@ impl Configuration {
             tls_key_content: "".to_string(),
             rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
             access_log_enabled: false,
-            access_log_path: "./logs/gruxsite-access-log.log".to_string(),
+            access_log_file: "./logs/gruxsite-access-log.log".to_string(),
         };
         configuration.sites.push(test_wp_site);
         configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 3 });
@@ -161,7 +161,7 @@ impl Configuration {
             tls_key_content: "".to_string(),
             rewrite_functions: vec![],
             access_log_enabled: true,
-            access_log_path: "./logs/gruxtest-access-log.log".to_string(),
+            access_log_file: "./logs/gruxtest-access-log.log".to_string(),
         };
         configuration.sites.push(testing_site);
         configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 4 });
@@ -224,7 +224,7 @@ impl Configuration {
             tls_key_content: "".to_string(),
             rewrite_functions: vec![],
             access_log_enabled: false,
-            access_log_path: "".to_string(),
+            access_log_file: "".to_string(),
         };
         configuration.sites.push(default_site);
         configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 1 });
@@ -244,7 +244,7 @@ impl Configuration {
             tls_key_content: "".to_string(),
             rewrite_functions: vec![],
             access_log_enabled: false,
-            access_log_path: "".to_string(),
+            access_log_file: "".to_string(),
         };
         configuration.sites.push(admin_site);
         configuration.binding_sites.push(BindingSiteRelationship { binding_id: 1, site_id: 2 });

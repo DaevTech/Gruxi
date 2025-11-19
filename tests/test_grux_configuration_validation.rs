@@ -232,7 +232,7 @@ fn test_configuration_full_validation() {
         tls_key_content: "".to_string(),
         rewrite_functions: vec![],
         access_log_enabled: false,
-        access_log_path: "".to_string(),
+        access_log_file: "".to_string(),
     };
 
     let binding = Binding {

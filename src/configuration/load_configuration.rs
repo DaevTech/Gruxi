@@ -224,7 +224,7 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
 
         // Access log
         let access_log_enabled: i64 = statement.read(12).map_err(|e| format!("Failed to read access_log_enabled: {}", e))?;
-        let access_log_path: String = statement.read(13).map_err(|e| format!("Failed to read access_log_path: {}", e))?;
+        let access_log_file: String = statement.read(13).map_err(|e| format!("Failed to read access_log_file: {}", e))?;
 
         sites.push(Site {
             id: site_id as usize,
@@ -240,7 +240,7 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
             tls_key_content,
             rewrite_functions,
             access_log_enabled: access_log_enabled != 0,
-            access_log_path,
+            access_log_file,
         });
     }
 

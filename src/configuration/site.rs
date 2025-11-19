@@ -19,7 +19,7 @@ pub struct Site {
     pub rewrite_functions: Vec<String>,
     // Logs
     pub access_log_enabled: bool,
-    pub access_log_path: String,
+    pub access_log_file: String,
 }
 
 impl Site {
@@ -52,6 +52,34 @@ impl Site {
         for (file_idx, file) in self.web_root_index_file_list.iter().enumerate() {
             if file.trim().is_empty() {
                 errors.push(format!("Index file {} cannot be empty", file_idx + 1));
+            }
+        }
+
+        // Validate access log configuration
+        if self.access_log_enabled {
+            if self.access_log_file.trim().is_empty() {
+                errors.push("Access log file cannot be empty when access logging is enabled".to_string());
+            } else {
+                // Check that the access_log_file points to a file, not a directory
+                let access_log_file = std::path::Path::new(&self.access_log_file);
+
+                // If the path exists, check if it's a directory
+                if access_log_file.exists() && access_log_file.is_dir() {
+                    errors.push(format!("Access log file '{}' points to a directory, not a file", self.access_log_file));
+                }
+
+                // Check if the path looks like a directory (ends with / or \)
+                let trimmed_path = self.access_log_file.trim();
+                if trimmed_path.ends_with('/') || trimmed_path.ends_with('\\') {
+                    errors.push(format!("Access log file '{}' appears to be a directory path. It needs to point to a file.", self.access_log_file));
+                }
+
+                // Check if parent directory is valid (if the file doesn't exist yet)
+                if let Some(parent) = access_log_file.parent() {
+                    if !parent.as_os_str().is_empty() && parent.exists() && !parent.is_dir() {
+                        errors.push(format!("Access log file parent path '{}' exists but is not a directory", parent.display()));
+                    }
+                }
             }
         }
 

@@ -477,7 +477,7 @@ impl ExternalRequestHandler for PHPHandler {
 
         // Extract request data
         let method_str = method.to_string();
-        let uri_str = uri.to_string();
+        let uri_str = uri.path_and_query().unwrap().as_str().to_string();
         let path = uri.path();
 
         trace!("PHP request body length: {} bytes", body.len());
@@ -652,7 +652,7 @@ impl PHPHandler {
             full_script_path = replace_web_root_in_path(&full_script_path, &full_local_web_root, &self.other_webroot);
             script_web_root = self.other_webroot.clone();
         }
-        println!("Called with: {} {}", &script_web_root, &full_script_path);
+
         let (directory, filename) = split_path(&script_web_root, &full_script_path);
         trace!("PHP FastCGI - Directory: {}, Filename: {}", directory, filename);
 

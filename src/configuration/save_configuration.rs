@@ -169,7 +169,7 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
 
     connection
         .execute(format!(
-            "INSERT INTO sites (id, is_default, is_enabled, hostnames, web_root, web_root_index_file_list, enabled_handlers, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, rewrite_functions, access_log_enabled, access_log_path) VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}')",
+            "INSERT INTO sites (id, is_default, is_enabled, hostnames, web_root, web_root_index_file_list, enabled_handlers, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, rewrite_functions, access_log_enabled, access_log_file) VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}')",
             site.id,
             if site.is_default { 1 } else { 0 },
             if site.is_enabled { 1 } else { 0 },
@@ -183,7 +183,7 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
             site.tls_key_content.replace("'", "''"),
             site.rewrite_functions.join(",").replace("'", "''"),
             if site.access_log_enabled { 1 } else { 0 },
-            site.access_log_path.replace("'", "''")
+            site.access_log_file.replace("'", "''")
         ))
         .map_err(|e| format!("Failed to insert site: {}", e))?;
 
