@@ -1,4 +1,3 @@
-pub mod grux_http_server;
 pub mod grux_log;
 pub mod grux_file_cache;
 pub mod external_request_handlers;

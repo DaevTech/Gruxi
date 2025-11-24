@@ -1,5 +1,5 @@
 use log::{debug, info, warn};
-use rand::Rng;
+use rand;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::BufReader;
 use tls_listener::rustls as tokio_rustls;
@@ -24,8 +24,7 @@ pub async fn persist_generated_tls_for_site(site: &mut Site, cert_pem: &str, key
     fs::create_dir_all(dir).await.map_err(|e| format!("Failed to create certs directory '{}': {}", dir, e))?;
 
     // Generate a random number for this cert
-    let mut rng = rand::rng();
-    let random_number: u32 = rng.random();
+    let random_number: u32 = rand::random();
 
     let cert_path = format!("{}/{}.crt.pem", dir, random_number);
     let key_path = format!("{}/{}.key.pem", dir, random_number);

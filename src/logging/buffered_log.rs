@@ -47,7 +47,7 @@ impl BufferedLog {
         log_buffer.push(log);
     }
 
-    pub fn consider_flush(&self) {
+    pub fn consider_flush(&self, force_flush: bool) {
         // Get lock
         let mut log_buffer = self.buffered_log.lock().unwrap();
 
@@ -57,9 +57,11 @@ impl BufferedLog {
         }
 
         // If not enough time has passed and not enough logs, skip
-        let elapsed = self.last_flush.lock().unwrap().elapsed().as_secs() as usize;
-        if elapsed < self.seconds_before_force_flush && log_buffer.len() < self.log_count_flush {
-            return;
+        if !force_flush {
+            let elapsed = self.last_flush.lock().unwrap().elapsed().as_secs() as usize;
+            if elapsed < self.seconds_before_force_flush && log_buffer.len() < self.log_count_flush {
+                return;
+            }
         }
 
         // If either condition met, flush

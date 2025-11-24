@@ -1,9 +1,10 @@
 use log::{debug, error, trace};
-use std::thread::sleep;
 use std::time::Instant;
 use std::{collections::HashMap, sync::OnceLock};
+use tokio::select;
 
 use crate::configuration::load_configuration::get_configuration;
+use crate::core::shutdown_manager::get_shutdown_manager;
 use crate::grux_file_util::get_full_file_path;
 use crate::logging::buffered_log::BufferedLog;
 
@@ -64,18 +65,32 @@ impl AccessLogBuffer {
     async fn write_loops() {
         let buffered_logs = get_access_log_buffer();
         trace!("Starting access log write thread");
-        loop {
-            let start_time = Instant::now();
-            for (_site_id, log) in buffered_logs.buffered_logs.iter() {
-                log.consider_flush();
-            }
-            let elapsed = start_time.elapsed().as_millis();
-            if elapsed > 0 {
-                debug!("Access log flush cycle completed in {} ms", elapsed);
-            }
 
-            // Ideally, this would be adjustable according to the work load (such as elapsed time to do a flush in average)
-            sleep(std::time::Duration::from_millis(500));
+        let shutdown_manager = get_shutdown_manager();
+        let cancellation_token = shutdown_manager.get_cancellation_token();
+
+        loop {
+            select! {
+                // Ideally, this would be adjustable according to the work load (such as elapsed time to do a flush in average)
+                _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                        let start_time = Instant::now();
+                        for (_site_id, log) in buffered_logs.buffered_logs.iter() {
+                            log.consider_flush(false);
+                        }
+                        let elapsed = start_time.elapsed().as_millis();
+                        if elapsed > 0 {
+                            debug!("Access log flush cycle completed in {} ms", elapsed);
+                        }
+
+                },
+                _ = cancellation_token.cancelled() => {
+                    trace!("Access log write thread received shutdown signal, so flushing remaining logs and exiting");
+                    for (_site_id, log) in buffered_logs.buffered_logs.iter() {
+                        log.consider_flush(true);
+                    }
+                    break;
+                }
+            }
         }
     }
 }

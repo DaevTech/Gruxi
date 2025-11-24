@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use log::{debug, info, warn};
+use log::{debug, info, warn, trace};
 use lazy_static::lazy_static;
 
 // Singleton instance of the port manager
@@ -120,8 +120,8 @@ impl PortManager {
 
         if let Some(service_id) = inner.allocated_ports.remove(&port) {
             inner.available_ports.push(port);
-            info!("Released port {} from service '{}'", port, service_id);
-            debug!("Available ports: {:?}", inner.available_ports);
+            trace!("Released port {} from service '{}'", port, service_id);
+            trace!("Available ports: {:?}", inner.available_ports);
         } else {
             warn!("Attempted to release port {} which was not allocated", port);
         }

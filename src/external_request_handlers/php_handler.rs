@@ -1,8 +1,9 @@
 use crate::configuration::site::Site;
+use crate::core::shutdown_manager::get_shutdown_manager;
 use crate::external_request_handlers::external_request_handlers::ExternalRequestHandler;
 use crate::grux_file_util::{get_full_file_path, replace_web_root_in_path, split_path};
-use crate::http::http_util::*;
 use crate::grux_port_manager::PortManager;
+use crate::http::http_util::*;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::{HeaderMap, Response};
@@ -14,6 +15,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
+use tokio::select;
 use tokio::sync::{Mutex, Semaphore};
 
 /// Structure to manage a single persistent PHP-CGI process with FastCGI children.
@@ -415,13 +417,23 @@ impl ExternalRequestHandler for PHPHandler {
             // Start the keep-alive monitoring task
             let process_clone = php_process.clone();
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let shutdown_manager = get_shutdown_manager();
+                let cancellation_token = shutdown_manager.get_cancellation_token();
                 handle.spawn(async move {
-                    let mut interval = tokio::time::interval(Duration::from_secs(5));
                     loop {
-                        interval.tick().await;
-                        let mut process_guard = process_clone.lock().await;
-                        if let Err(e) = process_guard.ensure_running().await {
-                            error!("Failed to ensure PHP-CGI process is running: {}", e);
+                        select! {
+                            _ = cancellation_token.cancelled() => {
+                                trace!("Shutdown signal received, stopping PHP processes if running");
+                                let mut process_guard = process_clone.lock().await;
+                                process_guard.stop().await;
+                                break;
+                            }
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                                let mut process_guard = process_clone.lock().await;
+                                if let Err(e) = process_guard.ensure_running().await {
+                                    error!("Failed to ensure PHP-CGI process is running: {}", e);
+                                }
+                            }
                         }
                     }
                 });

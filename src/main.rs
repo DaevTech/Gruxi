@@ -1,13 +1,13 @@
-use grux::configuration::load_configuration::check_configuration;
-use grux::external_request_handlers::external_request_handlers;
 use grux::admin_portal::http_admin_api::initialize_admin_site;
 use grux::core::async_runtime_handlers;
 use grux::core::async_runtime_handlers::AsyncRuntimeHandlers;
 use grux::core::background_tasks::start_background_tasks;
 use grux::core::database_schema;
 use grux::core::operation_mode::get_operation_mode;
-use grux::grux_http_server;
+use grux::external_request_handlers::external_request_handlers;
 use grux::grux_log;
+use grux::http::http_server;
+use grux::{configuration::load_configuration::check_configuration, core::shutdown_manager::get_shutdown_manager};
 use log::{error, info};
 
 fn main() {
@@ -84,10 +84,16 @@ async fn start_main_server_thread() {
     info!("External request handlers initialized");
 
     // Init server bindings and start serving those bits
-    if let Err(e) = grux_http_server::initialize_server().await {
-        error!("Error initializing server: {}", e);
-        std::process::exit(1);
-    }
+    http_server::initialize_server();
+
+    // Wait for shutdown signal
+    let shutdown_manager = get_shutdown_manager();
+    let cancellation_token = shutdown_manager.get_cancellation_token();
+    cancellation_token.cancelled().await;
+
+    // Waiting a few seconds to allow graceful shutdown
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    std::process::exit(0);
 }
 
 async fn start_background_tasks_thread() {
