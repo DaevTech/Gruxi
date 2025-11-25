@@ -57,7 +57,7 @@ pub fn start_os_signal_handling() {
 
 // Do graceful shutdown
 fn handle_graceful_shutdown() {
-    log::info!("Gracefully shutting down the application...");
+    log::info!("Starting shutting down Grux...");
     get_shutdown_manager().initiate_shutdown();
 
 }

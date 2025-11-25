@@ -152,9 +152,9 @@ pub async fn handle_logout_request(req: Request<hyper::body::Incoming>, _admin_s
     }
 }
 
-pub async fn admin_get_configuration_endpoint(req: &Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_get_configuration_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check authentication first
-    match require_authentication(req).await {
+    match require_authentication(&req).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with getting configuration
             debug!("User authenticated, retrieving configuration");
@@ -334,9 +334,9 @@ pub async fn require_authentication(req: &Request<hyper::body::Incoming>) -> Res
 }
 
 // Admin monitoring endpoint - returns monitoring data as JSON
-pub async fn admin_monitoring_endpoint(req: &Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_monitoring_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check authentication first
-    match require_authentication(req).await {
+    match require_authentication(&req).await {
         Ok(Some(_session)) => {
             debug!("User authenticated, retrieving monitoring data");
         }
@@ -361,7 +361,7 @@ pub async fn admin_monitoring_endpoint(req: &Request<hyper::body::Incoming>, _ad
 }
 
 // Admin healthcheck endpoint - returns simple status without authentication
-pub async fn admin_healthcheck_endpoint(_req: &Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_healthcheck_endpoint(_req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     let mut resp = Response::new(full("absolutely"));
     resp.headers_mut().insert("Content-Type", "text/plain".parse().unwrap());
     *resp.status_mut() = hyper::StatusCode::OK;
@@ -369,9 +369,9 @@ pub async fn admin_healthcheck_endpoint(_req: &Request<hyper::body::Incoming>, _
 }
 
 // Admin logs endpoint - lists available log files or returns specific log content
-pub async fn admin_logs_endpoint(req: &Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_logs_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check authentication first
-    match require_authentication(req).await {
+    match require_authentication(&req).await {
         Ok(Some(_session)) => {
             debug!("User authenticated, retrieving logs");
         }

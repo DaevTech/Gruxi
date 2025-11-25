@@ -1,9 +1,9 @@
+use crate::admin_portal::http_admin_api::*;
 use crate::configuration::binding::Binding;
 use crate::configuration::load_configuration::get_configuration;
 use crate::configuration::site::Site;
-use crate::external_request_handlers::external_request_handlers;
-use crate::admin_portal::http_admin_api::*;
 use crate::core::monitoring::get_monitoring_state;
+use crate::external_request_handlers::external_request_handlers;
 use crate::grux_file_cache::CachedFile;
 use crate::grux_file_cache::get_file_cache;
 use crate::grux_file_util::check_path_secure;
@@ -29,13 +29,7 @@ pub async fn handle_request_entry(req: Request<hyper::body::Incoming>, binding: 
 
     // Extract hostname from headers
     let headers = req.headers();
-    let requested_hostname = headers.get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("")
-        .split(':')
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let requested_hostname = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("").split(':').next().unwrap_or("").to_string();
 
     request_data.insert("remote_ip".to_string(), remote_ip.clone());
     request_data.insert("requested_hostname".to_string(), requested_hostname.clone());
@@ -101,11 +95,11 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     let mut path = uri.path();
     let query = uri.query().unwrap_or("");
     let body_size = req.body().size_hint().upper().unwrap_or(0);
-    let headers = req.headers();
+    let headers = &req.headers().clone();
     let http_version = request_data.get("http_version").cloned().unwrap_or_default();
     let remote_ip = request_data.get("remote_ip").cloned().unwrap_or_default();
 
-    // Validate the request
+    // Validate the request pre-body extraction, so if any body is sent, we dont waste time processing it
     if let Err(resp) = validate_request(
         &http_version,
         &headers,
@@ -140,20 +134,19 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
         } else if path_cleaned == "logout" && method == hyper::Method::POST {
             return handle_logout_request(req, site).await;
         } else if path_cleaned == "config" && method == hyper::Method::GET {
-            return admin_get_configuration_endpoint(&req, site).await;
+            return admin_get_configuration_endpoint(req, site).await;
         } else if path_cleaned == "config" && method == hyper::Method::POST {
             return admin_post_configuration_endpoint(req, site).await;
         } else if path_cleaned == "monitoring" && method == hyper::Method::GET {
-            return admin_monitoring_endpoint(&req, site).await;
+            return admin_monitoring_endpoint(req, site).await;
         } else if path_cleaned == "healthcheck" && method == hyper::Method::GET {
-            return admin_healthcheck_endpoint(&req, site).await;
+            return admin_healthcheck_endpoint(req, site).await;
         } else if (path_cleaned == "logs" || path_cleaned.starts_with("logs/")) && method == hyper::Method::GET {
-            return admin_logs_endpoint(&req, site).await;
+            return admin_logs_endpoint(req, site).await;
         }
     }
 
     // Now se determine what the request is, and how to handle it
-    let headers = req.headers();
     let headers_map = headers.iter().map(|(k, v)| (k.as_str(), v.to_str().unwrap_or(""))).collect::<Vec<_>>();
     debug!(
         "Received request: method={}, path={}, query={}, body_size={}, headers={:?}",
@@ -241,12 +234,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
         }
     }
 
-    // Extract the information we need before consuming the request for body extraction
-    let method = req.method().clone();
-    let uri = req.uri().clone();
-    let headers = req.headers().clone();
-
-    // Extract body for POST/PUT requests
+    // Extract body for POST/PUT requests, otherwise we really just ignore it
     let body_bytes = if method == hyper::Method::POST || method == hyper::Method::PUT {
         match req.collect().await {
             Ok(collected) => {
@@ -261,6 +249,11 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     } else {
         Vec::new()
     };
+
+    // Validate the request post-body full request
+    if let Err(resp) = validate_request_post_body(&http_version, &headers, &method.to_string(), &uri.to_string(), &path.to_string(), &query.to_string(), &body_bytes).await {
+        return Ok(resp);
+    }
 
     // We check if is a request we need to handle another way, such as PHP intepreter
     // We only go through the handlers that are active for this site
@@ -371,7 +364,6 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
                 }
             }
         }
-
     } else {
         additional_headers.push(("Content-Type", &file_data.mime_type));
 
@@ -388,7 +380,6 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     }
 
     // Gzip handling
-
 
     // If method is OPTIONS, we add the Allow header if not already present
     if method == hyper::Method::OPTIONS {
@@ -444,7 +435,15 @@ fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &'a str) -> O
     site
 }
 
-async fn validate_request(http_version: &str, headers: &HeaderMap, method: &str, _uri: &str, _path: &str, _query: &str, body_size: usize) -> Result<(), Response<BoxBody<Bytes, hyper::Error>>> {
+async fn validate_request(
+    http_version: &str,
+    headers: &HeaderMap,
+    method: &str,
+    _uri: &str,
+    _path: &str,
+    _query: &str,
+    expected_body_size: usize,
+) -> Result<(), Response<BoxBody<Bytes, hyper::Error>>> {
     // Here we can add any request validation logic if needed
     let configuration = get_configuration();
 
@@ -484,11 +483,34 @@ async fn validate_request(http_version: &str, headers: &HeaderMap, method: &str,
             }
         }
 
-        // Also check the actual body size
-        if body_size > max_body_size {
+        // Also check the expected body size
+        if expected_body_size > max_body_size {
             return Err(empty_response_with_status(hyper::StatusCode::PAYLOAD_TOO_LARGE));
         }
     }
 
+    Ok(())
+}
+
+async fn validate_request_post_body(
+    _http_version: &str,
+    _headers: &HeaderMap,
+    _method: &str,
+    _uri: &str,
+    _path: &str,
+    _query: &str,
+    body_bytes: &[u8],
+) -> Result<(), Response<BoxBody<Bytes, hyper::Error>>> {
+    // Here we can add any post-body request validation logic if needed
+    let configuration = get_configuration();
+
+    // We check the size of the body again, after we actually have the complete body
+    let max_body_size = configuration.core.server_settings.max_body_size;
+    let actual_body_size = body_bytes.len();
+    if actual_body_size > max_body_size {
+        return Err(empty_response_with_status(hyper::StatusCode::PAYLOAD_TOO_LARGE));
+    }
+
+    // For now, we do not have any specific post-body validations
     Ok(())
 }
