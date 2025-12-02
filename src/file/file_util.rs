@@ -100,7 +100,7 @@ pub fn replace_web_root_in_path(original_path: &str, old_web_root: &str, new_web
 // Check that the path is secure, by these tests:
 // - The path starts with the base path, to prevent directory traversal attacks
 // - The path does not contain any of the blocked file patterns
-pub fn check_path_secure(base_path: &str, test_path: &str) -> bool {
+pub async fn check_path_secure(base_path: &str, test_path: &str) -> bool {
     // Check that the test_path starts with the base_path
     let base_path_cleaned = base_path.replace('\\', "/").trim_end_matches('/').to_string();
     let test_path_cleaned = test_path.replace('\\', "/");
@@ -114,14 +114,14 @@ pub fn check_path_secure(base_path: &str, test_path: &str) -> bool {
     trace!("Check if file pattern is blocked or whitelisted: {}", &file);
 
     // Check if it is whitelisted first
-    let pattern_whitelisting = get_whitelisted_file_pattern_matching();
+    let pattern_whitelisting = get_whitelisted_file_pattern_matching().await;
     if pattern_whitelisting.is_file_pattern_whitelisted(&test_path_cleaned) {
         trace!("File pattern is whitelisted: {}", &test_path_cleaned);
         return true;
     }
 
     // Check the blacklisted file patterns
-    let pattern_blocking = get_blocked_file_pattern_matching();
+    let pattern_blocking = get_blocked_file_pattern_matching().await;
     if pattern_blocking.is_file_pattern_blocked(&file) {
         trace!("File pattern is blocked: {}", &file);
         return false;

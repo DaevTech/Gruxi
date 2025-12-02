@@ -1,15 +1,15 @@
 use log::trace;
+use tokio::sync::OnceCell;
 use wildcard::{Wildcard, WildcardBuilder};
-use std::sync::OnceLock;
 
 pub struct BlockedFilePatternMatching {
     wildcards: Vec<Wildcard<'static>>,
 }
 
 impl BlockedFilePatternMatching {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
+        let config = cached_configuration.get_configuration().await;
 
         trace!("Initializing blocked file pattern matching with patterns: {:?}", config.core.server_settings.blocked_file_patterns);
 
@@ -38,10 +38,10 @@ impl BlockedFilePatternMatching {
     }
 }
 
-static BLOCKED_FILE_PATTERN_MATCHING_SINGLETON: OnceLock<BlockedFilePatternMatching> = OnceLock::new();
+static BLOCKED_FILE_PATTERN_MATCHING_SINGLETON: OnceCell<BlockedFilePatternMatching> = OnceCell::const_new();
 
-pub fn get_blocked_file_pattern_matching() -> &'static BlockedFilePatternMatching {
-    BLOCKED_FILE_PATTERN_MATCHING_SINGLETON.get_or_init(|| BlockedFilePatternMatching::new())
+pub async fn get_blocked_file_pattern_matching() -> &'static BlockedFilePatternMatching {
+    BLOCKED_FILE_PATTERN_MATCHING_SINGLETON.get_or_init(|| async { BlockedFilePatternMatching::new().await }).await
 }
 
 pub struct WhitelistedFilePatternMatching {
@@ -49,11 +49,14 @@ pub struct WhitelistedFilePatternMatching {
 }
 
 impl WhitelistedFilePatternMatching {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
+        let config = cached_configuration.get_configuration().await;
 
-        trace!("Initializing whitelisted file pattern matching with patterns: {:?}", config.core.server_settings.whitelisted_file_patterns);
+        trace!(
+            "Initializing whitelisted file pattern matching with patterns: {:?}",
+            config.core.server_settings.whitelisted_file_patterns
+        );
 
         let patterns: Vec<String> = config.core.server_settings.whitelisted_file_patterns.clone();
         let wildcards = patterns
@@ -80,16 +83,15 @@ impl WhitelistedFilePatternMatching {
     }
 }
 
-static WHITELISTED_FILE_PATTERN_MATCHING_SINGLETON: OnceLock<WhitelistedFilePatternMatching> = OnceLock::new();
+static WHITELISTED_FILE_PATTERN_MATCHING_SINGLETON: OnceCell<WhitelistedFilePatternMatching> = OnceCell::const_new();
 
-pub fn get_whitelisted_file_pattern_matching() -> &'static WhitelistedFilePatternMatching {
-    WHITELISTED_FILE_PATTERN_MATCHING_SINGLETON.get_or_init(|| WhitelistedFilePatternMatching::new())
+pub async fn get_whitelisted_file_pattern_matching() -> &'static WhitelistedFilePatternMatching {
+    WHITELISTED_FILE_PATTERN_MATCHING_SINGLETON.get_or_init(|| async { WhitelistedFilePatternMatching::new().await }).await
 }
-
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_blocked_file_pattern_matching() {
-    let blocked_matching = get_blocked_file_pattern_matching();
+    let blocked_matching = get_blocked_file_pattern_matching().await;
     assert!(blocked_matching.is_file_pattern_blocked("index.php"));
     assert!(blocked_matching.is_file_pattern_blocked("test.tmp"));
     assert!(blocked_matching.is_file_pattern_blocked(".env"));
@@ -106,9 +108,8 @@ async fn test_blocked_file_pattern_matching() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_whitelisted_file_pattern_matching() {
-    let whitelisted_matching = get_whitelisted_file_pattern_matching();
+    let whitelisted_matching = get_whitelisted_file_pattern_matching().await;
     assert!(whitelisted_matching.is_file_pattern_whitelisted("/var/www/html/.well-known/acme-challenge/token"));
     assert!(!whitelisted_matching.is_file_pattern_whitelisted("/var/www/html/.DS_STORE"));
     assert!(!whitelisted_matching.is_file_pattern_whitelisted("/var/www/html/.env"));
-
 }

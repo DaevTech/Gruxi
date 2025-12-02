@@ -4,7 +4,7 @@ use grux::core::database_schema;
 use grux::core::operation_mode::get_operation_mode;
 use grux::core::running_state_manager::get_running_state_manager;
 use grux::core::triggers::get_trigger_handler;
-use grux::grux_log;
+use grux::logging::system_log::init_logging;
 use grux::{admin_portal::init::initialize_admin_site, core::background_tasks::start_background_tasks};
 use log::{error, info};
 use tokio::select;
@@ -27,10 +27,13 @@ async fn main() {
     // Start the running state manager thread, which also listens for configuration changes
     tokio::spawn(async {
         // Start tasks that run in the background
-        start_background_tasks();
+        start_background_tasks().await;
 
         // Start the running state, which are all the configuration dependent parts
-        let running_state_manager = get_running_state_manager();
+        let running_state_manager = get_running_state_manager().await;
+
+        // Start the main http server
+        grux::http::http_server::initialize_server().await;
 
         let triggers = get_trigger_handler();
 
@@ -45,6 +48,8 @@ async fn main() {
                 _ = configuration_token.cancelled() => {
                     info!("Reloading running state due to configuration change");
                     running_state_manager.set_new_running_state().await;
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    grux::http::http_server::initialize_server().await;
                 }
                 _ = shutdown_token.cancelled() => {
                     break;
@@ -56,7 +61,7 @@ async fn main() {
     .unwrap();
 
     // Waiting a little while to allow graceful shutdown
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     std::process::exit(0);
 }
 
@@ -69,7 +74,7 @@ fn start_grux_basics() {
     let operation_mode = get_operation_mode();
 
     // Initialize logging
-    match grux_log::init_logging(operation_mode) {
+    match init_logging(operation_mode) {
         Ok(_) => {}
         Err(e) => {
             error!("Failed to initialize logging: {}", e);

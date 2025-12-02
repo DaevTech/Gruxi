@@ -145,6 +145,7 @@ impl Configuration {
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
             rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
+            extra_headers: vec![],
             access_log_enabled: false,
             access_log_file: "./logs/gruxsite-access-log.log".to_string(),
         };
@@ -164,6 +165,7 @@ impl Configuration {
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
             rewrite_functions: vec![],
+            extra_headers: vec![],
             access_log_enabled: true,
             access_log_file: "./logs/gruxtest-access-log.log".to_string(),
         };
@@ -227,6 +229,7 @@ impl Configuration {
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
             rewrite_functions: vec![],
+            extra_headers: vec![],
             access_log_enabled: false,
             access_log_file: "".to_string(),
         };
@@ -247,6 +250,7 @@ impl Configuration {
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
             rewrite_functions: vec![],
+            extra_headers: vec![],
             access_log_enabled: false,
             access_log_file: "".to_string(),
         };

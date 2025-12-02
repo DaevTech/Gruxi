@@ -3,7 +3,7 @@ use crate::{
     core::triggers::get_trigger_handler,
 };
 use log::trace;
-use std::sync::RwLock;
+use tokio::sync::RwLock;
 use std::sync::{Arc, OnceLock};
 
 pub struct CachedConfiguration {
@@ -18,8 +18,8 @@ impl CachedConfiguration {
         }
     }
 
-    pub fn get_configuration(&self) -> std::sync::RwLockReadGuard<'_, Configuration> {
-        self.configuration.read().unwrap()
+    pub async fn get_configuration(&self) -> tokio::sync::RwLockReadGuard<'_, Configuration> {
+        self.configuration.read().await
     }
 
     pub async fn check_if_cached_configuration_should_be_refreshed() {
@@ -37,7 +37,7 @@ impl CachedConfiguration {
             {
                 let new_configuration = init().expect("Failed to reload configuration");
                 let cached_configuration = get_cached_configuration();
-                let mut config_write_guard = cached_configuration.configuration.write().unwrap();
+                let mut config_write_guard = cached_configuration.configuration.write().await;
                 *config_write_guard = new_configuration;
             }
 

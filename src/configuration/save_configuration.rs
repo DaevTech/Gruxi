@@ -4,6 +4,7 @@ use crate::configuration::core::Core;
 use crate::configuration::load_configuration::fetch_configuration_in_db;
 use crate::configuration::request_handler::RequestHandler;
 use crate::configuration::site::Site;
+use crate::configuration::site::HeaderKV;
 use crate::core::database_connection::get_database_connection;
 use log::info;
 use log::trace;
@@ -163,9 +164,20 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
         .execute(format!("DELETE FROM sites WHERE id = {}", site.id))
         .map_err(|e| format!("Failed to delete existing site with id {}: {}", site.id, e))?;
 
+    let extra_headers_str = if site.extra_headers.is_empty() {
+        "".to_string()
+    } else {
+        site
+            .extra_headers
+            .iter()
+            .map(|HeaderKV { key, value }| format!("{}={}", key.replace("'", "''"), value.replace("'", "''")))
+            .collect::<Vec<String>>()
+            .join(",")
+    };
+
     connection
         .execute(format!(
-            "INSERT INTO sites (id, is_default, is_enabled, hostnames, web_root, web_root_index_file_list, enabled_handlers, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, rewrite_functions, access_log_enabled, access_log_file) VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}')",
+            "INSERT INTO sites (id, is_default, is_enabled, hostnames, web_root, web_root_index_file_list, enabled_handlers, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, rewrite_functions, access_log_enabled, access_log_file, extra_headers) VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}', '{}')",
             site.id,
             if site.is_default { 1 } else { 0 },
             if site.is_enabled { 1 } else { 0 },
@@ -179,7 +191,8 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
             site.tls_key_content.replace("'", "''"),
             site.rewrite_functions.join(",").replace("'", "''"),
             if site.access_log_enabled { 1 } else { 0 },
-            site.access_log_file.replace("'", "''")
+            site.access_log_file.replace("'", "''"),
+            extra_headers_str
         ))
         .map_err(|e| format!("Failed to insert site: {}", e))?;
 

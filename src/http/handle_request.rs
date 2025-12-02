@@ -4,7 +4,6 @@ use crate::configuration::site::Site;
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::file::file_cache::CachedFile;
-use crate::file::file_cache::FileCache;
 use crate::file::file_util::check_path_secure;
 use crate::file::file_util::get_full_file_path;
 use crate::http::http_util::*;
@@ -19,9 +18,16 @@ use hyper::{Request, Response};
 use log::debug;
 use log::trace;
 use std::collections::HashMap;
+use tokio_util::sync::CancellationToken;
 
 // Entry point to handle request, as we need to do post-processing, like access logging etc
-pub async fn handle_request_entry(req: Request<hyper::body::Incoming>, binding: Binding, remote_ip: String) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn handle_request_entry(
+    req: Request<hyper::body::Incoming>,
+    binding: Binding,
+    remote_ip: String,
+    shutdown_token: CancellationToken,
+    stop_services_token: CancellationToken,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Hashmap that holds calculated request data
     let mut request_data: HashMap<String, String> = HashMap::new();
 
@@ -53,34 +59,15 @@ pub async fn handle_request_entry(req: Request<hyper::body::Incoming>, binding: 
     let site = site.unwrap();
     trace!("Matched site with request: {:?}", &site);
 
-    let method = req.method().clone();
-
-    let uri = req.uri().clone();
-    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("");
-
     let response = handle_request(req, &binding, &site, &request_data).await;
 
-    // Handle access logging
-    if site.access_log_enabled {
-        let running_state_manager = get_running_state_manager();
-        let running_state = running_state_manager.get_running_state();
-        let unlocked_running_state = running_state.read().await;
-        let access_log_buffer = unlocked_running_state.get_access_log_buffer();
-
-        // Get current date and time in CLF format, which is like 10/Oct/2000:13:55:36 -0700
-        let now = Local::now();
-        let clf_date = now.format("%d/%b/%Y:%H:%M:%S %z").to_string();
-        let log_entry = format!(
-            "{} - - [{}] \"{} {} {}\" {} {}",
-            &remote_ip,
-            clf_date,
-            method,
-            path_and_query,
-            request_data.get("http_version").cloned().unwrap_or_default(),
-            response.as_ref().map(|resp| resp.status().as_u16()).unwrap_or(0),
-            response.as_ref().map(|resp| resp.size_hint().upper().unwrap_or(0)).unwrap_or(0)
-        );
-        access_log_buffer.add_log(site.id.to_string(), log_entry);
+    // If this is kept alive and we have shut down, we need to inform the client we are shutting down
+    if response.is_ok() {
+        let mut response = response.unwrap();
+        if shutdown_token.is_cancelled() || stop_services_token.is_cancelled() {
+            response.headers_mut().insert("Connection", "close".parse().unwrap());
+        }
+        return Ok(response);
     }
 
     response
@@ -89,12 +76,13 @@ pub async fn handle_request_entry(req: Request<hyper::body::Incoming>, binding: 
 // Handle the incoming request
 async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, site: &Site, request_data: &HashMap<String, String>) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Count the request in monitoring
-    get_monitoring_state().increment_requests_served();
+    get_monitoring_state().await.increment_requests_served();
 
     // Extract data for the request before we borrow/move
     let method = req.method().clone();
     let uri = req.uri().clone();
     let mut path = uri.path();
+    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("");
     let query = uri.query().unwrap_or("");
     let body_size = req.body().size_hint().upper().unwrap_or(0);
     let headers = &req.headers().clone();
@@ -115,10 +103,6 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     {
         return Ok(resp);
     }
-
-    let running_state_manager = get_running_state_manager();
-    let running_state = running_state_manager.get_running_state();
-    let unlocked_running_state = running_state.read().await;
 
     // Put the rewrite functions in a hashmap, so we can easily check them
     let rewrite_functions = {
@@ -190,8 +174,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     let web_root = web_root_result.unwrap();
 
     // Get the cached file, if it exists
-    let file_cache = unlocked_running_state.get_file_cache();
-    let file_data_result = resolve_web_root_and_path_and_get_file(file_cache, web_root.clone(), path.to_string());
+    let file_data_result = resolve_web_root_and_path_and_get_file(web_root.clone(), path.to_string()).await;
     if let Err(_) = file_data_result {
         return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
     }
@@ -206,7 +189,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
             path = "/";
 
             // Get the cached file, if it exists
-            let file_data_result = resolve_web_root_and_path_and_get_file(file_cache, web_root.clone(), path.to_string());
+            let file_data_result = resolve_web_root_and_path_and_get_file(web_root.clone(), path.to_string()).await;
             if let Err(_) = file_data_result {
                 return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
             }
@@ -225,7 +208,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
         let mut found_index = false;
         for file in &site.web_root_index_file_list {
             // Get the cached file, if it exists
-            let file_data_result = resolve_web_root_and_path_and_get_file(file_cache, file_path.clone(), file.to_string());
+            let file_data_result = resolve_web_root_and_path_and_get_file(file_path.clone(), file.to_string()).await;
             if let Err(_) = file_data_result {
                 trace!("Index files in dir does not exist: {}", file_path);
                 continue;
@@ -272,7 +255,9 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     let mut additional_headers: Vec<(&str, &str)> = vec![];
     let mut response = Response::new(full(""));
 
-    let external_request_handlers = unlocked_running_state.get_external_request_handlers();
+    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+    let external_request_handlers_rwlock = running_state.get_external_request_handlers();
+    let external_request_handlers = external_request_handlers_rwlock.read().await;
 
     for handler_id in &site.enabled_handlers {
         // Check if handler is relevant for this request, primarily based on file matches
@@ -300,7 +285,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
 
     // Do a safety check of the path, make sure it's still under the web root and not blocked
     if !handler_did_stuff {
-        if !check_path_secure(&web_root, &file_path) {
+        if !check_path_secure(&web_root, &file_path).await {
             trace!("File path is not secure: {}", file_path);
             // We should probably not reveal that the file is blocked, so we return a 404
             return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
@@ -308,12 +293,15 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     }
 
     if handler_did_stuff {
+        let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+        let file_cache_rwlock = running_state.get_file_cache();
+        let file_cache = file_cache_rwlock.read().await;
+
         // We do not set a default Content-Type here, as the handler should do that
 
         // Consider gzipping content if not already gzipped
         let content_type_header = response.headers().get("Content-Type").and_then(|v| v.to_str().ok()).unwrap_or("");
         let content_length = response.size_hint().upper().unwrap_or(0);
-        let file_cache = unlocked_running_state.get_file_cache();
         if file_cache.should_compress(content_type_header, content_length) {
             // Gzip the body
             // First, preserve the original headers and status
@@ -397,17 +385,52 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     // Add standard headers
     add_standard_headers_to_response(&mut response);
 
+    // Apply site-specific extra headers
+    for kv in &site.extra_headers {
+        if let Ok(key_name) = hyper::http::HeaderName::from_bytes(kv.key.as_bytes()) {
+            if let Ok(val) = HeaderValue::from_str(kv.value.as_str()) {
+                response.headers_mut().insert(key_name, val);
+            }
+        }
+    }
+
+    // Handle access logging
+    if site.access_log_enabled {
+        // Get current date and time in CLF format, which is like 10/Oct/2000:13:55:36 -0700
+        let now = Local::now();
+        let clf_date = now.format("%d/%b/%Y:%H:%M:%S %z").to_string();
+        let log_entry = format!(
+            "{} - - [{}] \"{} {} {}\" {} {}",
+            &remote_ip,
+            clf_date,
+            method,
+            path_and_query,
+            request_data.get("http_version").cloned().unwrap_or_default(),
+            response.status().as_u16(),
+            response.size_hint().upper().unwrap_or(0)
+        );
+
+        let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+        let access_log_buffer_rwlock = running_state.get_access_log_buffer();
+        let access_log_buffer = access_log_buffer_rwlock.read().await;
+        access_log_buffer.add_log(site.id.to_string(), log_entry);
+    }
+
     trace!("Responding with: {:?}", response);
 
     Ok(response)
 }
 
 // Combine the web root and path, and resolve to a full path
-fn resolve_web_root_and_path_and_get_file(file_cache: &FileCache, web_root: String, path: String) -> Result<CachedFile, std::io::Error> {
+async fn resolve_web_root_and_path_and_get_file(web_root: String, path: String) -> Result<CachedFile, std::io::Error> {
     let path_cleaned = clean_url_path(&path);
     let mut file_path = format!("{}/{}", web_root, path_cleaned);
     trace!("Resolved file path for resolving: {}", file_path);
     file_path = get_full_file_path(&file_path)?;
+
+    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+    let file_cache_rwlock = running_state.get_file_cache();
+    let file_cache = file_cache_rwlock.read().await;
     let file_data = file_cache.get_file(&file_path).unwrap();
     Ok(file_data)
 }
@@ -446,7 +469,7 @@ async fn validate_request(
 ) -> Result<(), Response<BoxBody<Bytes, hyper::Error>>> {
     // Here we can add any request validation logic if needed
     let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-    let configuration = cached_configuration.get_configuration();
+    let configuration = cached_configuration.get_configuration().await;
 
     // Validation for HTTP/1.1 only
     if http_version == "HTTP/1.1" {
@@ -504,7 +527,7 @@ async fn validate_request_post_body(
 ) -> Result<(), Response<BoxBody<Bytes, hyper::Error>>> {
     // Here we can add any post-body request validation logic if needed
     let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-    let configuration = cached_configuration.get_configuration();
+    let configuration = cached_configuration.get_configuration().await;
 
     // We check the size of the body again, after we actually have the complete body
     let max_body_size = configuration.core.server_settings.max_body_size;

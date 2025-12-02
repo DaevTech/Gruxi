@@ -41,10 +41,10 @@ impl FileCache {
     /// Create a new file cache with specified capacity and max file size
     /// capacity: Maximum number of files to cache
     /// max_file_size: Maximum size of individual files to cache (in bytes)
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         // Get configuration
         let cached_configuration = get_cached_configuration();
-        let config = cached_configuration.get_configuration();
+        let config = cached_configuration.get_configuration().await;
 
         let file_data_config = &config.core.file_cache;
 

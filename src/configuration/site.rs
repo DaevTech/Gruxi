@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HeaderKV {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(unused)]
 pub struct Site {
     pub id: usize,
@@ -17,6 +23,8 @@ pub struct Site {
     pub tls_key_path: String,
     pub tls_key_content: String,
     pub rewrite_functions: Vec<String>,
+    #[serde(default)]
+    pub extra_headers: Vec<HeaderKV>,
     // Logs
     pub access_log_enabled: bool,
     pub access_log_file: String,
@@ -80,6 +88,16 @@ impl Site {
                         errors.push(format!("Access log file parent path '{}' exists but is not a directory", parent.display()));
                     }
                 }
+            }
+        }
+
+        // Validate extra headers (optional but keys/values must be non-empty when present)
+        for (idx, kv) in self.extra_headers.iter().enumerate() {
+            if kv.key.trim().is_empty() {
+                errors.push(format!("Extra header {} key cannot be empty", idx + 1));
+            }
+            if kv.value.trim().is_empty() {
+                errors.push(format!("Extra header {} value cannot be empty", idx + 1));
             }
         }
 
@@ -171,6 +189,7 @@ fn create_valid_site() -> Site {
         tls_key_path: "".to_string(),
         tls_key_content: "".to_string(),
         rewrite_functions: vec![],
+        extra_headers: vec![],
         access_log_enabled: false,
         access_log_file: "".to_string(),
     }

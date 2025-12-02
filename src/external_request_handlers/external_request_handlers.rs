@@ -1,7 +1,7 @@
 use crate::{
     configuration::{request_handler::RequestHandler, site::Site},
     core::running_state_manager::get_running_state_manager,
-    external_request_handlers::php_handler::PHPHandler,
+    external_request_handlers::{php_handler::PHPHandler},
     http::http_util::empty_response_with_status,
 };
 use http_body_util::combinators::BoxBody;
@@ -39,10 +39,10 @@ pub trait ExternalRequestHandler {
 }
 
 impl ExternalRequestHandlers {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         // Get the config, to determine what we need
         let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
+        let config = cached_configuration.get_configuration().await;
 
         // Run through all the configured sites in configuration and determine which is actually referenced
         let mut handler_ids_used = HashMap::new();
@@ -116,10 +116,11 @@ impl ExternalRequestHandlers {
 
     // Check if handler is relevant for a request
     pub async fn is_handler_relevant(&self, handler_id: &str, full_file_path: &String) -> bool {
-        let running_state_manager = get_running_state_manager();
+        let running_state_manager = get_running_state_manager().await;
         let running_state = running_state_manager.get_running_state();
         let unlocked_running_state = running_state.read().await;
-        let handlers = unlocked_running_state.get_external_request_handlers();
+        let external_request_handlers = unlocked_running_state.get_external_request_handlers();
+        let handlers = external_request_handlers.read().await;
 
         // Get the handler type of the id, then call the appropriate handler
         let handler_type = match handlers.id_to_type.get(handler_id) {
@@ -159,10 +160,11 @@ impl ExternalRequestHandlers {
         remote_ip: &str,
         http_version: &String,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-        let running_state_manager = get_running_state_manager();
+        let running_state_manager = get_running_state_manager().await;
         let running_state = running_state_manager.get_running_state();
         let unlocked_running_state = running_state.read().await;
-        let handlers = unlocked_running_state.get_external_request_handlers();
+        let external_request_handlers = unlocked_running_state.get_external_request_handlers();
+        let handlers = external_request_handlers.read().await;
 
         // Get the handler type of the id, then call the appropriate handler
         let handler_type = match handlers.id_to_type.get(handler_id) {

@@ -1,12 +1,7 @@
-use crate::{
-    core::{running_state_manager::get_running_state_manager, triggers::get_trigger_handler},
-};
+use crate::core::{running_state_manager::get_running_state_manager, triggers::get_trigger_handler};
 use log::{info, trace};
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-};
-use tokio::select;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use tokio::{select, sync::OnceCell};
 
 pub struct MonitoringState {
     requests_served: AtomicUsize,
@@ -20,9 +15,9 @@ pub struct MonitoringState {
 }
 
 impl MonitoringState {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-        let configuration = cached_configuration.get_configuration();
+        let configuration = cached_configuration.get_configuration().await;
 
         MonitoringState {
             requests_served: AtomicUsize::new(0),      // Updated from http server
@@ -53,7 +48,7 @@ impl MonitoringState {
         let mut configuration_token = configuration_trigger.read().await.clone();
 
         loop {
-            let monitoring_state = get_monitoring_state();
+            let monitoring_state = get_monitoring_state().await;
 
             // Set how many active threads we have in tokio
             let metrics = current_handle.metrics();
@@ -69,16 +64,17 @@ impl MonitoringState {
 
             // Fetch some data from file cache
             {
-                let running_state_manager = get_running_state_manager();
+                let running_state_manager = get_running_state_manager().await;
                 let running_state = running_state_manager.get_running_state();
                 let unlocked_running_state = running_state.read().await;
-                let file_cache = unlocked_running_state.get_file_cache();
+                let file_cache_rwlock = unlocked_running_state.get_file_cache();
+                let file_cache = file_cache_rwlock.read().await;
 
                 monitoring_state.file_cache_current_items.store(file_cache.get_current_item_count(), Ordering::SeqCst);
                 // Clone the configuration values we need, then drop the guard
                 let (file_cache_enabled, file_cache_max_items) = {
                     let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-                    let configuration = cached_configuration.get_configuration();
+                    let configuration = cached_configuration.get_configuration().await;
                     (configuration.core.file_cache.is_enabled, configuration.core.file_cache.cache_item_size)
                 };
                 monitoring_state.file_cache_enabled.store(file_cache_enabled, Ordering::SeqCst);
@@ -106,8 +102,8 @@ impl MonitoringState {
         self.requests_served.load(Ordering::SeqCst)
     }
 
-    pub fn get_json(&self) -> serde_json::Value {
-        let monitoring_state = get_monitoring_state();
+    pub async fn get_json(&self) -> serde_json::Value {
+        let monitoring_state = get_monitoring_state().await;
 
         serde_json::json!({
             "requests_served": monitoring_state.get_requests_served(),
@@ -123,8 +119,8 @@ impl MonitoringState {
     }
 }
 
-static CURRENT_STATE_SINGLETON: OnceLock<MonitoringState> = OnceLock::new();
+static CURRENT_STATE_SINGLETON: OnceCell<MonitoringState> = OnceCell::const_new();
 
-pub fn get_monitoring_state() -> &'static MonitoringState {
-    CURRENT_STATE_SINGLETON.get_or_init(|| MonitoringState::new())
+pub async fn get_monitoring_state() -> &'static MonitoringState {
+    CURRENT_STATE_SINGLETON.get_or_init(|| async { MonitoringState::new().await }).await
 }

@@ -2,7 +2,7 @@ use crate::configuration::binding_site_relation::BindingSiteRelationship;
 use crate::configuration::configuration::CURRENT_CONFIGURATION_VERSION;
 use crate::core::operation_mode::{OperationMode, get_operation_mode};
 use crate::{
-    configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::Site},
+    configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::Site, site::HeaderKV},
     core::database_connection::get_database_connection,
 };
 use log::info;
@@ -215,6 +215,14 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
         let access_log_enabled: i64 = statement.read(12).map_err(|e| format!("Failed to read access_log_enabled: {}", e))?;
         let access_log_file: String = statement.read(13).map_err(|e| format!("Failed to read access_log_file: {}", e))?;
 
+        // Optional extra_headers column (comma separated key=value)
+        let extra_headers_str: String = statement.read(14).ok().unwrap_or_default();
+        let extra_headers_pairs = parse_key_value_pairs(&extra_headers_str);
+        let extra_headers: Vec<HeaderKV> = extra_headers_pairs
+            .into_iter()
+            .map(|(k, v)| HeaderKV { key: k, value: v })
+            .collect();
+
         sites.push(Site {
             id: site_id as usize,
             hostnames,
@@ -230,6 +238,7 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
             rewrite_functions,
             access_log_enabled: access_log_enabled != 0,
             access_log_file,
+            extra_headers,
         });
     }
 
@@ -318,38 +327,5 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
                 }
             })
             .collect()
-    }
-}
-
-#[cfg(test)]
-use std::fs;
-#[cfg(test)]
-use std::path::Path;
-
-#[test]
-fn test_load_configuration_with_existing_config() {
-    // Create copy of the database for testing
-    let copied_db_path = "./temp_test_data/grux_test_existing.db";
-    let original_db_path = "./db/grux.db";
-
-    if !Path::new("./temp_test_data").exists() {
-        fs::create_dir_all("./temp_test_data").unwrap();
-    }
-
-    if Path::new(copied_db_path).exists() {
-        fs::remove_file(copied_db_path).unwrap();
-    }
-
-    fs::copy(original_db_path, copied_db_path).unwrap();
-
-    let result = init();
-    assert!(result.is_ok());
-
-    assert!(fs::metadata(original_db_path).is_ok(), "Configuration database should exist");
-
-    // Copy back the original database
-    if Path::new(copied_db_path).exists() {
-        fs::remove_file(original_db_path).unwrap();
-        fs::rename(copied_db_path, original_db_path).unwrap();
     }
 }

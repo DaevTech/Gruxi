@@ -379,7 +379,7 @@ pub async fn admin_monitoring_endpoint(req: Request<hyper::body::Incoming>, _adm
     }
 
     // Get monitoring data
-    let monitoring_data = get_monitoring_state().get_json();
+    let monitoring_data = get_monitoring_state().await.get_json().await;
 
     let mut resp = Response::new(full(monitoring_data.to_string()));
     *resp.status_mut() = hyper::StatusCode::OK;

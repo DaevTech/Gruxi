@@ -286,6 +286,7 @@ const addSite = () => {
         web_root: './www-default/',
         web_root_index_file_list: ['index.html'],
         enabled_handlers: [],
+        extra_headers: [],
         tls_cert_path: '',
         tls_cert_content: '',
         tls_key_path: '',
@@ -394,6 +395,22 @@ const addEnabledHandler = (siteIndex) => {
 const removeEnabledHandler = (siteIndex, handlerIndex) => {
     if (config.value.sites && config.value.sites[siteIndex] && config.value.sites[siteIndex].enabled_handlers.length > handlerIndex) {
         config.value.sites[siteIndex].enabled_handlers.splice(handlerIndex, 1);
+    }
+};
+
+// Extra headers helpers
+const addExtraHeader = (siteIndex) => {
+    if (config.value.sites && config.value.sites[siteIndex]) {
+        if (!config.value.sites[siteIndex].extra_headers) {
+            config.value.sites[siteIndex].extra_headers = [];
+        }
+        config.value.sites[siteIndex].extra_headers.push({ key: 'X-Header', value: 'value' });
+    }
+};
+
+const removeExtraHeader = (siteIndex, headerIndex) => {
+    if (config.value.sites && config.value.sites[siteIndex] && config.value.sites[siteIndex].extra_headers && config.value.sites[siteIndex].extra_headers.length > headerIndex) {
+        config.value.sites[siteIndex].extra_headers.splice(headerIndex, 1);
     }
 };
 
@@ -849,6 +866,21 @@ onMounted(() => {
                                             <button @click="removeRewriteFunction(siteIndex, funcIndex)" class="remove-item-button">×</button>
                                         </div>
                                         <button @click="addRewriteFunction(siteIndex)" class="add-item-button">+ Add Function</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Extra Headers -->
+                            <div class="two-column-layout">
+                                <div class="list-field compact half-width">
+                                    <label>Extra HTTP Headers</label>
+                                    <div class="list-items">
+                                        <div v-for="(hdr, hdrIndex) in (site.extra_headers || [])" :key="hdrIndex" class="list-item key-value">
+                                            <input v-model="site.extra_headers[hdrIndex].key" type="text" placeholder="Header Key" class="key-input" />
+                                            <input v-model="site.extra_headers[hdrIndex].value" type="text" placeholder="Header Value" class="value-input" />
+                                            <button @click="removeExtraHeader(siteIndex, hdrIndex)" class="remove-item-button">×</button>
+                                        </div>
+                                        <button @click="addExtraHeader(siteIndex)" class="add-item-button">+ Add Header</button>
                                     </div>
                                 </div>
                             </div>

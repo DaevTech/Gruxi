@@ -13,7 +13,7 @@ pub struct AccessLogBuffer {
 }
 
 impl AccessLogBuffer {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let mut access_log_buffer = AccessLogBuffer { buffered_logs: HashMap::new() };
 
         // Have a fallback log path in case it could not be resolved
@@ -21,7 +21,7 @@ impl AccessLogBuffer {
 
         // We get the config and add the logs we need
         let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
+        let config = cached_configuration.get_configuration().await;
 
         for site in &config.sites {
             if !site.access_log_enabled {
@@ -43,9 +43,11 @@ impl AccessLogBuffer {
             access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(site_id.clone(), log_file_path));
         }
 
-        tokio::spawn(Self::start_flushing_thread());
-
         access_log_buffer
+    }
+
+    pub fn start_flushing_task(&self) {
+        tokio::spawn(Self::start_flushing_thread());
     }
 
     pub fn add_log(&self, site_id: String, log: String) {
@@ -67,16 +69,17 @@ impl AccessLogBuffer {
         let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
         let service_stop_token = triggers.get_trigger("stop_services").expect("Failed to get stop_services trigger").read().await.clone();
 
-        let running_state_manager = get_running_state_manager();
-        let running_state = running_state_manager.get_running_state();
+        let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
 
         loop {
             select! {
                 // Ideally, this would be adjustable according to the work load (such as elapsed time to do a flush in average)
                 _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
                         let start_time = Instant::now();
+                        let access_log_buffer_rwlock = running_state.get_access_log_buffer();
+                        let access_log_buffer = access_log_buffer_rwlock.read().await;
 
-                        for (_site_id, log) in running_state.read().await.get_access_log_buffer().buffered_logs.iter() {
+                        for (_site_id, log) in access_log_buffer.buffered_logs.iter() {
                             log.consider_flush(false);
                         }
                         let elapsed = start_time.elapsed().as_millis();
@@ -87,14 +90,20 @@ impl AccessLogBuffer {
                 },
                 _ = shutdown_token.cancelled() => {
                     trace!("Access log write thread received shutdown signal, so flushing remaining logs and exiting");
-                    for (_site_id, log) in running_state.read().await.get_access_log_buffer().buffered_logs.iter() {
+                    let access_log_buffer_rwlock = running_state.get_access_log_buffer();
+                    let access_log_buffer = access_log_buffer_rwlock.read().await;
+
+                    for (_site_id, log) in access_log_buffer.buffered_logs.iter() {
                         log.consider_flush(true);
                     }
                     break;
                 },
                 _ = service_stop_token.cancelled() => {
                     trace!("Access log write thread received stop services signal, so flushing remaining logs and exiting");
-                    for (_site_id, log) in running_state.read().await.get_access_log_buffer().buffered_logs.iter() {
+                    let access_log_buffer_rwlock = running_state.get_access_log_buffer();
+                    let access_log_buffer = access_log_buffer_rwlock.read().await;
+
+                    for (_site_id, log) in access_log_buffer.buffered_logs.iter() {
                         log.consider_flush(true);
                     }
                     break;
