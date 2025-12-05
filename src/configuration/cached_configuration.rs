@@ -2,7 +2,7 @@ use crate::{
     configuration::{configuration::Configuration, load_configuration::init},
     core::triggers::get_trigger_handler,
 };
-use log::trace;
+use crate::logging::syslog::trace;
 use tokio::sync::RwLock;
 use std::sync::{Arc, OnceLock};
 
@@ -24,7 +24,7 @@ impl CachedConfiguration {
 
     pub async fn check_if_cached_configuration_should_be_refreshed() {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        trace!("Starting thread to monitor for configuration refresh signal");
+        trace("Starting thread to monitor for configuration refresh signal");
 
         let triggers = get_trigger_handler();
         let refresh_trigger = triggers.get_trigger("refresh_cached_configuration").expect("Failed to get refresh_cached_configuration trigger");
@@ -32,7 +32,7 @@ impl CachedConfiguration {
 
         loop {
             refresh_trigger_token.cancelled().await;
-            trace!("Refresh cached configuration trigger received, reloading configuration");
+            trace("Refresh cached configuration trigger received, reloading configuration");
 
             {
                 let new_configuration = init().expect("Failed to reload configuration");
@@ -45,7 +45,7 @@ impl CachedConfiguration {
             let refresh_trigger = triggers.get_trigger("refresh_cached_configuration").expect("Failed to get refresh_cached_configuration trigger");
             refresh_trigger_token = refresh_trigger.read().await.clone();
 
-            trace!("Cached configuration successfully refreshed");
+            trace("Cached configuration successfully refreshed");
         }
     }
 }

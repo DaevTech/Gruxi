@@ -4,13 +4,15 @@ use crate::configuration::save_configuration::save_configuration;
 use crate::configuration::site::Site;
 use crate::core::admin_user::{LoginRequest, authenticate_user, create_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
+use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
 use crate::core::triggers::get_trigger_handler;
 use crate::http::http_util::full;
 use http_body_util::BodyExt;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::{Request, Response};
-use log::{debug, error, info};
+use crate::logging::syslog::{error, debug, info};
+use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
 use std::path::Path;
@@ -37,27 +39,27 @@ pub async fn handle_login_request(req: Request<hyper::body::Incoming>, _admin_si
     let login_request: LoginRequest = match serde_json::from_slice(&body_bytes) {
         Ok(req) => req,
         Err(e) => {
-            error!("Failed to parse login request: {}", e);
+            error(format!("Failed to parse login request: {}", e));
             let mut resp = Response::new(full("Invalid JSON format"));
             *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
             return Ok(resp);
         }
     };
 
-    debug!("Login attempt for username: {}", login_request.username);
+    debug(format!("Login attempt for username: {}", login_request.username));
 
     // Authenticate user
     let user = match authenticate_user(&login_request.username, &login_request.password) {
         Ok(Some(user)) => user,
         Ok(None) => {
-            info!("Failed login attempt for username: {}", login_request.username);
+            info(format!("Failed login attempt for username: {}", login_request.username));
             let mut resp = Response::new(full(r#"{"error": "Invalid username or password"}"#));
             *resp.status_mut() = hyper::StatusCode::UNAUTHORIZED;
             resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(resp);
         }
         Err(e) => {
-            error!("Database error during authentication: {}", e);
+            error(format!("Database error during authentication: {}", e));
             let mut resp = Response::new(full(r#"{"error": "Internal server error"}"#));
             *resp.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
             resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
@@ -69,7 +71,7 @@ pub async fn handle_login_request(req: Request<hyper::body::Incoming>, _admin_si
     let session = match create_session(&user) {
         Ok(session) => session,
         Err(e) => {
-            error!("Failed to create session: {}", e);
+            error(format!("Failed to create session: {}", e));
             let mut resp = Response::new(full(r#"{"error": "Failed to create session"}"#));
             *resp.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
             resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
@@ -77,7 +79,7 @@ pub async fn handle_login_request(req: Request<hyper::body::Incoming>, _admin_si
         }
     };
 
-    info!("Successful login for user: {}", user.username);
+    info(format!("Successful login for user: {}", user.username));
 
     // Return success response with session token
     let response_json = serde_json::json!({
@@ -108,7 +110,7 @@ pub async fn handle_logout_request(req: Request<hyper::body::Incoming>, _admin_s
     if let Some(token) = token {
         match invalidate_session(&token) {
             Ok(true) => {
-                info!("Successfully logged out session");
+                info("Successfully logged out session".to_string());
                 let response_json = serde_json::json!({
                     "success": true,
                     "message": "Logout successful"
@@ -125,7 +127,7 @@ pub async fn handle_logout_request(req: Request<hyper::body::Incoming>, _admin_s
                 Ok(resp)
             }
             Err(e) => {
-                error!("Failed to logout session: {}", e);
+                error(format!("Failed to logout session: {}", e));
                 let mut resp = Response::new(full(r#"{"error": "Internal server error"}"#));
                 *resp.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
                 resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
@@ -145,7 +147,7 @@ pub async fn admin_get_configuration_endpoint(req: Request<hyper::body::Incoming
     match require_authentication(&req).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with getting configuration
-            debug!("User authenticated, retrieving configuration");
+            debug("User authenticated, retrieving configuration".to_string());
         }
         Ok(None) => {
             // This shouldn't happen as require_authentication returns error for None
@@ -166,7 +168,7 @@ pub async fn admin_get_configuration_endpoint(req: Request<hyper::body::Incoming
     let json_config = match serde_json::to_string_pretty(&config) {
         Ok(json) => json,
         Err(e) => {
-            error!("Failed to serialize configuration: {}", e);
+            error(format!("Failed to serialize configuration: {}", e));
             let mut resp = Response::new(full(r#"{"error": "Failed to serialize configuration"}"#));
             *resp.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
             resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
@@ -185,7 +187,7 @@ pub async fn admin_post_configuration_reload(req: Request<hyper::body::Incoming>
     match require_authentication(&req).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with reloading configuration
-            debug!("User authenticated, reloading configuration");
+            debug("User authenticated, reloading configuration".to_string());
         }
         Ok(None) => {
             // This shouldn't happen as require_authentication returns error for None
@@ -205,7 +207,7 @@ pub async fn admin_post_configuration_reload(req: Request<hyper::body::Incoming>
     triggers.run_trigger("refresh_cached_configuration").await;
     triggers.run_trigger("reload_configuration").await;
 
-    info!("Configuration reload triggered by admin user");
+    info("Configuration reload triggered by admin user".to_string());
 
     let success_response = serde_json::json!({
         "success": true,
@@ -230,7 +232,7 @@ pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incomin
     // Check authentication first
     match require_authentication(&req).await {
         Ok(Some(_session)) => {
-            debug!("User authenticated for configuration update");
+            debug("User authenticated for configuration update".to_string());
         }
         Ok(None) => {
             let mut resp = Response::new(full(r#"{"error": "Authentication required"}"#));
@@ -247,7 +249,7 @@ pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incomin
     let body_bytes = match req.collect().await {
         Ok(body) => body.to_bytes(),
         Err(e) => {
-            error!("Failed to read request body: {}", e);
+            error(format!("Failed to read request body: {}", e));
             let mut resp = Response::new(full(r#"{"error": "Failed to read request body"}"#));
             *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
             resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
@@ -259,7 +261,7 @@ pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incomin
     let mut configuration: Configuration = match serde_json::from_slice(&body_bytes) {
         Ok(config) => config,
         Err(e) => {
-            error!("Failed to parse configuration JSON: {}", e);
+            error(format!("Failed to parse configuration JSON: {}", e));
             let error_response = serde_json::json!({
                 "error": "Invalid JSON format",
                 "details": e.to_string()
@@ -277,7 +279,7 @@ pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incomin
     // Save the configuration
     match save_configuration(&mut configuration) {
         Ok(true) => {
-            info!("Configuration updated successfully");
+            info("Configuration updated successfully".to_string());
             let success_response = serde_json::json!({
                 "success": true,
                 "message": "Configuration updated successfully. Please restart the server for changes to take effect."
@@ -288,7 +290,7 @@ pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incomin
             Ok(resp)
         }
         Ok(false) => {
-            info!("Configuration save requested, but no changes detected");
+            info("Configuration save requested, but no changes detected".to_string());
             let success_response = serde_json::json!({
                 "success": true,
                 "message": "Configuration is up to date. No changes were needed."
@@ -299,7 +301,7 @@ pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incomin
             Ok(resp)
         }
         Err(validation_errors) => {
-            error!("Configuration validation failed: {}", validation_errors);
+            error(format!("Configuration validation failed: {}", validation_errors));
             let error_response = serde_json::json!({
                 "error": "Configuration validation failed",
                 "details": validation_errors
@@ -345,7 +347,7 @@ pub async fn require_authentication(req: &Request<hyper::body::Incoming>) -> Res
                 Err(resp)
             }
             Err(e) => {
-                error!("Failed to verify session: {}", e);
+                error(format!("Failed to verify session: {}", e));
                 let mut resp = Response::new(full(r#"{"error": "Internal server error"}"#));
                 *resp.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
                 resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
@@ -365,7 +367,7 @@ pub async fn admin_monitoring_endpoint(req: Request<hyper::body::Incoming>, _adm
     // Check authentication first
     match require_authentication(&req).await {
         Ok(Some(_session)) => {
-            debug!("User authenticated, retrieving monitoring data");
+            debug("User authenticated, retrieving monitoring data".to_string());
         }
         Ok(None) => {
             let mut resp = Response::new(full(r#"{"error": "Authentication required"}"#));
@@ -400,7 +402,7 @@ pub async fn admin_logs_endpoint(req: Request<hyper::body::Incoming>, _admin_sit
     // Check authentication first
     match require_authentication(&req).await {
         Ok(Some(_session)) => {
-            debug!("User authenticated, retrieving logs");
+            debug("User authenticated, retrieving logs".to_string());
         }
         Ok(None) => {
             let mut resp = Response::new(full(r#"{"error": "Authentication required"}"#));
@@ -473,7 +475,7 @@ async fn list_log_files() -> Result<Response<BoxBody<Bytes, hyper::Error>>, hype
             Ok(resp)
         }
         Err(e) => {
-            error!("Failed to read logs directory: {}", e);
+            error(format!("Failed to read logs directory: {}", e));
             let error_response = serde_json::json!({
                 "error": "Failed to read logs directory",
                 "details": e.to_string()
@@ -561,7 +563,7 @@ async fn get_log_file_content(filename: &str) -> Result<Response<BoxBody<Bytes, 
                     Ok(resp)
                 }
                 Err(e) => {
-                    error!("Failed to read log file {}: {}", filename, e);
+                    error(format!("Failed to read log file {}: {}", filename, e));
                     let error_response = serde_json::json!({
                         "error": "Failed to read log file",
                         "details": e.to_string()
@@ -574,7 +576,7 @@ async fn get_log_file_content(filename: &str) -> Result<Response<BoxBody<Bytes, 
             }
         }
         Err(e) => {
-            error!("Failed to get metadata for log file {}: {}", filename, e);
+            error(format!("Failed to get metadata for log file {}: {}", filename, e));
             let error_response = serde_json::json!({
                 "error": "Failed to access log file",
                 "details": e.to_string()
@@ -585,4 +587,144 @@ async fn get_log_file_content(filename: &str) -> Result<Response<BoxBody<Bytes, 
             Ok(resp)
         }
     }
+}
+
+// Request/Response structures for operation mode
+#[derive(Serialize, Deserialize)]
+struct OperationModeResponse {
+    mode: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct OperationModeRequest {
+    mode: String,
+}
+
+// Admin operation mode GET endpoint - returns current operation mode
+pub async fn admin_get_operation_mode_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    // Check authentication first
+    match require_authentication(&req).await {
+        Ok(Some(_session)) => {
+            debug("User authenticated, retrieving operation mode".to_string());
+        }
+        Ok(None) => {
+            let mut resp = Response::new(full(r#"{"error": "Authentication required"}"#));
+            *resp.status_mut() = hyper::StatusCode::UNAUTHORIZED;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+        Err(auth_response) => {
+            return Ok(auth_response);
+        }
+    }
+
+    // Get current operation mode
+    let current_mode = get_operation_mode_as_string();
+
+    let response = OperationModeResponse { mode: current_mode };
+
+    let json_response = match serde_json::to_string(&response) {
+        Ok(json) => json,
+        Err(e) => {
+            error(format!("Failed to serialize operation mode response: {}", e));
+            let mut resp = Response::new(full(r#"{"error": "Failed to serialize response"}"#));
+            *resp.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+    };
+
+    let mut resp = Response::new(full(json_response));
+    *resp.status_mut() = hyper::StatusCode::OK;
+    resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    Ok(resp)
+}
+
+// Admin operation mode POST endpoint - changes operation mode
+pub async fn admin_post_operation_mode_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    // Check if this is a POST request
+    if req.method() != hyper::Method::POST {
+        let mut resp = Response::new(full(r#"{"error": "Method not allowed"}"#));
+        *resp.status_mut() = hyper::StatusCode::METHOD_NOT_ALLOWED;
+        resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        return Ok(resp);
+    }
+
+    // Check authentication first
+    match require_authentication(&req).await {
+        Ok(Some(_session)) => {
+            debug("User authenticated for operation mode update".to_string());
+        }
+        Ok(None) => {
+            let mut resp = Response::new(full(r#"{"error": "Authentication required"}"#));
+            *resp.status_mut() = hyper::StatusCode::UNAUTHORIZED;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+        Err(auth_response) => {
+            return Ok(auth_response);
+        }
+    }
+
+    // Read the request body
+    let body_bytes = match req.collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(e) => {
+            error(format!("Failed to read request body: {}", e));
+            let mut resp = Response::new(full(r#"{"error": "Failed to read request body"}"#));
+            *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+    };
+
+    // Parse JSON body
+    let mode_request: OperationModeRequest = match serde_json::from_slice(&body_bytes) {
+        Ok(req) => req,
+        Err(e) => {
+            error(format!("Failed to parse operation mode request: {}", e));
+            let error_response = serde_json::json!({
+                "error": "Invalid JSON format",
+                "details": e.to_string()
+            });
+            let mut resp = Response::new(full(error_response.to_string()));
+            *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(resp);
+        }
+    };
+
+    // Validate the mode
+    if is_valid_operation_mode(&mode_request.mode) == false {
+        let error_response = serde_json::json!({
+            "error": "Invalid operation mode",
+            "details": format!("Mode '{}' is not recognized as a valid operation mode", mode_request.mode)
+        });
+        let mut resp = Response::new(full(error_response.to_string()));
+        *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+        resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        return Ok(resp);
+    }
+
+    // Change the operation mode
+    let was_changed = set_new_operation_mode(mode_request.mode.clone());
+
+    let return_message = if was_changed {
+        format!("Operation mode changed to {}", mode_request.mode)
+    } else {
+        format!("Operation mode was already set to {}", mode_request.mode)
+    };
+
+    info(format!("{}", return_message));
+
+    let success_response = serde_json::json!({
+        "success": was_changed,
+        "message": return_message,
+        "mode": mode_request.mode
+    });
+
+    let mut resp = Response::new(full(success_response.to_string()));
+    *resp.status_mut() = hyper::StatusCode::OK;
+    resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    Ok(resp)
 }

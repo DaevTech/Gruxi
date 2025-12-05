@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
-use log::info;
+use crate::logging::syslog::info;
 use random_password_generator::generate_password;
 use serde::{Deserialize, Serialize};
 use sqlite::Connection;
@@ -61,7 +61,7 @@ pub fn create_default_admin_user(connection: &Connection) -> Result<(), String> 
             ))
             .map_err(|e| format!("Failed to create default admin user: {}", e))?;
 
-        info!("Default admin user created with username 'admin' and password '{}'", random_password);
+        info(format!("Default admin user created with username 'admin' and password '{}'", random_password));
         need_to_clear_sessions = true;
     }
 
@@ -87,7 +87,7 @@ pub fn reset_admin_password() -> Result<String, String> {
     connection
         .execute(format!("UPDATE users SET password_hash = '{}' WHERE username = 'admin'", password_hash))
         .map_err(|e| format!("Failed to reset admin password: {}", e))?;
-    info!("Password changed for user 'admin' to: {}", random_password);
+    info(format!("Password changed for user 'admin' to: {}", random_password));
 
     // Invalidate all existing sessions for admin user
     invalidate_sessions_for_user(&connection, "admin")?;
@@ -184,7 +184,7 @@ pub fn create_session(user: &User) -> Result<Session, String> {
         ))
         .map_err(|e| format!("Failed to create session: {}", e))?;
 
-    info!("Created session for user: {}", user.username);
+    info(format!("Created session for user: {}", user.username));
     Ok(session)
 }
 
@@ -300,7 +300,7 @@ pub fn cleanup_all_expired_sessions() -> Result<u64, String> {
         .map_err(|e| format!("Failed to cleanup expired sessions: {}", e))?;
 
     if expired_count > 0 {
-        info!("Cleaned up {} expired sessions", expired_count);
+        info(format!("Cleaned up {} expired sessions", expired_count));
     }
 
     Ok(expired_count)

@@ -10,7 +10,6 @@ pub fn load_command_line_args() -> ArgMatches {
             Arg::new("opmode")
                 .short('o')
                 .long("opmode")
-                .default_value("PRODUCTION")
                 .help("Mode of operation")
                 .value_parser(["DEV", "DEBUG", "PRODUCTION", "SPEEDTEST"]),
         )
@@ -64,7 +63,7 @@ fn validate_existing_file(s: &str) -> Result<PathBuf, String> {
 
 pub fn cmd_get_operation_mode() -> String {
     let cli = get_command_line_args();
-    cli.get_one::<String>("opmode").map(|s| s.to_string()).unwrap_or("PRODUCTION".to_string())
+    cli.get_one::<String>("opmode").map(|s| s.to_string()).unwrap_or("".to_string())
 }
 
 pub fn cmd_should_reset_admin_password() -> bool {
@@ -76,8 +75,7 @@ pub fn check_for_command_line_actions() {
     let cli = get_command_line_args();
 
     if cmd_should_reset_admin_password() {
-        let new_password = crate::core::admin_user::reset_admin_password().expect("Failed to reset admin password");
-        println!("Admin password has been reset to: '{}'.", new_password);
+        crate::core::admin_user::reset_admin_password().expect("Failed to reset admin password");
         std::process::exit(0);
     }
 

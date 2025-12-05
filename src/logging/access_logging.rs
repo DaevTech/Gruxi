@@ -1,4 +1,4 @@
-use log::{debug, error, trace};
+use crate::logging::syslog::{debug, error, trace};
 use std::collections::HashMap;
 use std::time::Instant;
 use tokio::select;
@@ -34,12 +34,12 @@ impl AccessLogBuffer {
             let log_file_path = match log_file_path_result {
                 Ok(path) => path,
                 Err(_) => {
-                    error!("Invalid access log path for site {}: {}. Using default {}.", site_id, site.access_log_file, default_log_path);
+                    error(format!("Invalid access log path for site {}: {}. Using default {}.", site_id, site.access_log_file, default_log_path));
                     let default_log_path_plus_site = format!("{}/{}.log", default_log_path, site_id);
                     default_log_path_plus_site
                 }
             };
-            trace!("Initialized access log buffer for site {} at path {}", &site.id, &log_file_path);
+            trace(format!("Initialized access log buffer for site {} at path {}", &site.id, &log_file_path));
             access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(site_id.clone(), log_file_path));
         }
 
@@ -63,7 +63,7 @@ impl AccessLogBuffer {
     }
 
     pub async fn start_flushing_thread() {
-        trace!("Starting access log write thread");
+        trace("Starting access log write thread".to_string());
 
         let triggers = crate::core::triggers::get_trigger_handler();
         let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
@@ -84,11 +84,11 @@ impl AccessLogBuffer {
                         }
                         let elapsed = start_time.elapsed().as_millis();
                         if elapsed > 0 {
-                            debug!("Access log flush cycle completed in {} ms", elapsed);
+                            debug(format!("Access log flush cycle completed in {} ms", elapsed));
                         }
                 },
                 _ = shutdown_token.cancelled() => {
-                    trace!("Access log write thread received shutdown signal, so flushing remaining logs and exiting");
+                    trace("Access log write thread received shutdown signal, so flushing remaining logs and exiting".to_string());
                     let access_log_buffer_rwlock = running_state.get_access_log_buffer();
                     let access_log_buffer = access_log_buffer_rwlock.read().await;
 
@@ -98,7 +98,7 @@ impl AccessLogBuffer {
                     break;
                 },
                 _ = service_stop_token.cancelled() => {
-                    trace!("Access log write thread received stop services signal, so flushing remaining logs and exiting");
+                    trace("Access log write thread received stop services signal, so flushing remaining logs and exiting".to_string());
                     let access_log_buffer_rwlock = running_state.get_access_log_buffer();
                     let access_log_buffer = access_log_buffer_rwlock.read().await;
 

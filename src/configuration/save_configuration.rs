@@ -3,11 +3,10 @@ use crate::configuration::configuration::Configuration;
 use crate::configuration::core::Core;
 use crate::configuration::load_configuration::fetch_configuration_in_db;
 use crate::configuration::request_handler::RequestHandler;
-use crate::configuration::site::Site;
 use crate::configuration::site::HeaderKV;
+use crate::configuration::site::Site;
 use crate::core::database_connection::get_database_connection;
-use log::info;
-use log::trace;
+use crate::logging::syslog::{info, trace};
 use serde_json;
 use sqlite::Connection;
 use sqlite::State;
@@ -62,7 +61,7 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
     for relationship in &config.binding_sites {
         connection
             .execute(format!(
-                "INSERT OR REPLACE INTO binding_sites (binding_id, site_id) VALUES ({}, {})",
+                "INSERT INTO binding_sites (binding_id, site_id) VALUES ({}, {})",
                 relationship.binding_id, relationship.site_id
             ))
             .map_err(|e| format!("Failed to insert binding-site relationship: {}", e))?;
@@ -76,10 +75,7 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
     // Commit transaction
     connection.execute("COMMIT").map_err(|e| format!("Failed to commit transaction: {}", e))?;
 
-    info!("Configuration saved successfully");
-
-    // Note: The configuration will only take effect after a server restart
-    // In a production system, you might want to add hot-reloading functionality
+    info("Configuration saved successfully");
 
     Ok(true) // Changes were saved
 }
@@ -101,6 +97,7 @@ fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> 
     // Save server settings
     save_server_settings(connection, "max_body_size", &core.server_settings.max_body_size.to_string())?;
     save_server_settings(connection, "blocked_file_patterns", &core.server_settings.blocked_file_patterns.join(","))?;
+    save_server_settings(connection, "operation_mode", &core.server_settings.operation_mode)?;
 
     Ok(())
 }
@@ -153,7 +150,7 @@ fn save_binding(connection: &Connection, binding: &Binding) -> Result<(), String
         ))
         .map_err(|e| format!("Failed to insert binding: {}", e))?;
 
-    trace!("Inserted binding with id: {}", binding.id);
+    trace(format!("Inserted binding with id: {}", binding.id));
 
     Ok(())
 }
@@ -167,8 +164,7 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
     let extra_headers_str = if site.extra_headers.is_empty() {
         "".to_string()
     } else {
-        site
-            .extra_headers
+        site.extra_headers
             .iter()
             .map(|HeaderKV { key, value }| format!("{}={}", key.replace("'", "''"), value.replace("'", "''")))
             .collect::<Vec<String>>()
@@ -196,7 +192,7 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
         ))
         .map_err(|e| format!("Failed to insert site: {}", e))?;
 
-    trace!("Inserted site with id: {}", site.id);
+    trace(format!("Inserted site with id: {}", site.id));
 
     Ok(())
 }

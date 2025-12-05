@@ -7,7 +7,7 @@ use crate::{
 use http_body_util::combinators::BoxBody;
 use hyper::Response;
 use hyper::body::Bytes;
-use log::{debug, error};
+use crate::logging::syslog::{debug, error};
 use std::collections::HashMap;
 
 pub struct ExternalRequestHandlers {
@@ -52,7 +52,7 @@ impl ExternalRequestHandlers {
             }
         }
 
-        debug!("Enabled external request handlers found in configuration: {:?}", handler_ids_used);
+        debug(format!("Enabled external request handlers found in configuration: {:?}", handler_ids_used));
 
         // Go through our configured handlers and check they are enabled
         let mut handler_type_to_load: HashMap<String, RequestHandler> = HashMap::new();
@@ -69,7 +69,7 @@ impl ExternalRequestHandlers {
             }
         }
 
-        debug!("Enabled external request handler types found in configuration: {:?}", handler_type_to_load);
+        debug(format!("Enabled external request handler types found in configuration: {:?}", handler_type_to_load));
 
         // Start the handlers with the type we want
         let mut php = HashMap::new();
@@ -99,12 +99,12 @@ impl ExternalRequestHandlers {
                         handler.extra_environment,
                     );
                     php_handler.start();
-                    debug!("PHP handler with id {} started and added to external request handlers.", &handler_id);
+                    debug(format!("PHP handler with id {} started and added to external request handlers.", &handler_id));
                     id_to_type.insert(handler_id.clone(), "php".to_string());
                     php.insert(handler_id.clone(), php_handler);
                 }
                 _ => {
-                    error!("Unknown handler type in config: {}", handler.handler_type);
+                    error(format!("Unknown handler type in config: {}", handler.handler_type));
                 }
             }
         }
@@ -137,7 +137,7 @@ impl ExternalRequestHandlers {
                 }
             }
             _ => {
-                error!("Unknown handler type: {}", handler_type);
+                error(format!("Unknown handler type: {}", handler_type));
             }
         }
 
@@ -175,12 +175,12 @@ impl ExternalRequestHandlers {
                 if let Some(php_handler) = self.php.get(handler_id) {
                     php_handler.handle_request(method, uri, headers, body, site, full_file_path, remote_ip, http_version).await
                 } else {
-                    error!("PHP handler with id {} not found.", handler_id);
+                    error(format!("PHP handler with id {} not found.", handler_id));
                     Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR))
                 }
             }
             _ => {
-                error!("Unknown handler type: {}", handler_type);
+                error(format!("Unknown handler type: {}", handler_type));
                 Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR))
             }
         }

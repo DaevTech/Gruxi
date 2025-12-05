@@ -15,8 +15,7 @@ use hyper::body::Body;
 use hyper::body::Bytes;
 use hyper::header::HeaderValue;
 use hyper::{Request, Response};
-use log::debug;
-use log::trace;
+use crate::logging::syslog::{debug, trace};
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
@@ -31,12 +30,19 @@ pub async fn handle_request_entry(
     // Hashmap that holds calculated request data
     let mut request_data: HashMap<String, String> = HashMap::new();
 
-    // Extract hostname from headers
     let headers = req.headers();
-    let requested_hostname = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("").split(':').next().unwrap_or("").to_string();
+
+    // Get the hostname that is requested
+    let requested_hostname = headers
+        .get(":authority")
+        .or_else(|| headers.get("Host"))
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
 
     request_data.insert("remote_ip".to_string(), remote_ip.clone());
     request_data.insert("requested_hostname".to_string(), requested_hostname.clone());
+
 
     // Get HTTP version
     let http_version = match req.version() {
@@ -57,7 +63,7 @@ pub async fn handle_request_entry(
         return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
     }
     let site = site.unwrap();
-    trace!("Matched site with request: {:?}", &site);
+    trace(format!("Matched site with request: {:?}", &site));
 
     let response = handle_request(req, &binding, &site, &request_data).await;
 
@@ -116,7 +122,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     // Check if the request is for the admin portal - handle these first
     if binding.is_admin {
         let path_cleaned = clean_url_path(path);
-        trace!("Handling request for admin portal with path: {}", path_cleaned);
+        trace(format!("Handling request for admin portal with path: {}", path_cleaned));
 
         // We only want to handle a few paths in the admin portal
         if path_cleaned == "login" && method == hyper::Method::POST {
@@ -135,15 +141,19 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
             return admin_logs_endpoint(req, site).await;
         } else if (path_cleaned == "configuration/reload") && method == hyper::Method::POST {
             return admin_post_configuration_reload(req, site).await;
+        } else if path_cleaned == "operation-mode" && method == hyper::Method::GET {
+            return admin_get_operation_mode_endpoint(req, site).await;
+        } else if path_cleaned == "operation-mode" && method == hyper::Method::POST {
+            return admin_post_operation_mode_endpoint(req, site).await;
         }
     }
 
     // Now se determine what the request is, and how to handle it
     let headers_map = headers.iter().map(|(k, v)| (k.as_str(), v.to_str().unwrap_or(""))).collect::<Vec<_>>();
-    debug!(
+    debug(format!(
         "Received request: method={}, path={}, query={}, body_size={}, headers={:?}",
         method, path, query, body_size, headers_map
-    );
+    ));
 
     // Handle special case for OPTIONS * request, which is stupid but valid
     if method == hyper::Method::OPTIONS && path == "*" {
@@ -168,7 +178,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     // First, check if there is a specific file requested
     let web_root_result = get_full_file_path(&site.web_root);
     if let Err(e) = web_root_result {
-        debug!("Failed to get full web root path: {}", e);
+        debug(format!("Failed to get full web root path: {}", e));
         return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
     }
     let web_root = web_root_result.unwrap();
@@ -182,9 +192,9 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     let mut file_path = file_data.file_path.clone();
 
     if !file_data.exists {
-        trace!("File does not exist: {}", file_path);
+        trace(format!("File does not exist: {}", file_path));
         if rewrite_functions.contains_key("OnlyWebRootIndexForSubdirs") {
-            trace!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path);
+            trace(format!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path));
             // We rewrite the path to just "/" which will make it serve the index file
             path = "/";
 
@@ -202,7 +212,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
 
     if file_data.is_directory {
         // If it's a directory, we will try to return the index file
-        trace!("File is a directory: {}", file_path);
+        trace(format!("File is a directory: {}", file_path));
 
         // Check if we can find a index file in the directory
         let mut found_index = false;
@@ -210,18 +220,18 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
             // Get the cached file, if it exists
             let file_data_result = resolve_web_root_and_path_and_get_file(file_path.clone(), file.to_string()).await;
             if let Err(_) = file_data_result {
-                trace!("Index files in dir does not exist: {}", file_path);
+                trace(format!("Index files in dir does not exist: {}", file_path));
                 continue;
             }
             file_data = file_data_result.unwrap();
             file_path = file_data.file_path.clone();
-            trace!("Found index file: {}", file_path);
+            trace(format!("Found index file: {}", file_path));
             found_index = true;
             break;
         }
 
         if !found_index {
-            trace!("Did not find index file: {}", file_path);
+            trace(format!("Did not find index file: {}", file_path));
             return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
         }
     }
@@ -234,7 +244,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
                 bytes.to_vec()
             }
             Err(e) => {
-                debug!("Failed to collect request body: {}", e);
+                debug(format!("Failed to collect request body: {}", e));
                 Vec::new()
             }
         }
@@ -273,8 +283,8 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
                 handler_did_stuff = true;
                 response = resp;
             }
-            Err(e) => {
-                debug!("Error from external handler {}: {}", handler_id, e);
+                Err(e) => {
+                debug(format!("Error from external handler {}: {}", handler_id, e));
                 return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
             }
         };
@@ -286,7 +296,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     // Do a safety check of the path, make sure it's still under the web root and not blocked
     if !handler_did_stuff {
         if !check_path_secure(&web_root, &file_path).await {
-            trace!("File path is not secure: {}", file_path);
+            trace(format!("File path is not secure: {}", file_path));
             // We should probably not reveal that the file is blocked, so we return a 404
             return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
         }
@@ -312,7 +322,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
             let body_bytes = match response.collect().await {
                 Ok(collected) => collected.to_bytes().to_vec(),
                 Err(_) => {
-                    debug!("Failed to collect response body for compression");
+                    debug("Failed to collect response body for compression".to_string());
                     Vec::new()
                 }
             };
@@ -416,7 +426,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
         access_log_buffer.add_log(site.id.to_string(), log_entry);
     }
 
-    trace!("Responding with: {:?}", response);
+    trace(format!("Responding with: {:?}", response));
 
     Ok(response)
 }
@@ -425,7 +435,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
 async fn resolve_web_root_and_path_and_get_file(web_root: String, path: String) -> Result<CachedFile, std::io::Error> {
     let path_cleaned = clean_url_path(&path);
     let mut file_path = format!("{}/{}", web_root, path_cleaned);
-    trace!("Resolved file path for resolving: {}", file_path);
+    trace(format!("Resolved file path for resolving: {}", file_path));
     file_path = get_full_file_path(&file_path)?;
 
     let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
@@ -451,7 +461,7 @@ fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &'a str) -> O
 
     // If we still cant find a proper site, we return None
     if site.is_none() {
-        trace!("No matching site found for requested hostname: {}", requested_hostname);
+        trace(format!("No matching site found for requested hostname: {}", requested_hostname));
         return None;
     }
 
@@ -475,13 +485,13 @@ async fn validate_request(
     if http_version == "HTTP/1.1" {
         // [HTTP1.1] Requires a Host header
         if !headers.contains_key("Host") {
-            trace!("Missing Host header, return HTTP 400");
+            trace("Missing Host header, return HTTP 400".to_string());
             return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
         }
 
         // [HTTP1.1] If there is multiple host headers, we return a 400 error
         if headers.get_all("Host").iter().count() > 1 {
-            trace!("Multiple Host headers, return HTTP 400");
+            trace("Multiple Host headers, return HTTP 400".to_string());
             return Err(empty_response_with_status(hyper::StatusCode::BAD_REQUEST));
         }
     }
@@ -489,7 +499,7 @@ async fn validate_request(
     // [HTTP1.1 and later] Basic validation: check for valid method
     if method != "GET" && method != "POST" && method != "HEAD" && method != "PUT" && method != "DELETE" && method != "OPTIONS" && method != "TRACE" && method != "CONNECT" && method != "PATCH" {
         // Return a error for unsupported method
-        trace!("Unsupported HTTP method, return HTTP 501: {}", method);
+        trace(format!("Unsupported HTTP method, return HTTP 501: {}", method));
         return Err(empty_response_with_status(hyper::StatusCode::NOT_IMPLEMENTED));
     }
 

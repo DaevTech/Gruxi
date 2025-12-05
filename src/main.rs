@@ -4,9 +4,8 @@ use grux::core::database_schema;
 use grux::core::operation_mode::get_operation_mode;
 use grux::core::running_state_manager::get_running_state_manager;
 use grux::core::triggers::get_trigger_handler;
-use grux::logging::system_log::init_logging;
+use grux::logging::syslog::{error, info};
 use grux::{admin_portal::init::initialize_admin_site, core::background_tasks::start_background_tasks};
-use log::{error, info};
 use tokio::select;
 
 #[tokio::main]
@@ -46,7 +45,7 @@ async fn main() {
 
             select! {
                 _ = configuration_token.cancelled() => {
-                    info!("Reloading running state due to configuration change");
+                    info("Reloading running state due to configuration change");
                     running_state_manager.set_new_running_state().await;
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     grux::http::http_server::initialize_server().await;
@@ -70,24 +69,20 @@ fn start_grux_basics() {
     get_command_line_args();
     check_for_command_line_actions();
 
+    // Initialize database tables and migrations
+    if let Err(e) = database_schema::initialize_database() {
+        error(format!("Failed to initialize database: {}", e));
+        std::process::exit(1);
+    }
+
     // Load operation mode
     let operation_mode = get_operation_mode();
 
-    // Initialize logging
-    match init_logging(operation_mode) {
-        Ok(_) => {}
-        Err(e) => {
-            error!("Failed to initialize logging: {}", e);
-            std::process::exit(1);
-        }
-    }
+    let version = env!("CARGO_PKG_VERSION");
+    info(format!("Starting Grux {}", version));
+    info(format!("Operation mode: {:?}", operation_mode));
 
-    // Initialize database tables and migrations
-    if let Err(e) = database_schema::initialize_database() {
-        error!("Failed to initialize database: {}", e);
-        std::process::exit(1);
-    }
-    info!("Database initialized");
+    //start_sys_log();
 
     // Load the configuration early to catch any errors
     match grux::configuration::load_configuration::init() {
@@ -96,15 +91,10 @@ fn start_grux_basics() {
             get_cached_configuration();
         }
         Err(e) => {
-            error!("Failed to load configuration: {}", e);
+            error(format!("Failed to load configuration: {}", e));
             std::process::exit(1);
         }
     }
-
-    // Starting Grux
-    let version = env!("CARGO_PKG_VERSION");
-    info!("Starting Grux {}...", version);
-    info!("Operation mode: {:?}", operation_mode);
 
     // Initialize the admin site
     initialize_admin_site();

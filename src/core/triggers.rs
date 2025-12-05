@@ -1,4 +1,4 @@
-use log::{trace, warn};
+use crate::logging::syslog::{trace, warn};
 use std::{
     collections::HashMap,
     sync::{Arc, OnceLock},
@@ -13,7 +13,7 @@ pub struct Triggers {
 impl Triggers {
     pub fn new() -> Self {
         let mut triggers = HashMap::new();
-        let known_triggers = vec!["refresh_cached_configuration", "reload_configuration", "stop_services", "shutdown"];
+        let known_triggers = vec!["refresh_cached_configuration", "reload_configuration", "stop_services", "shutdown", "operation_mode_changed"];
         for trigger_name in known_triggers {
             triggers.insert(trigger_name.to_string(), Arc::new(RwLock::new(CancellationToken::new())));
         }
@@ -29,10 +29,10 @@ impl Triggers {
         if let Some(token_lock) = self.triggers.get(name) {
             let token_clone = token_lock.clone();
             let token = token_clone.read().await;
-            trace!("Running trigger: {}", name);
+            trace(format!("Running trigger: {}", name));
             token.cancel();
         } else {
-            warn!("A non-existent trigger was triggered - Please report as a bug. Trigger: {}", name);
+            warn(format!("A non-existent trigger was triggered - Please report as a bug. Trigger: {}", name));
         }
         // When token is used, we renew it for next time
         self.renew_trigger(name).await;

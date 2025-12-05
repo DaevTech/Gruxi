@@ -1,4 +1,3 @@
-use log::trace;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -66,17 +65,13 @@ impl BufferedLog {
             }
         }
 
-        // If either condition met, flush
-        let logs_to_write = log_buffer.len();
-        trace!("Writing {} access log entries for log id {}", logs_to_write, &self.log_id);
-
         // Append the log to the file path
         let log_data = log_buffer.join("\n") + "\n";
         if let Err(e) = std::fs::OpenOptions::new().append(true).open(&self.log_file_path).and_then(|mut file| {
             use std::io::Write;
             file.write_all(log_data.as_bytes())
         }) {
-            trace!("Failed to write access log for log id {}: {}", &self.log_id, e);
+            eprintln!("Failed to write buffered log to file {}: {}", &self.log_file_path, e);
         }
 
         // Clear data and releases the lock

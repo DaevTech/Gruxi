@@ -1,10 +1,10 @@
 use crate::configuration::binding::Binding;
 use crate::http::handle_request::handle_request_entry;
 use crate::http::http_tls::build_tls_acceptor;
+use crate::logging::syslog::{error, info, trace, warn};
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use log::{error, info, trace, warn};
 use std::net::SocketAddr;
 use tls_listener::rustls as tokio_rustls;
 use tokio::net::TcpListener;
@@ -22,7 +22,7 @@ pub async fn initialize_server() {
         let ip = match ip_result {
             Ok(ip_addr) => ip_addr,
             Err(e) => {
-                error!("Invalid IP address for binding {}: {}. Skipping this binding.", binding.ip, e);
+                error(format!("Invalid IP address for binding {}: {}. Skipping this binding.", binding.ip, e));
                 continue;
             }
         };
@@ -31,10 +31,10 @@ pub async fn initialize_server() {
 
         // Enforce admin bindings are TLS-only
         if binding.is_admin && !binding.is_tls {
-            warn!("Admin binding requested without TLS on {}:{}. This is not recommended.", binding.ip, binding.port);
+            warn(format!("Admin binding requested without TLS on {}:{}. This is not recommended.", binding.ip, binding.port));
         }
 
-        info!("Starting Grux server on {}", addr);
+        info(format!("Starting Grux server on {}", addr));
 
         // Start listening on the specified address - spawn each binding as a separate task
         let binding_clone = binding.clone();
@@ -58,7 +58,7 @@ async fn start_listener_with_retry(addr: SocketAddr) -> TcpListener {
                 if attempts >= max_attempts {
                     panic!("Failed to bind to {} after {} attempts: {}", addr, attempts, e);
                 }
-                error!("Failed to bind to {}: {}. Retrying in {:?}...", addr, e, retry_delay);
+                error(format!("Failed to bind to {}: {}. Retrying in {:?}...", addr, e, retry_delay));
                 tokio::time::sleep(retry_delay).await;
             }
         }
@@ -71,7 +71,7 @@ async fn start_server_binding(binding: Binding) {
     let addr = SocketAddr::new(ip, port);
 
     let listener = start_listener_with_retry(addr).await;
-    trace!("Listening on binding: {:?}", binding);
+    trace(format!("Listening on binding: {:?}", binding));
 
     let triggers = crate::core::triggers::get_trigger_handler();
 
@@ -80,7 +80,7 @@ async fn start_server_binding(binding: Binding) {
         let acceptor = match build_tls_acceptor(&binding).await {
             Ok(a) => a,
             Err(e) => {
-                error!("TLS setup failed for {}:{} => {}", binding.ip, binding.port, e);
+                error(format!("TLS setup failed for {}:{} => {}", binding.ip, binding.port, e));
                 return;
             }
         };
@@ -90,11 +90,11 @@ async fn start_server_binding(binding: Binding) {
         loop {
             select! {
                 _ = shutdown_token.cancelled() => {
-                    trace!("Shutdown signal received, stopping server on {}:{}", binding.ip, binding.port);
+                    trace(format!("Shutdown signal received, stopping server on {}:{}", binding.ip, binding.port));
                     break;
                 },
                 _ = stop_services_token.cancelled() => {
-                    trace!("Service cancellation signal received, stopping server on {}:{}", binding.ip, binding.port);
+                    trace(format!("Service cancellation signal received, stopping server on {}:{}", binding.ip, binding.port));
                     break;
                 },
                 result = listener.accept() => {
@@ -120,23 +120,23 @@ async fn start_server_binding(binding: Binding) {
                                             let svc = service_fn(move |req| handle_request_entry(req, binding.clone(), remote_addr_ip.clone(), shutdown_token.clone(), stop_services_token.clone()));
                                             if is_h2 {
                                                 if let Err(err) = http2::Builder::new(TokioExecutor::new()).serve_connection(io, svc).await {
-                                                    trace!("TLS h2 error serving connection: {:?}", err);
+                                                    trace(format!("TLS h2 error serving connection: {:?}", err));
                                                 }
                                             } else {
                                                 if let Err(err) = http1::Builder::new().serve_connection(io, svc).await {
-                                                    trace!("TLS http1.1 error serving connection: {:?}", err);
+                                                    trace(format!("TLS http1.1 error serving connection: {:?}", err));
                                                 }
                                             }
                                         }
                                         Err(err) => {
-                                            trace!("TLS handshake error: {:?}", err);
+                                            trace(format!("TLS handshake error: {:?}", err));
                                         }
                                     }
                                 }
                             });
                         }
                         Err(err) => {
-                            error!("Failed to accept connection: {:?}", err);
+                            error(format!("Failed to accept connection: {:?}", err));
                         }
                     }
                 }
@@ -151,11 +151,11 @@ async fn start_server_binding(binding: Binding) {
         loop {
             select! {
                 _ = shutdown_token.cancelled() => {
-                    trace!("Termination signal received, stopping server on {}:{}", binding.ip, binding.port);
+                    trace(format!("Termination signal received, stopping server on {}:{}", binding.ip, binding.port));
                     break;
                 },
                 _ = stop_services_token.cancelled() => {
-                    trace!("Service stop signal received, stopping server on {}:{}", binding.ip, binding.port);
+                    trace(format!("Service stop signal received, stopping server on {}:{}", binding.ip, binding.port));
                     break;
                 },
                 result = listener.accept() => {
@@ -178,13 +178,13 @@ async fn start_server_binding(binding: Binding) {
                                         handle_request_entry(req, binding.clone(), remote_addr_ip.clone(), shutdown_token.clone(), stop_services_token.clone())
                                     });
                                     if let Err(err) = http1::Builder::new().serve_connection(io, svc).await {
-                                        trace!("Error serving connection: {:?}", err);
+                                        trace(format!("Error serving connection: {:?}", err));
                                     }
                                 }
                             });
                         }
                         Err(err) => {
-                            error!("Failed to accept connection: {:?}", err);
+                            error(format!("Failed to accept connection: {:?}", err));
                         }
                     }
                 }

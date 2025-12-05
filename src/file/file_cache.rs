@@ -1,6 +1,6 @@
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use log::{debug, trace, warn};
+use crate::logging::syslog::{debug, trace, warn};
 use tokio::select;
 use std::io::Write;
 use std::time::Instant;
@@ -98,7 +98,7 @@ impl FileCache {
             Ok(cached_file.clone())
         } else {
             // Not found in cache, so we populate it
-            trace!("File/dir not found in cache, reading from disk: {}", file_path);
+            trace(format!("File/dir not found in cache, reading from disk: {}", file_path));
             let (length, exists, is_directory, last_modified) = match std::fs::metadata(file_path) {
                 Ok(metadata) => (metadata.len(), true, metadata.is_dir(), metadata.modified().unwrap_or(SystemTime::now())),
                 Err(_) => (0, false, false, std::time::SystemTime::now()),
@@ -111,7 +111,7 @@ impl FileCache {
                 let file_content = match std::fs::read(&file_path) {
                     Ok(content) => content,
                     Err(_) => {
-                        trace!("Failed to read file content {}", file_path);
+                        trace(format!("Failed to read file content {}", file_path));
                         return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File not found"));
                     }
                 };
@@ -124,7 +124,7 @@ impl FileCache {
             if !is_directory && length > 0 && exists && !content.is_empty() {
                 // Handle the mime guessing
                 mime_type = mime_guess::from_path(&file_path).first_or_octet_stream().to_string();
-                trace!("Guessed MIME type for {}: {}", file_path, mime_type);
+                trace(format!("Guessed MIME type for {}: {}", file_path, mime_type));
 
                 // Create gzip version if content type is compressible
                 if self.should_compress(&mime_type, length) {
@@ -132,12 +132,12 @@ impl FileCache {
                         Ok(_) => {
                             // Only keep compressed version if it's significantly smaller
                             if gzip_content.len() as f64 > content.len() as f64 * 0.8 {
-                                trace!("Compressed version not significantly smaller, skipping for: {}", file_path);
+                                trace(format!("Compressed version not significantly smaller, skipping for: {}", file_path));
                                 gzip_content.clear();
                             }
                         }
                         Err(e) => {
-                            warn!("Failed to compress file {}: {}", file_path, e);
+                            warn(format!("Failed to compress file {}: {}", file_path, e));
                         }
                     }
                 }
@@ -155,10 +155,7 @@ impl FileCache {
             };
 
             if self.is_enabled && (length < self.max_file_size) {
-                trace!(
-                    "New cached file/dir: path={}, is_directory={}, exists={}, length={}, is_too_large={}, mime_type={}",
-                    new_cached_file.file_path, new_cached_file.is_directory, new_cached_file.exists, new_cached_file.length, new_cached_file.is_too_large, new_cached_file.mime_type
-                );
+                trace(format!("New cached file/dir: path={}, is_directory={}, exists={}, length={}, is_too_large={}, mime_type={}", new_cached_file.file_path, new_cached_file.is_directory, new_cached_file.exists, new_cached_file.length, new_cached_file.is_too_large, new_cached_file.mime_type));
                 self.cache.write().unwrap().insert(file_path.to_string(), new_cached_file.clone());
                 self.cached_items_last_checked
                     .write()
@@ -174,10 +171,7 @@ impl FileCache {
     pub fn should_compress(&self, mime_type: &str, content_length: u64) -> bool {
         if self.gzip_enabled {
             let check_should_compress = content_length > 1000 && content_length < (10 * 1024 * 1024) && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
-            trace!(
-                "Should compress check for MIME type {} and content_length: {} - Result: {}",
-                mime_type, content_length, check_should_compress
-            );
+            trace(format!("Should compress check for MIME type {} and content_length: {} - Result: {}", mime_type, content_length, check_should_compress));
             return check_should_compress;
         }
         false
@@ -203,7 +197,7 @@ impl FileCache {
         loop {
             select! {
                 _ = configuration_token.cancelled() => {
-                    trace!("[FileCacheUpdate] Configuration reload trigger received, so stopping update thread");
+                    trace("[FileCacheUpdate] Configuration reload trigger received, so stopping update thread".to_string());
                     break;
                 }
                 _ = interval.tick() => {}
@@ -211,10 +205,10 @@ impl FileCache {
 
             let start_time = Instant::now();
 
-            trace!("[FileCacheUpdate] Checking if we are above the eviction threshold, so we can delete files in cache that have been in cache for too long");
+            trace("[FileCacheUpdate] Checking if we are above the eviction threshold, so we can delete files in cache that have been in cache for too long".to_string());
             let current_cache_size = cache.read().unwrap().len();
             if current_cache_size > eviction_threshold {
-                trace!("[FileCacheUpdate] Eviction threshold exceeded, triggering cleanup of items older than max");
+                trace("[FileCacheUpdate] Eviction threshold exceeded, triggering cleanup of items older than max".to_string());
                 let files_to_remove: Vec<_> = cached_items_last_checked
                     .read()
                     .unwrap()
@@ -223,7 +217,7 @@ impl FileCache {
                     .map(|(path, _)| path.clone())
                     .collect();
 
-                trace!("[FileCacheUpdate] Removing {} files from cache due to eviction threshold", files_to_remove.len());
+                trace(format!("[FileCacheUpdate] Removing {} files from cache due to eviction threshold", files_to_remove.len()));
 
                 // Remove item from cache
                 for path in files_to_remove {
@@ -231,10 +225,10 @@ impl FileCache {
                     cached_items_last_checked.write().unwrap().remove(&path);
                 }
             } else {
-                trace!("[FileCacheUpdate] Cache size is below eviction threshold, no action taken");
+                trace("[FileCacheUpdate] Cache size is below eviction threshold, no action taken".to_string());
             }
 
-            trace!("[FileCacheUpdate] Checking for modified timestamps and if known files still exist");
+            trace("[FileCacheUpdate] Checking for modified timestamps and if known files still exist".to_string());
 
             // Start by grapping a list of file we want to check on, up to 100
             let files_to_check: Vec<_> = cached_items_last_checked
@@ -246,7 +240,7 @@ impl FileCache {
                 .map(|(path, (added, last_checked, last_modified))| (path.clone(), (added.clone(), last_checked.clone(), last_modified.clone())))
                 .collect();
 
-            trace!("[FileCacheUpdate] Files found to check for modified timestamps: {}", files_to_check.len());
+            trace(format!("[FileCacheUpdate] Files found to check for modified timestamps: {}", files_to_check.len()));
 
             // Now we go through the list, to check if the file was modified since last known timestamp
             for (path, (added, _last_checked, last_modified)) in files_to_check {
@@ -258,10 +252,10 @@ impl FileCache {
                         if let Some(cached_file) = cache.read().unwrap().get(&path) {
                             if cached_file.exists {
                                 // File no longer exists, so we just remove it from the cache
-                                trace!("[FileCacheUpdate] File no longer exists: {}", path);
+                                trace(format!("[FileCacheUpdate] File no longer exists: {}", path));
                                 should_remove_path = true;
                             } else {
-                                trace!("[FileCacheUpdate] File is marked as non-existent in cache, which it still is: {}", path);
+                                trace(format!("[FileCacheUpdate] File is marked as non-existent in cache, which it still is: {}", path));
                             }
                         }
 
@@ -277,20 +271,20 @@ impl FileCache {
                 if let Ok(modified_time) = metadata.modified() {
                     if modified_time != last_modified {
                         // File was changed, so we remove it from cache
-                        trace!("[FileCacheUpdate] File was changed: {}", path);
+                        trace(format!("[FileCacheUpdate] File was changed: {}", path));
                         cache.write().unwrap().remove(&path);
                         cached_items_last_checked.write().unwrap().remove(&path);
                         continue;
                     }
                     // If all is good, we update the last_checked
-                    trace!("[FileCacheUpdate] File is good and not modified: {}", path);
+                    trace(format!("[FileCacheUpdate] File is good and not modified: {}", path));
                     cached_items_last_checked.write().unwrap().insert(path, (added, Instant::now(), modified_time));
                 }
             }
 
             let end_time = Instant::now();
 
-            debug!("[FileCacheUpdate] Cache update completed in {:?}", end_time.duration_since(start_time));
+            debug(format!("[FileCacheUpdate] Cache update completed in {:?}", end_time.duration_since(start_time)));
         }
     }
 

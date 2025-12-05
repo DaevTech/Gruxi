@@ -7,7 +7,7 @@ use crate::http::http_util::*;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::{HeaderMap, Response};
-use log::{error, trace, warn};
+use crate::logging::syslog::{error, trace, warn};
 use std::sync::{
     Arc,
     atomic::{AtomicU16, Ordering},
@@ -51,7 +51,7 @@ impl PhpCgiProcess {
     }
 
     async fn start(&mut self) -> Result<(), String> {
-        trace!("Starting PHP-CGI process with FastCGI children: {}", self.executable_path);
+        trace(format!("Starting PHP-CGI process with FastCGI children: {}", self.executable_path));
 
         // Allocate a port if we don't have one
         if self.assigned_port.is_none() {
@@ -83,11 +83,11 @@ impl PhpCgiProcess {
                 self.process = Some(child);
                 self.restart_count += 1;
                 self.last_activity = Instant::now();
-                trace!("PHP-CGI process started successfully on port {} (restart count: {})", port, self.restart_count);
+                trace(format!("PHP-CGI process started successfully on port {} (restart count: {})", port, self.restart_count));
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to start PHP-CGI process: {}", e);
+                error(format!("Failed to start PHP-CGI process: {}", e));
                 // Release the port if process failed to start
                 if let Some(port) = self.assigned_port {
                     self.port_manager.release_port(port).await;
@@ -102,13 +102,13 @@ impl PhpCgiProcess {
         if let Some(ref mut process) = self.process {
             match process.try_wait() {
                 Ok(Some(_)) => {
-                    warn!("PHP-CGI process has exited");
+                    warn("PHP-CGI process has exited".to_string());
                     self.process = None;
                     false
                 }
                 Ok(None) => true, // Process is still running
                 Err(e) => {
-                    error!("Error checking PHP-CGI process status: {}", e);
+                    error(format!("Error checking PHP-CGI process status: {}", e));
                     self.process = None;
                     false
                 }
@@ -127,7 +127,7 @@ impl PhpCgiProcess {
                     true
                 }
                 Err(e) => {
-                    error!("Keep-alive FastCGI request failed: {}", e);
+                    error(format!("Keep-alive FastCGI request failed: {}", e));
                     false
                 }
             }
@@ -162,7 +162,7 @@ impl PhpCgiProcess {
 
     async fn ensure_running(&mut self) -> Result<(), String> {
         if !self.is_alive().await {
-            warn!("PHP-CGI process is not running, restarting...");
+            warn("PHP-CGI process is not running, restarting...".to_string());
             // Wait a bit before restarting to avoid rapid restart loops
             tokio::time::sleep(Duration::from_millis(1000)).await;
             self.start().await?;
@@ -171,7 +171,7 @@ impl PhpCgiProcess {
             let time_since_activity = self.last_activity.elapsed();
             if time_since_activity >= Duration::from_secs(10) {
                 if !self.send_keep_alive().await {
-                    warn!("Keep-alive failed, restarting PHP-CGI process");
+                    warn("Keep-alive failed, restarting PHP-CGI process".to_string());
                     self.stop().await;
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                     self.start().await?;
@@ -183,9 +183,9 @@ impl PhpCgiProcess {
 
     async fn stop(&mut self) {
         if let Some(mut process) = self.process.take() {
-            trace!("Stopping PHP-CGI process");
+            trace("Stopping PHP-CGI process".to_string());
             if let Err(e) = process.kill().await {
-                error!("Failed to kill PHP-CGI process: {}", e);
+                error(format!("Failed to kill PHP-CGI process: {}", e));
             }
         }
 
@@ -317,7 +317,7 @@ impl PHPHandler {
             }
         }
 
-        trace!("PHP handler initialized with {} concurrent connection limit", concurrent_threads);
+        trace(format!("PHP handler initialized with {} concurrent connection limit", concurrent_threads));
 
         PHPHandler {
             request_timeout,
@@ -395,15 +395,15 @@ impl ExternalRequestHandler for PHPHandler {
             tokio::spawn(async move {
                 let mut process_guard = process_clone.lock().await;
                 if let Err(e) = process_guard.start().await {
-                    error!("Failed to start PHP-CGI process: {}", e);
+                    error(format!("Failed to start PHP-CGI process: {}", e));
                     return;
                 }
                 // Cache the port after successful start to avoid future mutex contention
                 if let Some(port) = process_guard.get_port() {
                     cached_port_clone.store(port, Ordering::Relaxed);
-                    trace!("PHP-CGI process started successfully on port {}", port);
+                    trace(format!("PHP-CGI process started successfully on port {}", port));
                 } else {
-                    trace!("PHP-CGI process started successfully");
+                    trace("PHP-CGI process started successfully".to_string());
                 }
             });
 
@@ -417,13 +417,13 @@ impl ExternalRequestHandler for PHPHandler {
                 loop {
                     select! {
                         _ = shutdown_token.cancelled() => {
-                            trace!("Shutdown signal received, stopping PHP processes if running");
+                            trace("Shutdown signal received, stopping PHP processes if running".to_string());
                             let mut process_guard = process_clone.lock().await;
                             process_guard.stop().await;
                             break;
                         },
                         _ = stop_services_token.cancelled() => {
-                            trace!("Stop services signal received, stopping PHP processes if running");
+                            trace("Stop services signal received, stopping PHP processes if running".to_string());
                             let mut process_guard = process_clone.lock().await;
                             process_guard.stop().await;
                             break;
@@ -431,7 +431,7 @@ impl ExternalRequestHandler for PHPHandler {
                         _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
                             let mut process_guard = process_clone.lock().await;
                             if let Err(e) = process_guard.ensure_running().await {
-                                error!("Failed to ensure PHP-CGI process is running: {}", e);
+                                error(format!("Failed to ensure PHP-CGI process is running: {}", e));
                             }
                         }
                     }
@@ -441,7 +441,7 @@ impl ExternalRequestHandler for PHPHandler {
     }
 
     fn stop(&self) {
-        trace!("Stopping PHP handler");
+        trace("Stopping PHP handler".to_string());
         let php_process = self.php_process.clone();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
@@ -450,7 +450,7 @@ impl ExternalRequestHandler for PHPHandler {
             });
         } else {
             // If no runtime available, attempt blocking stop (less ideal but functional)
-            trace!("No Tokio runtime available for async stop, attempting synchronous stop");
+            trace("No Tokio runtime available for async stop, attempting synchronous stop".to_string());
         }
     }
 
@@ -489,12 +489,12 @@ impl ExternalRequestHandler for PHPHandler {
         let uri_str = uri.path_and_query().unwrap().as_str().to_string();
         let path = uri.path();
 
-        trace!("PHP request body length: {} bytes", body.len());
+        trace(format!("PHP request body length: {} bytes", body.len()));
 
         // Make sure the web root is full path
         let full_web_root_result = get_full_file_path(&site.web_root);
         if let Err(e) = full_web_root_result {
-            trace!("Error resolving file path for web root {}: {}", site.web_root, e);
+            trace(format!("Error resolving file path for web root {}: {}", site.web_root, e));
             return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
         }
         let full_web_root = full_web_root_result.unwrap();
@@ -538,9 +538,9 @@ impl ExternalRequestHandler for PHPHandler {
                     // Check if process is running, if not, start it
                     let mut port = process_guard.get_port();
                     if port.is_none() {
-                        trace!("PHP-CGI process not running, starting it now...");
+                        trace("PHP-CGI process not running, starting it now...".to_string());
                         if let Err(e) = process_guard.start().await {
-                            error!("Failed to start PHP-CGI process on first request: {}", e);
+                            error(format!("Failed to start PHP-CGI process on first request: {}", e));
                             return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
                         }
                         port = process_guard.get_port();
@@ -549,7 +549,7 @@ impl ExternalRequestHandler for PHPHandler {
                     // Cache the port for future requests
                     if let Some(p) = port {
                         self.cached_port.store(p, Ordering::Relaxed);
-                        trace!("PHP-CGI process port {} cached for future requests", p);
+                        trace(format!("PHP-CGI process port {} cached for future requests", p));
                     }
                     port
                 };
@@ -557,7 +557,7 @@ impl ExternalRequestHandler for PHPHandler {
                 if let Some(port) = port {
                     ip_and_port = format!("127.0.0.1:{}", port);
                 } else {
-                    error!("PHP-CGI process does not have a valid port even after attempting to start it");
+                    error("PHP-CGI process does not have a valid port even after attempting to start it".to_string());
                     return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
                 }
             }
@@ -584,11 +584,11 @@ impl ExternalRequestHandler for PHPHandler {
         .await
         {
             Ok(response) => {
-                trace!("PHP Request completed successfully");
+                trace("PHP Request completed successfully".to_string());
                 Ok(response)
             }
             Err(_) => {
-                error!("PHP Request timed out");
+                error("PHP Request timed out".to_string());
                 Ok(empty_response_with_status(hyper::StatusCode::GATEWAY_TIMEOUT))
             }
         }
@@ -618,27 +618,27 @@ impl PHPHandler {
         ip_and_port: String,
     ) -> Response<BoxBody<Bytes, hyper::Error>> {
         let available_permits = self.connection_semaphore.available_permits();
-        trace!("Acquiring connection permit for FastCGI server at {} (available permits: {})", ip_and_port, available_permits);
+        trace(format!("Acquiring connection permit for FastCGI server at {} (available permits: {})", ip_and_port, available_permits));
 
         // Acquire a connection permit to limit concurrent connections to php-fmp
         let _permit = match self.connection_semaphore.acquire().await {
             Ok(permit) => {
-                trace!("Connection permit acquired for FastCGI server (remaining permits: {})", self.connection_semaphore.available_permits());
+                trace(format!("Connection permit acquired for FastCGI server (remaining permits: {})", self.connection_semaphore.available_permits()));
                 permit
             }
             Err(e) => {
-                error!("Failed to acquire connection permit for FastCGI server: {}", e);
+                error(format!("Failed to acquire connection permit for FastCGI server: {}", e));
                 return empty_response_with_status(hyper::StatusCode::SERVICE_UNAVAILABLE);
             }
         };
 
-        trace!("Connecting to FastCGI server at {}", ip_and_port);
+        trace(format!("Connecting to FastCGI server at {}", ip_and_port));
 
         // Connect to the FastCGI server
         let mut stream = match tokio::net::TcpStream::connect(&ip_and_port).await {
             Ok(stream) => stream,
             Err(e) => {
-                error!("Failed to connect to FastCGI server {}: {}", ip_and_port, e);
+                error(format!("Failed to connect to FastCGI server {}: {}", ip_and_port, e));
                 return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
             }
         };
@@ -654,7 +654,7 @@ impl PHPHandler {
         if !self.other_webroot.is_empty() {
             let full_local_web_root_result = get_full_file_path(&local_web_root);
             if let Err(e) = full_local_web_root_result {
-                trace!("Error resolving file path for local web root {}: {}", local_web_root, e);
+                trace(format!("Error resolving file path for local web root {}: {}", local_web_root, e));
                 return empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR);
             }
             let full_local_web_root = full_local_web_root_result.unwrap();
@@ -663,16 +663,16 @@ impl PHPHandler {
         }
 
         let (directory, filename) = split_path(&script_web_root, &full_script_path);
-        trace!("PHP FastCGI - Directory: {}, Filename: {}", directory, filename);
+        trace(format!("PHP FastCGI - Directory: {}, Filename: {}", directory, filename));
 
         // Check if the script file actually exists
         if let Ok(metadata) = std::fs::metadata(&script_file) {
             if !metadata.is_file() {
-                error!("PHP script path exists but is not a file: {}", script_file);
+                error(format!("PHP script path exists but is not a file: {}", script_file));
                 return empty_response_with_status(hyper::StatusCode::NOT_FOUND);
             }
         } else {
-            error!("PHP script file does not exist: {}", script_file);
+            error(format!("PHP script file does not exist: {}", script_file));
             return empty_response_with_status(hyper::StatusCode::NOT_FOUND);
         }
 
@@ -714,27 +714,27 @@ impl PHPHandler {
         }
 
         // Send FastCGI request
-        trace!("Sending FastCGI request... with parameters: {:?}", params);
+        trace(format!("Sending FastCGI request... with parameters: {:?}", params));
         let start_time = Instant::now();
 
         // Send BEGIN_REQUEST
         let begin_request = PhpCgiProcess::create_fastcgi_begin_request();
         if let Err(e) = stream.write_all(&begin_request).await {
-            error!("Failed to send BEGIN_REQUEST: {}", e);
+            error(format!("Failed to send BEGIN_REQUEST: {}", e));
             return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
         }
 
         // Send parameters
         let params_data = PhpCgiProcess::create_fastcgi_params(&params);
         if let Err(e) = stream.write_all(&params_data).await {
-            error!("Failed to send PARAMS: {}", e);
+            error(format!("Failed to send PARAMS: {}", e));
             return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
         }
 
         // Send empty params to signal end
         let empty_params = PhpCgiProcess::create_fastcgi_params(&[]);
         if let Err(e) = stream.write_all(&empty_params).await {
-            error!("Failed to send empty params: {}", e);
+            error(format!("Failed to send empty params: {}", e));
             return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
         }
 
@@ -742,7 +742,7 @@ impl PHPHandler {
         if !body.is_empty() {
             let stdin_data = PhpCgiProcess::create_fastcgi_stdin(&body);
             if let Err(e) = stream.write_all(&stdin_data).await {
-                error!("Failed to send STDIN: {}", e);
+                error(format!("Failed to send STDIN: {}", e));
                 return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
             }
         }
@@ -750,12 +750,12 @@ impl PHPHandler {
         // Send empty stdin to signal end
         let empty_stdin = PhpCgiProcess::create_fastcgi_stdin(&[]);
         if let Err(e) = stream.write_all(&empty_stdin).await {
-            error!("Failed to send empty stdin: {}", e);
+            error(format!("Failed to send empty stdin: {}", e));
             return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
         }
 
         // Read response
-        trace!("Reading FastCGI response...");
+        trace("Reading FastCGI response...".to_string());
         let mut response_buffer = Vec::new();
         let mut buffer = [0u8; 4096];
 
@@ -779,7 +779,7 @@ impl PHPHandler {
         {
             Ok(_) => {}
             Err(_) => {
-                error!("FastCGI response timeout");
+                error("FastCGI response timeout".to_string());
                 return empty_response_with_status(hyper::StatusCode::GATEWAY_TIMEOUT);
             }
         }
@@ -788,7 +788,7 @@ impl PHPHandler {
         let http_response_bytes = Self::parse_fastcgi_response(&response_buffer);
 
         if http_response_bytes.is_empty() {
-            error!("Empty response from PHP-CGI process");
+            error("Empty response from PHP-CGI process".to_string());
             return empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR);
         }
 
@@ -845,17 +845,17 @@ impl PHPHandler {
             Ok(response) => {
                 let end_time = Instant::now();
                 let duration = end_time - start_time;
-                trace!("FastCGI response parsed successfully in {:?}", duration);
+                trace(format!("FastCGI response parsed successfully in {:?}", duration));
 
                 // _permit will be automatically dropped here, releasing the semaphore permit
-                trace!(
+                trace(format!(
                     "Connection permit will be released (available permits after release: {})",
                     self.connection_semaphore.available_permits() + 1
-                );
+                ));
                 response
             }
             Err(e) => {
-                error!("Failed to build HTTP response: {}", e);
+                error(format!("Failed to build HTTP response: {}", e));
                 empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR)
             }
         }

@@ -5,7 +5,7 @@ use crate::{
     configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::Site, site::HeaderKV},
     core::database_connection::get_database_connection,
 };
-use log::info;
+use crate::logging::syslog::info;
 use sqlite::Connection;
 use sqlite::State;
 use std::collections::HashMap;
@@ -18,11 +18,14 @@ pub fn init() -> Result<Configuration, String> {
     // Check if we need to load the default configuration
     let schema_version = {
         let mut statement = connection
-            .prepare("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
+            .prepare("SELECT grux_value FROM grux WHERE grux_key = 'schema_version' LIMIT 1")
             .map_err(|e| format!("Failed to prepare schema version query: {}", e))?;
 
         match statement.next().map_err(|e| format!("Failed to execute schema version query: {}", e))? {
-            State::Row => statement.read::<i64, _>(0).map_err(|e| format!("Failed to read schema version: {}", e))?,
+            State::Row => {
+                let version_str: String = statement.read(0).map_err(|e| format!("Failed to read schema version: {}", e))?;
+                version_str.parse::<i64>().map_err(|e| format!("Failed to parse schema version: {}", e))?
+            },
             State::Done => 0, // No version found, assume 0
         }
     };
@@ -31,14 +34,14 @@ pub fn init() -> Result<Configuration, String> {
         if schema_version == 0 {
             // No schema version found, likely first run - create default configuration
 
-            info!("No configuration found, creating default configuration");
+            info("No configuration found, creating default configuration");
 
             let mut configuration = Configuration::get_default();
 
             // Load default configuration based on operation mode
             let operation_mode = get_operation_mode();
             if operation_mode == OperationMode::DEV {
-                info!("Loading dev configuration");
+                info("Loading dev configuration");
                 Configuration::add_testing_to_configuration(&mut configuration);
             }
 
@@ -49,7 +52,7 @@ pub fn init() -> Result<Configuration, String> {
 
             // Update schema version to 1
             connection
-                .execute(format!("UPDATE schema_version SET version = 1",))
+                .execute("UPDATE grux SET grux_value = '1' WHERE grux_key = 'schema_version'")
                 .map_err(|e| format!("Failed to update schema version: {}", e))?;
 
             configuration
@@ -148,6 +151,9 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             }
             "blocked_file_patterns" => {
                 core.server_settings.blocked_file_patterns = parse_comma_separated_list(&value);
+            }
+            "operation_mode" => {
+                core.server_settings.operation_mode = value;
             }
             _ => continue,
         }

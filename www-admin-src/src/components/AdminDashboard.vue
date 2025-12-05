@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted } from 'vue';
 import LogViewer from './LogViewer.vue';
 import ConfigurationEditor from './ConfigurationEditor.vue';
+import OperationModeSelector from './OperationModeSelector.vue';
 
 // Define props and emits
 const props = defineProps({
@@ -194,6 +195,11 @@ onMounted(() => {
             </nav>
 
             <div class="sidebar-footer">
+                <!-- Operation Mode Selector -->
+                <OperationModeSelector v-if="!sidebarCollapsed" :user="user" />
+
+                <div v-if="!sidebarCollapsed" class="footer-separator"></div>
+
                 <div class="user-info" v-if="!sidebarCollapsed">
                     <div class="user-avatar">👤</div>
                     <div class="user-details">
@@ -402,8 +408,14 @@ onMounted(() => {
 }
 
 .sidebar-footer {
-    padding: 1rem 1.5rem;
+    padding: 1.25rem 1.5rem;
     border-top: 1px solid #374151;
+}
+
+.footer-separator {
+    height: 1px;
+    background: #374151;
+    margin: 1rem -1.5rem 1rem -1.5rem;
 }
 
 .user-info {
@@ -547,6 +559,7 @@ onMounted(() => {
     font-size: 1.1rem;
     line-height: 1.5;
 }
+
 
 /* Stats Overview */
 .stats-overview {

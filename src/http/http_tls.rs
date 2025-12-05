@@ -1,4 +1,4 @@
-use log::{debug, info, warn};
+use crate::logging::syslog::{debug, info, warn};
 use rand;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::BufReader;
@@ -8,12 +8,11 @@ use tokio::io::AsyncWriteExt;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::crypto::ring::sign as ring_sign;
 use tokio_rustls::rustls::server::ResolvesServerCertUsingSni;
+use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
 use tokio_rustls::rustls::sign::CertifiedKey as RustlsCertifiedKey;
 use tokio_rustls::rustls::{self, ServerConfig as RustlsServerConfig};
-use tokio_rustls::rustls::server::{ResolvesServerCert, ClientHello};
 
 use crate::configuration::binding::Binding;
-use crate::configuration::save_configuration::save_site;
 use crate::configuration::site::Site;
 use crate::core::database_connection::get_database_connection;
 
@@ -57,7 +56,13 @@ pub async fn persist_generated_tls_for_site(site: &mut Site, cert_pem: &str, key
     site.tls_key_path = key_path.clone();
 
     let connection = get_database_connection()?;
-    save_site(&connection, site)?;
+
+    // Update the fields in the database directly
+    let sql_update = format!(
+        "UPDATE sites SET tls_cert_path = '{}', tls_key_path = '{}' WHERE id = {};",
+        site.tls_cert_path, site.tls_key_path, site.id
+    );
+    connection.execute(sql_update.as_str()).map_err(|e| format!("Failed to update site TLS paths in database: {}", e))?;
 
     Ok((cert_path, key_path))
 }
@@ -71,10 +76,7 @@ struct FallbackCertResolver {
 
 impl FallbackCertResolver {
     fn new(sni_resolver: ResolvesServerCertUsingSni) -> Self {
-        Self {
-            sni_resolver,
-            fallback_cert: None,
-        }
+        Self { sni_resolver, fallback_cert: None }
     }
 
     fn with_fallback(mut self, cert: std::sync::Arc<RustlsCertifiedKey>) -> Self {
@@ -122,8 +124,8 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
             sans.clear();
             sans.extend(vec![
                 "localhost".to_string(),
-           //     "127.0.0.1".to_string(),
-           //     "::1".to_string(),
+                //     "127.0.0.1".to_string(),
+                //     "::1".to_string(),
             ]);
 
             // Add the machine's hostname if available
@@ -163,7 +165,7 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
             (cert_chain, priv_key)
         } else {
             // Generate self-signed cert with comprehensive SAN list
-            warn!("Generating self-signed certificate for site with hostnames: {:?}", sans);
+            warn(format!("Generating self-signed certificate for site with hostnames: {:?}", sans));
             let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(sans.clone()).map_err(|e| format!("Failed to generate self-signed cert: {}", e))?;
             let cert_pem = cert.pem();
             let key_pem = signing_key.serialize_pem();
@@ -180,10 +182,10 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
             // Persist generated cert/key to disk and update the site configuration
             match persist_generated_tls_for_site(site, &cert_pem, &key_pem).await {
                 Ok(cert_paths) => {
-                    info!("Successfully persisted generated certificate to: {:?}", cert_paths);
+                    info(format!("Successfully persisted generated certificate to: {:?}", cert_paths));
                 }
                 Err(e) => {
-                    warn!("Failed to persist generated certificate (will continue with in-memory cert): {}", e);
+                    warn(format!("Failed to persist generated certificate (will continue with in-memory cert): {}", e));
                 }
             }
 
@@ -191,7 +193,7 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
         };
 
         if cert_chain.is_empty() {
-            warn!("No valid certificates found in TLS cert for site with hostnames {:?}", site.hostnames);
+            warn(format!("No valid certificates found in TLS cert for site with hostnames {:?}", site.hostnames));
             continue;
         }
 
@@ -212,15 +214,17 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
                 Ok(()) => {
                     site_added = true;
                 }
-                Err(e) => debug!("Failed to add SNI name '{}': {:?}", name, e),
+                Err(e) => {
+                    debug(format!("Failed to add SNI name '{}': {:?}", name, e));
+                } ,
             }
         }
 
         // For wildcard sites, also add some common IP addresses and variations
         if has_wildcard {
             let additional_names = vec![
-             //   "127.0.0.1",
-             //   "::1",
+                //   "127.0.0.1",
+                //   "::1",
                 "localhost",
             ];
 
@@ -230,11 +234,13 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
                         Ok(()) => {
                             site_added = true;
                         }
-                        Err(e) => debug!("Failed to add additional SNI name '{}': {:?}", name, e),
+                        Err(e) => {
+                            debug(format!("Failed to add additional SNI name '{}': {:?}", name, e));
+                        },
                     }
                 }
             }
-        }        // If site is default or hostname includes wildcard "*", set as default cert
+        } // If site is default or hostname includes wildcard "*", set as default cert
         if site.is_default && !have_default {
             // No explicit default setter; rely on SNI match. Keep note to add a fallback later.
             have_default = true;
@@ -259,7 +265,7 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
 
         // Add the fallback certificate to the resolver
         if let Err(e) = resolver.add("localhost", certified_arc.as_ref().clone()) {
-            warn!("Failed to add fallback certificate for localhost: {:?}", e);
+            warn(format!("Failed to add fallback certificate for localhost: {:?}", e));
         } else {
             site_added = true;
         }

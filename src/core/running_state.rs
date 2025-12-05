@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use log::info;
+use crate::logging::syslog::info;
 use tokio::sync::RwLock;
 
 use crate::{
@@ -16,11 +16,11 @@ impl RunningState {
     pub async fn new() -> Self {
         let access_log_buffer = AccessLogBuffer::new().await;
         access_log_buffer.start_flushing_task();
-        info!("Access log buffers initialized");
+        info("Access log buffers initialized");
 
         // Start external request handlers
         let external_request_handlers = ExternalRequestHandlers::new().await;
-        info!("External request handlers initialized");
+        info("External request handlers initialized");
 
         // Start file cache
         let file_cache = FileCache::new().await;

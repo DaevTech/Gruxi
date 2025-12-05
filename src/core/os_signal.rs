@@ -1,5 +1,5 @@
 use crate::core::triggers::get_trigger_handler;
-use log::info;
+use crate::logging::syslog::{error, info};
 #[cfg(windows)]
 use tokio::signal;
 
@@ -17,7 +17,7 @@ async fn handle_unix_signals() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 sigterm.recv().await;
                 let triggers = get_trigger_handler();
-                info!("Shutdown signal received, starting shutdown process");
+                info("Shutdown signal received, starting shutdown process");
                 triggers.run_trigger("shutdown").await;
             }
         } => {},
@@ -25,7 +25,7 @@ async fn handle_unix_signals() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 sigint.recv().await;
                 let triggers = get_trigger_handler();
-                info!("Shutdown signal received, starting shutdown process");
+                info("Shutdown signal received, starting shutdown process");
                 triggers.run_trigger("shutdown").await;
             }
         } => {},
@@ -33,7 +33,7 @@ async fn handle_unix_signals() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 sighup.recv().await;
                 let triggers = get_trigger_handler();
-                info!("Reload configuration signal received, starting reload process");
+                info("Reload configuration signal received, starting reload process");
                 triggers.run_trigger("reload_configuration").await;
             }
         } => {},
@@ -46,7 +46,7 @@ async fn handle_unix_signals() -> Result<(), Box<dyn std::error::Error>> {
 async fn handle_windows_signals() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         signal::ctrl_c().await?;
-        info!("Shutdown signal received, starting shutdown process");
+        info("Shutdown signal received, starting shutdown process");
         let triggers = get_trigger_handler();
         triggers.run_trigger("shutdown").await;
     }
@@ -56,14 +56,14 @@ pub fn start_os_signal_handling() {
     #[cfg(unix)]
     tokio::spawn(async {
         if let Err(e) = handle_unix_signals().await {
-            log::error!("Error handling Unix signals: {}", e);
+            error(format!("Error handling Unix signals: {}", e));
         }
     });
 
     #[cfg(windows)]
     tokio::spawn(async {
         if let Err(e) = handle_windows_signals().await {
-            log::error!("Error handling Windows signals: {}", e);
+            error(format!("Error handling Windows signals: {}", e));
         }
     });
 }

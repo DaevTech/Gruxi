@@ -66,6 +66,7 @@ impl Configuration {
                         "*.php".to_string(),
                     ],
                     whitelisted_file_patterns: vec!["*/.well-known/*".to_string()],
+                    operation_mode: "PRODUCTION".to_string()
                 },
             },
             request_handlers: vec![],

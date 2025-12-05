@@ -1,4 +1,4 @@
-use log::{debug, info, trace, warn};
+use crate::logging::syslog::{debug, info, trace, warn};
 use std::sync::Arc;
 use std::{collections::HashMap, sync::OnceLock};
 use tokio::sync::Mutex;
@@ -69,7 +69,7 @@ impl PortManager {
         // First, try to reuse an available port
         if let Some(port) = inner.available_ports.pop() {
             inner.allocated_ports.insert(port, service_id.clone());
-            info!("Allocated reused port {} to service '{}'", port, service_id);
+            info(format!("Allocated reused port {} to service '{}'", port, service_id));
             return Some(port);
         }
 
@@ -88,13 +88,13 @@ impl PortManager {
             // Check if this port is not already allocated
             if !inner.allocated_ports.contains_key(&port) && port <= inner.max_port {
                 inner.allocated_ports.insert(port, service_id.clone());
-                debug!("Allocated new port {} to service '{}'", port, service_id);
+                debug(format!("Allocated new port {} to service '{}'", port, service_id));
                 return Some(port);
             }
 
             // If we've wrapped around and checked all ports, no ports available
             if inner.next_port == start_search || (port > inner.max_port && inner.next_port == inner.start_port) {
-                warn!("No available ports for service '{}'", service_id);
+                warn(format!("No available ports for service '{}'", service_id));
                 return None;
             }
         }
@@ -109,10 +109,10 @@ impl PortManager {
 
         if let Some(service_id) = inner.allocated_ports.remove(&port) {
             inner.available_ports.push(port);
-            trace!("Released port {} from service '{}'", port, service_id);
-            trace!("Available ports: {:?}", inner.available_ports);
+            trace(format!("Released port {} from service '{}'", port, service_id));
+            trace(format!("Available ports: {:?}", inner.available_ports));
         } else {
-            warn!("Attempted to release port {} which was not allocated", port);
+            warn(format!("Attempted to release port {} which was not allocated", port));
         }
     }
 
@@ -135,7 +135,7 @@ impl PortManager {
         }
 
         if !released_ports.is_empty() {
-            info!("Released {} ports from service '{}': {:?}", released_ports.len(), service_id, released_ports);
+            info(format!("Released {} ports from service '{}': {:?}", released_ports.len(), service_id, released_ports));
         }
 
         released_ports

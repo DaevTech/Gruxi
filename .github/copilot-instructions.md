@@ -27,7 +27,7 @@ Grux is a Rust-based, async web server and admin platform with modular request h
 - **Logging:** `src/logging/` module handles logging:
   - `access_logging.rs` — HTTP access logs
   - `buffered_log.rs` — Performance-optimized logging
-  - Configured via `src/grux_log.rs` using `log4rs`
+
 
 ## Developer Workflows
 - **Build:** `cargo build` (or use Docker: `docker-compose build`)

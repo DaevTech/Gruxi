@@ -2,7 +2,7 @@ use std::env;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 use cached::proc_macro::cached;
-use log::trace;
+use crate::logging::syslog::trace;
 
 use crate::http::file_pattern_matching::{get_blocked_file_pattern_matching, get_whitelisted_file_pattern_matching};
 
@@ -105,25 +105,25 @@ pub async fn check_path_secure(base_path: &str, test_path: &str) -> bool {
     let base_path_cleaned = base_path.replace('\\', "/").trim_end_matches('/').to_string();
     let test_path_cleaned = test_path.replace('\\', "/");
     if !test_path_cleaned.starts_with(&base_path_cleaned) {
-        trace!("Path is blocked, as it does not start with the web root: {} file: {}", base_path_cleaned, test_path_cleaned);
+        trace(format!("Path is blocked, as it does not start with the web root: {} file: {}", base_path_cleaned, test_path_cleaned));
         return false;
     }
 
     let (_path, file) = split_path(&base_path_cleaned, &test_path_cleaned);
 
-    trace!("Check if file pattern is blocked or whitelisted: {}", &file);
+    trace(format!("Check if file pattern is blocked or whitelisted: {}", &file));
 
     // Check if it is whitelisted first
     let pattern_whitelisting = get_whitelisted_file_pattern_matching().await;
     if pattern_whitelisting.is_file_pattern_whitelisted(&test_path_cleaned) {
-        trace!("File pattern is whitelisted: {}", &test_path_cleaned);
+        trace(format!("File pattern is whitelisted: {}", &test_path_cleaned));
         return true;
     }
 
     // Check the blacklisted file patterns
     let pattern_blocking = get_blocked_file_pattern_matching().await;
     if pattern_blocking.is_file_pattern_blocked(&file) {
-        trace!("File pattern is blocked: {}", &file);
+        trace(format!("File pattern is blocked: {}", &file));
         return false;
     }
 

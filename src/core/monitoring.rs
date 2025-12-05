@@ -1,5 +1,5 @@
 use crate::core::{running_state_manager::get_running_state_manager, triggers::get_trigger_handler};
-use log::{info, trace};
+use crate::logging::syslog::{info, trace};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{select, sync::OnceCell};
 
@@ -33,7 +33,7 @@ impl MonitoringState {
 
     // Background monitoring task.
     pub fn initialize_monitoring(&self) {
-        info!("Monitoring initialized");
+        info("Monitoring initialized");
         tokio::spawn(Self::monitoring_task());
     }
 
@@ -81,7 +81,7 @@ impl MonitoringState {
                 monitoring_state.file_cache_max_items.store(file_cache_max_items, Ordering::SeqCst);
             }
 
-            trace!("Monitoring data updated");
+            trace("Monitoring data updated");
 
             select! {
                 _ = configuration_token.cancelled() => {

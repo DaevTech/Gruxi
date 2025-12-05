@@ -1,4 +1,4 @@
-use log::trace;
+use crate::logging::syslog::trace;
 use tokio::sync::OnceCell;
 use wildcard::{Wildcard, WildcardBuilder};
 
@@ -11,7 +11,7 @@ impl BlockedFilePatternMatching {
         let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration().await;
 
-        trace!("Initializing blocked file pattern matching with patterns: {:?}", config.core.server_settings.blocked_file_patterns);
+        trace(format!("Initializing blocked file pattern matching with patterns: {:?}", config.core.server_settings.blocked_file_patterns));
 
         let patterns: Vec<String> = config.core.server_settings.blocked_file_patterns.clone();
         let wildcards = patterns
@@ -27,10 +27,10 @@ impl BlockedFilePatternMatching {
     }
 
     pub fn is_file_pattern_blocked(&self, file_name: &str) -> bool {
-        trace!("Checking if file pattern is blocked for file: {}", file_name);
+        trace(format!("Checking if file pattern is blocked for file: {}", file_name));
         for wc in &self.wildcards {
             if wc.is_match(file_name.as_bytes()) {
-                trace!("File pattern matched blocked pattern: {:?}", wc.pattern());
+                trace(format!("File pattern matched blocked pattern: {:?}", wc.pattern()));
                 return true;
             }
         }
@@ -53,10 +53,10 @@ impl WhitelistedFilePatternMatching {
         let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration().await;
 
-        trace!(
+        trace(format!(
             "Initializing whitelisted file pattern matching with patterns: {:?}",
             config.core.server_settings.whitelisted_file_patterns
-        );
+        ));
 
         let patterns: Vec<String> = config.core.server_settings.whitelisted_file_patterns.clone();
         let wildcards = patterns
@@ -72,10 +72,10 @@ impl WhitelistedFilePatternMatching {
     }
 
     pub fn is_file_pattern_whitelisted(&self, file_name: &str) -> bool {
-        trace!("Checking if file pattern is whitelisted for file: {}", file_name);
+        trace(format!("Checking if file pattern is whitelisted for file: {}", file_name));
         for wc in &self.wildcards {
             if wc.is_match(file_name.as_bytes()) {
-                trace!("File pattern matched whitelisted pattern: {:?}", wc.pattern());
+                trace(format!("File pattern matched whitelisted pattern: {:?}", wc.pattern()));
                 return true;
             }
         }
