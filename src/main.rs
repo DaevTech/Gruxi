@@ -82,8 +82,6 @@ fn start_grux_basics() {
     info(format!("Starting Grux {}", version));
     info(format!("Operation mode: {:?}", operation_mode));
 
-    //start_sys_log();
-
     // Load the configuration early to catch any errors
     match grux::configuration::load_configuration::init() {
         Ok(_) => {

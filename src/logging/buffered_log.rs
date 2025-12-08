@@ -67,7 +67,7 @@ impl BufferedLog {
 
         // Append the log to the file path
         let log_data = log_buffer.join("\n") + "\n";
-        if let Err(e) = std::fs::OpenOptions::new().append(true).open(&self.log_file_path).and_then(|mut file| {
+        if let Err(e) = std::fs::OpenOptions::new().create(true).append(true).open(&self.log_file_path).and_then(|mut file| {
             use std::io::Write;
             file.write_all(log_data.as_bytes())
         }) {

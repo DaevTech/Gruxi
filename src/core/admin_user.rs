@@ -87,7 +87,6 @@ pub fn reset_admin_password() -> Result<String, String> {
     connection
         .execute(format!("UPDATE users SET password_hash = '{}' WHERE username = 'admin'", password_hash))
         .map_err(|e| format!("Failed to reset admin password: {}", e))?;
-    info(format!("Password changed for user 'admin' to: {}", random_password));
 
     // Invalidate all existing sessions for admin user
     invalidate_sessions_for_user(&connection, "admin")?;

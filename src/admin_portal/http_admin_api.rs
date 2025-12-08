@@ -715,7 +715,7 @@ pub async fn admin_post_operation_mode_endpoint(req: Request<hyper::body::Incomi
         format!("Operation mode was already set to {}", mode_request.mode)
     };
 
-    info(format!("{}", return_message));
+    println!("{}", return_message);
 
     let success_response = serde_json::json!({
         "success": was_changed,

@@ -4,11 +4,9 @@
 
 Grux is a web server focused on high performance and ease of administration. It has a built-in web interface to change settings, add websites etc. No more need for complicated configuration files with weird syntax. Written in high performance Rust. Supports PHP right out of the box.
 
+Grux is actively being developed & tested, so we are rolling out improvements and new features whenever we have a stable version.
+
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
-
-## State of development
-
-Grux is not yet production ready, as we are rather early in development. But it does work, so feel free to test it out :)
 
 ## Features
 
@@ -106,7 +104,7 @@ This auto-generated password is only written on first startup, so note it down s
 
 ## Documentation
 
-[You can find documentation for Grux web server here](https://grux.eu) (coming soon)
+[You can find documentation for Grux web server here](https://grux.eu)
 
 
 ## Help with development

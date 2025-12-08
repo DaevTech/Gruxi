@@ -864,8 +864,8 @@ impl PHPHandler {
 
 
 
-#[test]
-fn test_php_handler_creation() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_php_handler_creation() {
     let handler = PHPHandler::new(
         "php-cgi.exe".to_string(),
         "127.0.0.1:9000".to_string(),

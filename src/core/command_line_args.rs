@@ -23,12 +23,6 @@ pub fn load_command_line_args() -> ArgMatches {
             Arg::new("export-configuration")
                 .short('e')
                 .long("export-conf")
-                .help("Export the configuration to a file")
-                .value_parser(clap::value_parser!(PathBuf)),
-        )
-        .arg(
-            Arg::new("export-configuration-and-exit")
-                .long("export-conf-exit")
                 .help("Export the configuration to a file and exit")
                 .value_parser(clap::value_parser!(PathBuf)),
         )
@@ -36,23 +30,12 @@ pub fn load_command_line_args() -> ArgMatches {
             Arg::new("import-configuration")
                 .short('i')
                 .long("import-conf")
-                .help("Import the configuration from a file")
-                .value_parser(clap::value_parser!(PathBuf))
-                .value_parser(validate_existing_file),
-        )
-        .arg(
-            Arg::new("import-configuration-and-exit")
-                .long("import-conf-exit")
                 .help("Import the configuration from a file and exit")
                 .value_parser(clap::value_parser!(PathBuf))
                 .value_parser(validate_existing_file),
         )
         // Just for pleasing the benchmark runner
-        .arg(
-            Arg::new("bench")
-                .long("bench")
-                .action(clap::ArgAction::SetTrue),
-        )
+        .arg(Arg::new("bench").long("bench").action(clap::ArgAction::SetTrue))
         .get_matches()
 }
 
@@ -81,26 +64,21 @@ pub fn check_for_command_line_actions() {
     let cli = get_command_line_args();
 
     if cmd_should_reset_admin_password() {
-        crate::core::admin_user::reset_admin_password().expect("Failed to reset admin password");
+        let random_password = crate::core::admin_user::reset_admin_password().expect("Failed to reset admin password");
+        println!("Password changed for user 'admin' to: {}", random_password);
         std::process::exit(0);
     }
 
     // Check for export configuration
     if let Some(path) = cli.get_one::<PathBuf>("export-configuration") {
-        crate::configuration::import_export::export_configuration_to_file(path, false).expect("Failed to export configuration");
-    }
-
-    if let Some(path) = cli.get_one::<PathBuf>("export-configuration-and-exit") {
-        crate::configuration::import_export::export_configuration_to_file(path, true).expect("Failed to export configuration");
+        crate::configuration::import_export::export_configuration_to_file(path).expect("Failed to export configuration");
+        std::process::exit(0);
     }
 
     // Check for import configuration
     if let Some(path) = cli.get_one::<PathBuf>("import-configuration") {
-        crate::configuration::import_export::import_configuration_from_file(path, false).expect("Failed to import configuration");
-    }
-
-    if let Some(path) = cli.get_one::<PathBuf>("import-configuration-and-exit") {
-        crate::configuration::import_export::import_configuration_from_file(path, true).expect("Failed to import configuration");
+        crate::configuration::import_export::import_configuration_from_file(path).expect("Failed to import configuration");
+        std::process::exit(0);
     }
 }
 
