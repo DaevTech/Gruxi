@@ -658,7 +658,7 @@ impl PHPHandler {
         &self,
         method: String,
         uri: String,
-        path: String,
+        _path: String,
         headers: &HeaderMap,
         body: &Vec<u8>,
         script_file: String,
@@ -686,7 +686,6 @@ impl PHPHandler {
         let params_result = generate_fast_cgi_params(
             &method,
             &uri,
-            &path,
             headers,
             &body,
             &script_file,
@@ -895,7 +894,6 @@ impl PHPHandler {
 fn generate_fast_cgi_params(
     method: &String,
     uri: &String,
-    _path: &String,
     headers: &HeaderMap,
     body: &Vec<u8>,
     script_file: &String,
@@ -1007,7 +1005,6 @@ fn generate_fast_cgi_params(
 /// # Returns
 /// PATH_INFO string (empty if no extra path)
 fn compute_path_info(request_uri: &str, script_name: &str) -> String {
-    println!("Computing PATH_INFO for REQUEST_URI: '{}' and SCRIPT_NAME: '{}'", request_uri, script_name);
     // Strip query string if present
     let path_only = match request_uri.find('?') {
         Some(pos) => &request_uri[..pos],
@@ -1045,14 +1042,15 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_generate_fastcgi_params() {
+        // Try with scenario where user requests the root
         let params_result = generate_fast_cgi_params(
             &"GET".to_string(),
-            &"/".to_string(),
             &"/".to_string(),
             &HeaderMap::new(),
             &vec![],
             &"D:/old-d/websites/wpsynchro1/public/index.php".to_string(),
             &"D:/old-d/websites/wpsynchro1/public".to_string(),
+            false,
             &"".to_string(),
             false,
             "127.0.0.1",
@@ -1064,8 +1062,61 @@ mod tests {
         let params = params_result.unwrap();
 
         assert_eq!(params.get("REQUEST_METHOD").unwrap(), "GET");
-        assert_eq!(params.get("SCRIPT_NAME").unwrap(), "/index.php");
+        assert_eq!(params.get("REQUEST_URI").unwrap(), "/");
+        assert_eq!(params.get("SCRIPT_NAME").unwrap(), "/");
         assert_eq!(params.get("SCRIPT_FILENAME").unwrap(), "D:/old-d/websites/wpsynchro1/public/index.php");
+        assert_eq!(params.get("DOCUMENT_ROOT").unwrap(), "D:/old-d/websites/wpsynchro1/public");
+        assert_eq!(params.get("PATH_INFO").unwrap(), "");
+
+        // Try with scenario where user requests a sub-path /wp-admin/
+        let params_result = generate_fast_cgi_params(
+            &"GET".to_string(),
+            &"/wp-admin/".to_string(),
+            &HeaderMap::new(),
+            &vec![],
+            &"D:/old-d/websites/wpsynchro1/public/wp-admin/index.php".to_string(),
+            &"D:/old-d/websites/wpsynchro1/public".to_string(),
+            true,
+            &"".to_string(),
+            false,
+            "127.0.0.1",
+            &80,
+            &"HTTP/1.1".to_string(),
+        );
+
+        assert!(params_result.is_ok());
+        let params = params_result.unwrap();
+
+        assert_eq!(params.get("REQUEST_METHOD").unwrap(), "GET");
+        assert_eq!(params.get("REQUEST_URI").unwrap(), "/wp-admin/");
+        assert_eq!(params.get("SCRIPT_NAME").unwrap(), "/wp-admin/");
+        assert_eq!(params.get("SCRIPT_FILENAME").unwrap(), "D:/old-d/websites/wpsynchro1/public/wp-admin/index.php");
+        assert_eq!(params.get("DOCUMENT_ROOT").unwrap(), "D:/old-d/websites/wpsynchro1/public");
+        assert_eq!(params.get("PATH_INFO").unwrap(), "");
+
+        // Try with scenario where user requests a sub-path and specific file /wp-admin/index.php
+        let params_result = generate_fast_cgi_params(
+            &"GET".to_string(),
+            &"/wp-admin/index.php".to_string(),
+            &HeaderMap::new(),
+            &vec![],
+            &"D:/old-d/websites/wpsynchro1/public/wp-admin/index.php".to_string(),
+            &"D:/old-d/websites/wpsynchro1/public".to_string(),
+            false,
+            &"".to_string(),
+            false,
+            "127.0.0.1",
+            &80,
+            &"HTTP/1.1".to_string(),
+        );
+
+        assert!(params_result.is_ok());
+        let params = params_result.unwrap();
+
+        assert_eq!(params.get("REQUEST_METHOD").unwrap(), "GET");
+        assert_eq!(params.get("REQUEST_URI").unwrap(), "/wp-admin/index.php");
+        assert_eq!(params.get("SCRIPT_NAME").unwrap(), "/wp-admin/index.php");
+        assert_eq!(params.get("SCRIPT_FILENAME").unwrap(), "D:/old-d/websites/wpsynchro1/public/wp-admin/index.php");
         assert_eq!(params.get("DOCUMENT_ROOT").unwrap(), "D:/old-d/websites/wpsynchro1/public");
         assert_eq!(params.get("PATH_INFO").unwrap(), "");
     }
@@ -1125,8 +1176,8 @@ mod tests {
         handler.stop();
     }
 
-    #[test]
-    fn test_fastcgi_binary_response_parsing() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_fastcgi_binary_response_parsing() {
         // Test that the parse_fastcgi_response function correctly handles binary data
         // This simulates a FastCGI response with binary content in the body
 

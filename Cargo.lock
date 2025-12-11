@@ -477,7 +477,7 @@ dependencies = [
 
 [[package]]
 name = "grux"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bcrypt",
  "cached",
