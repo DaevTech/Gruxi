@@ -2,12 +2,13 @@ use crate::configuration::site::Site;
 use crate::core::triggers::get_trigger_handler;
 use crate::external_request_handlers::external_request_handlers::ExternalRequestHandler;
 use crate::file::file_util::{get_full_file_path, replace_web_root_in_path, split_path};
-use crate::network::port_manager::{PortManager, get_port_manager};
 use crate::http::http_util::*;
+use crate::logging::syslog::{error, trace, warn};
+use crate::network::port_manager::{PortManager, get_port_manager};
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::{HeaderMap, Response};
-use crate::logging::syslog::{error, trace, warn};
+use std::collections::HashMap;
 use std::sync::{
     Arc,
     atomic::{AtomicU16, Ordering},
@@ -146,7 +147,7 @@ impl PhpCgiProcess {
         stream.write_all(&begin_request).await?;
 
         // Send empty params to signal end
-        let empty_params = Self::create_fastcgi_params(&[]);
+        let empty_params = Self::create_fastcgi_params(&HashMap::new());
         stream.write_all(&empty_params).await?;
 
         // Send empty stdin to signal end
@@ -221,7 +222,7 @@ impl PhpCgiProcess {
         packet
     }
 
-    fn create_fastcgi_params(params: &[(String, String)]) -> Vec<u8> {
+    fn create_fastcgi_params(params: &HashMap<String, String>) -> Vec<u8> {
         let mut content = Vec::new();
 
         for (key, value) in params {
@@ -331,21 +332,11 @@ impl PHPHandler {
     }
 
     fn is_fastcgi_response_complete(buffer: &[u8]) -> bool {
-        // Simple check: look for FCGI_END_REQUEST packet (type 3)
+        // Check if we have received a complete FastCGI response stream:
+        // 1. Find an FCGI_STDOUT record with contentLength = 0 (stream terminator)
+        // 2. Followed by an FCGI_END_REQUEST record (type 3)
         let mut i = 0;
-        while i + 8 <= buffer.len() {
-            if buffer[i] == 1 && buffer[i + 1] == 3 {
-                // version 1, type FCGI_END_REQUEST
-                return true;
-            }
-            i += 1;
-        }
-        false
-    }
-
-    pub fn parse_fastcgi_response(buffer: &[u8]) -> Vec<u8> {
-        let mut response = Vec::new();
-        let mut i = 0;
+        let mut found_empty_stdout = false;
 
         while i + 8 <= buffer.len() {
             let version = buffer[i];
@@ -357,22 +348,80 @@ impl PHPHandler {
                 break;
             }
 
+            // Check for empty FCGI_STDOUT (type 6, length 0)
+            if record_type == 6 && content_length == 0 {
+                found_empty_stdout = true;
+            }
+
+            // Check for FCGI_END_REQUEST (type 3)
+            if record_type == 3 && found_empty_stdout {
+                return true;
+            }
+
+            // Move to next record
+            i += 8 + content_length + padding_length;
+        }
+
+        false
+    }
+
+    pub fn parse_fastcgi_response(buffer: &[u8]) -> Vec<u8> {
+        let mut response = Vec::new();
+        let mut i = 0;
+        let mut stdout_records = 0;
+
+        while i + 8 <= buffer.len() {
+            let version = buffer[i];
+            let record_type = buffer[i + 1];
+            let content_length = u16::from_be_bytes([buffer[i + 4], buffer[i + 5]]) as usize;
+            let padding_length = buffer[i + 6] as usize;
+
+            if version != 1 {
+                trace(format!("Unexpected FastCGI version {} at offset {}, stopping parse", version, i));
+                break;
+            }
+
             let content_start = i + 8;
             let content_end = content_start + content_length;
 
             if content_end > buffer.len() {
+                trace(format!(
+                    "Incomplete FastCGI record at offset {}, expected {} bytes but only {} available",
+                    i,
+                    content_end - i,
+                    buffer.len() - i
+                ));
                 break;
             }
 
             if record_type == 6 {
                 // FCGI_STDOUT
-                let content = &buffer[content_start..content_end];
-                response.extend_from_slice(content);
+                if content_length > 0 {
+                    let content = &buffer[content_start..content_end];
+                    response.extend_from_slice(content);
+                    stdout_records += 1;
+                    trace(format!(
+                        "Parsed FCGI_STDOUT record #{} with {} bytes (total response: {} bytes)",
+                        stdout_records,
+                        content_length,
+                        response.len()
+                    ));
+                } else {
+                    trace("Received empty FCGI_STDOUT record (stream terminator)".to_string());
+                }
+            } else if record_type == 7 {
+                // FCGI_STDERR - log errors
+                if content_length > 0 {
+                    let stderr_content = String::from_utf8_lossy(&buffer[content_start..content_end]);
+                    error(format!("FastCGI STDERR: {}", stderr_content));
+                }
             } else if record_type == 3 {
                 // FCGI_END_REQUEST
+                trace(format!("Received FCGI_END_REQUEST, parsed {} STDOUT records with total {} bytes", stdout_records, response.len()));
                 break;
             }
 
+            // Move to next record (header + content + padding)
             i = content_end + padding_length;
         }
 
@@ -474,6 +523,7 @@ impl ExternalRequestHandler for PHPHandler {
         body: &Vec<u8>,
         site: &Site,
         full_file_path: &String,
+        uri_is_a_dir_with_index_file_inside: bool,
         remote_ip: &str,
         http_version: &String,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
@@ -574,11 +624,13 @@ impl ExternalRequestHandler for PHPHandler {
                 body,
                 full_file_path.clone(),
                 full_web_root,
+                uri_is_a_dir_with_index_file_inside,
                 is_https,
                 remote_ip,
                 server_port,
                 http_version.clone(),
                 ip_and_port,
+                self.other_webroot.clone(),
             ),
         )
         .await
@@ -611,19 +663,58 @@ impl PHPHandler {
         body: &Vec<u8>,
         script_file: String,
         local_web_root: String,
+        uri_is_a_dir_with_index_file_inside: bool,
         is_https: bool,
         remote_ip: &str,
         server_port: u16,
         http_version: String,
         ip_and_port: String,
+        other_webroot: String,
     ) -> Response<BoxBody<Bytes, hyper::Error>> {
+        // Check if the script file actually exists
+        if let Ok(metadata) = std::fs::metadata(&script_file) {
+            if !metadata.is_file() {
+                error(format!("PHP script path exists but is not a file: {}", script_file));
+                return empty_response_with_status(hyper::StatusCode::NOT_FOUND);
+            }
+        } else {
+            error(format!("PHP script file does not exist: {}", script_file));
+            return empty_response_with_status(hyper::StatusCode::NOT_FOUND);
+        }
+
+        // Generate the fastcgi params, so we are ready to send the request
+        let params_result = generate_fast_cgi_params(
+            &method,
+            &uri,
+            &path,
+            headers,
+            &body,
+            &script_file,
+            &local_web_root,
+            uri_is_a_dir_with_index_file_inside,
+            &other_webroot,
+            is_https,
+            &remote_ip,
+            &server_port,
+            &http_version,
+        );
+        let params = match params_result {
+            Ok(p) => p,
+            Err(_) => {
+                return empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        };
+
         let available_permits = self.connection_semaphore.available_permits();
         trace(format!("Acquiring connection permit for FastCGI server at {} (available permits: {})", ip_and_port, available_permits));
 
         // Acquire a connection permit to limit concurrent connections to php-fmp
         let _permit = match self.connection_semaphore.acquire().await {
             Ok(permit) => {
-                trace(format!("Connection permit acquired for FastCGI server (remaining permits: {})", self.connection_semaphore.available_permits()));
+                trace(format!(
+                    "Connection permit acquired for FastCGI server (remaining permits: {})",
+                    self.connection_semaphore.available_permits()
+                ));
                 permit
             }
             Err(e) => {
@@ -642,76 +733,6 @@ impl PHPHandler {
                 return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
             }
         };
-
-        // Parse the URI to get script name and query string
-        let uri_parts: Vec<&str> = uri.splitn(2, '?').collect();
-        let query_string = if uri_parts.len() > 1 { uri_parts[1] } else { "" };
-
-        // Handle web root mapping
-        let mut full_script_path = script_file.clone();
-        let mut script_web_root = local_web_root.clone();
-
-        if !self.other_webroot.is_empty() {
-            let full_local_web_root_result = get_full_file_path(&local_web_root);
-            if let Err(e) = full_local_web_root_result {
-                trace(format!("Error resolving file path for local web root {}: {}", local_web_root, e));
-                return empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR);
-            }
-            let full_local_web_root = full_local_web_root_result.unwrap();
-            full_script_path = replace_web_root_in_path(&full_script_path, &full_local_web_root, &self.other_webroot);
-            script_web_root = self.other_webroot.clone();
-        }
-
-        let (directory, filename) = split_path(&script_web_root, &full_script_path);
-        trace(format!("PHP FastCGI - Directory: {}, Filename: {}", directory, filename));
-
-        // Check if the script file actually exists
-        if let Ok(metadata) = std::fs::metadata(&script_file) {
-            if !metadata.is_file() {
-                error(format!("PHP script path exists but is not a file: {}", script_file));
-                return empty_response_with_status(hyper::StatusCode::NOT_FOUND);
-            }
-        } else {
-            error(format!("PHP script file does not exist: {}", script_file));
-            return empty_response_with_status(hyper::StatusCode::NOT_FOUND);
-        }
-
-        // Build FastCGI parameters (CGI environment variables)
-        let mut params: Vec<(String, String)> = Vec::new();
-        params.push(("REQUEST_METHOD".to_string(), method.clone()));
-        params.push(("REQUEST_URI".to_string(), uri.clone()));
-        params.push(("SCRIPT_NAME".to_string(), directory.to_string()));
-        params.push(("SCRIPT_FILENAME".to_string(), full_script_path.clone()));
-        params.push(("DOCUMENT_ROOT".to_string(), script_web_root.clone()));
-        params.push(("QUERY_STRING".to_string(), query_string.to_string()));
-        params.push(("CONTENT_LENGTH".to_string(), body.len().to_string()));
-        params.push(("SERVER_SOFTWARE".to_string(), "Grux".to_string()));
-        params.push(("SERVER_NAME".to_string(), "".to_string()));
-        params.push(("SERVER_PORT".to_string(), server_port.to_string()));
-        params.push(("HTTPS".to_string(), if is_https { "on" } else { "off" }.to_string()));
-        params.push(("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string()));
-        params.push(("SERVER_PROTOCOL".to_string(), http_version.clone()));
-        params.push(("REMOTE_ADDR".to_string(), remote_ip.to_string()));
-        params.push(("REMOTE_HOST".to_string(), "".to_string()));
-        params.push(("PATH_INFO".to_string(), path.clone()));
-        params.push(("REDIRECT_STATUS".to_string(), "200".to_string()));
-
-        // Add HTTP headers as CGI variables
-        for (key, value) in headers.iter() {
-            let key_str = key.to_string();
-
-            // Try converting the value to a &str
-            if let Ok(value_str) = value.to_str() {
-                params.push((key_str, value_str.to_string()));
-            }
-        }
-
-        // Set content type if present
-        if let Some(content_type) = headers.get("content-type") {
-            if let Ok(content_type) = content_type.to_str() {
-                params.push(("CONTENT_TYPE".to_string(), content_type.to_string()));
-            }
-        }
 
         // Send FastCGI request
         trace(format!("Sending FastCGI request... with parameters: {:?}", params));
@@ -732,7 +753,7 @@ impl PHPHandler {
         }
 
         // Send empty params to signal end
-        let empty_params = PhpCgiProcess::create_fastcgi_params(&[]);
+        let empty_params = PhpCgiProcess::create_fastcgi_params(&HashMap::new());
         if let Err(e) = stream.write_all(&empty_params).await {
             error(format!("Failed to send empty params: {}", e));
             return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
@@ -757,20 +778,29 @@ impl PHPHandler {
         // Read response
         trace("Reading FastCGI response...".to_string());
         let mut response_buffer = Vec::new();
-        let mut buffer = [0u8; 4096];
+        // Use 65535 byte buffer to match FastCGI max record size (FCGI_MAX_LENGTH)
+        let mut buffer = vec![0u8; 65535];
 
         // Read with timeout
         let timeout_duration = Duration::from_secs(30);
         match tokio::time::timeout(timeout_duration, async {
             loop {
                 match stream.read(&mut buffer).await {
-                    Ok(0) => break, // Connection closed
-                    Ok(n) => response_buffer.extend_from_slice(&buffer[..n]),
+                    Ok(0) => {
+                        trace("FastCGI connection closed by server".to_string());
+                        break; // Connection closed
+                    }
+                    Ok(n) => {
+                        trace(format!("Read {} bytes from FastCGI stream (total: {} bytes)", n, response_buffer.len() + n));
+                        response_buffer.extend_from_slice(&buffer[..n]);
+
+                        // Check for complete response (empty STDOUT + END_REQUEST)
+                        if Self::is_fastcgi_response_complete(&response_buffer) {
+                            trace(format!("FastCGI response complete, total size: {} bytes", response_buffer.len()));
+                            break;
+                        }
+                    }
                     Err(e) => return Err(e),
-                }
-                // Simple check for end of FastCGI response
-                if response_buffer.len() > 8 && Self::is_fastcgi_response_complete(&response_buffer) {
-                    break;
                 }
             }
             Ok::<(), std::io::Error>(())
@@ -779,7 +809,7 @@ impl PHPHandler {
         {
             Ok(_) => {}
             Err(_) => {
-                error("FastCGI response timeout".to_string());
+                error(format!("FastCGI response timeout after reading {} bytes", response_buffer.len()));
                 return empty_response_with_status(hyper::StatusCode::GATEWAY_TIMEOUT);
             }
         }
@@ -832,7 +862,7 @@ impl PHPHandler {
                 } else {
                     // Add other headers
                     if let Ok(header_name) = hyper::header::HeaderName::from_bytes(key.as_bytes()) {
-                        if let Ok(header_value) = hyper::header::HeaderValue::from_str(value) {
+                        if let Ok(header_value) = hyper::header::HeaderValue::from_str(&value) {
                             response_builder = response_builder.header(header_name, header_value);
                         }
                     }
@@ -862,113 +892,274 @@ impl PHPHandler {
     }
 }
 
+fn generate_fast_cgi_params(
+    method: &String,
+    uri: &String,
+    _path: &String,
+    headers: &HeaderMap,
+    body: &Vec<u8>,
+    script_file: &String,
+    local_web_root: &String,
+    uri_is_a_dir_with_index_file_inside: bool,
+    other_webroot: &String,
+    is_https: bool,
+    remote_ip: &str,
+    server_port: &u16,
+    http_version: &String,
+) -> Result<HashMap<String, String>, ()> {
+    let mut params: HashMap<String, String> = HashMap::new();
 
+    // Add HTTP headers as CGI variables, prefixed with HTTP_ and uppercased
+    for (key, value) in headers.iter() {
+        let key_str = key.to_string();
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_php_handler_creation() {
-    let handler = PHPHandler::new(
-        "php-cgi.exe".to_string(),
-        "127.0.0.1:9000".to_string(),
-        30,
-        2,
-        "./www-default".to_string(),
-        vec![],
-        vec![]
-    );
+        // Try converting the value to a &str
+        if let Ok(value_str) = value.to_str() {
+            let key_str = format!("HTTP_{}", key_str.replace("-", "_").to_uppercase());
+            params.insert(key_str, value_str.to_string());
+        }
+    }
 
-    assert_eq!(handler.get_handler_type(), "php");
-    assert_eq!(handler.get_file_matches(), vec![".php".to_string()]);
+    // Set content type and length if present
+    if let Some(content_type) = headers.get("content-type") {
+        if let Ok(content_type) = content_type.to_str() {
+            params.insert("CONTENT_TYPE".to_string(), content_type.to_string());
+        }
+    }
+    if let Some(content_length) = headers.get("content-length") {
+        if let Ok(content_length) = content_length.to_str() {
+            params.insert("CONTENT_LENGTH".to_string(), content_length.to_string());
+        }
+    }
+
+    // Parse the URI to get script name and query string
+    let uri_parts: Vec<&str> = uri.splitn(2, '?').collect();
+    let query_string = if uri_parts.len() > 1 { uri_parts[1] } else { "" };
+
+    // Get the hostname that is requested
+    let requested_hostname = headers.get(":authority").or_else(|| headers.get("Host")).and_then(|h| h.to_str().ok()).unwrap_or("").to_string();
+
+    // Handle web root mapping
+    let mut full_script_path = script_file.clone();
+    let mut script_web_root = local_web_root.clone();
+
+    if !other_webroot.is_empty() {
+        let full_local_web_root_result = get_full_file_path(&local_web_root);
+        if let Err(e) = full_local_web_root_result {
+            trace(format!("Error resolving file path for local web root {}: {}", local_web_root, e));
+            return Err(());
+        }
+        let full_local_web_root = full_local_web_root_result.unwrap();
+        full_script_path = replace_web_root_in_path(&full_script_path, &full_local_web_root, &other_webroot);
+        script_web_root = other_webroot.clone();
+    }
+
+    let (directory, filename) = split_path(&script_web_root, &full_script_path);
+
+    // Request uri
+    let mut request_uri = uri.clone();
+    if uri_is_a_dir_with_index_file_inside {
+        // Split off any query string first
+        let (path_only_str, query_part) = if let Some(pos) = uri.find('?') { (&uri[..pos], &uri[pos..]) } else { (uri.as_str(), "") };
+        // Add forward slash to the end if missing, but before any query string
+        let path_only = if !path_only_str.ends_with('/') {
+            format!("{}/", path_only_str)
+        } else {
+            path_only_str.to_string()
+        };
+        request_uri = format!("{}{}", path_only, query_part);
+    }
+
+    // Figure out PATH_INFO
+    let path_info = compute_path_info(&request_uri, &filename);
+
+    trace(format!("PHP FastCGI - Directory: {}, Filename: {}", directory, filename));
+
+    // Build FastCGI parameters (CGI environment variables)
+    params.insert("REQUEST_METHOD".to_string(), method.clone());
+    params.insert("REQUEST_URI".to_string(), request_uri.clone());
+    params.insert("SCRIPT_NAME".to_string(), request_uri);
+    params.insert("SCRIPT_FILENAME".to_string(), full_script_path);
+    params.insert("DOCUMENT_ROOT".to_string(), script_web_root);
+    params.insert("QUERY_STRING".to_string(), query_string.to_string());
+    params.insert("CONTENT_LENGTH".to_string(), body.len().to_string());
+    params.insert("SERVER_SOFTWARE".to_string(), "Grux".to_string());
+    params.insert("SERVER_NAME".to_string(), requested_hostname.clone());
+    params.insert("SERVER_PORT".to_string(), server_port.to_string());
+    params.insert("HTTPS".to_string(), if is_https { "on" } else { "off" }.to_string());
+    params.insert("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string());
+    params.insert("SERVER_PROTOCOL".to_string(), http_version.clone());
+    params.insert("REMOTE_ADDR".to_string(), remote_ip.to_string());
+    params.insert("REMOTE_HOST".to_string(), "".to_string());
+    params.insert("PATH_INFO".to_string(), path_info);
+    params.insert("REDIRECT_STATUS".to_string(), "200".to_string());
+    params.insert("HTTP_HOST".to_string(), requested_hostname);
+
+    Ok(params)
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_php_handler_with_single_process() {
-    let handler = PHPHandler::new(
-        "echo".to_string(), // Use 'echo' as a test executable
-        "".to_string(), // Empty string means use internal PHP-CGI process
-        30,
-        2,
-        "./www-default".to_string(),
-        vec![],
-        vec![]
-    );
+/// Compute PATH_INFO for a request given REQUEST_URI and SCRIPT_NAME
+///
+/// # Arguments
+/// * `request_uri` - full URI path from the client, e.g., "/wp-admin/foo/bar"
+/// * `script_name` - the SCRIPT_NAME being executed, e.g., "/wp-admin/index.php"
+///
+/// # Returns
+/// PATH_INFO string (empty if no extra path)
+fn compute_path_info(request_uri: &str, script_name: &str) -> String {
+    println!("Computing PATH_INFO for REQUEST_URI: '{}' and SCRIPT_NAME: '{}'", request_uri, script_name);
+    // Strip query string if present
+    let path_only = match request_uri.find('?') {
+        Some(pos) => &request_uri[..pos],
+        None => request_uri,
+    };
 
-    // Test that handler can be created and will use single internal process
-    assert_eq!(handler.get_handler_type(), "php");
-    assert_eq!(handler.get_file_matches(), vec![".php".to_string()]);
-
-    // Start and stop the handler (internal process management is now hidden)
-    handler.start();
-    handler.stop();
+    if path_only.starts_with(script_name) {
+        let path_info = &path_only[script_name.len()..];
+        if path_info.is_empty() {
+            "".to_string()
+        } else {
+            if path_info.starts_with('/') { path_info.to_string() } else { format!("/{}", path_info) }
+        }
+    } else {
+        // If REQUEST_URI does not start with SCRIPT_NAME, PATH_INFO is empty
+        "".to_string()
+    }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_php_handler_lifecycle() {
-    let handler = PHPHandler::new(
-        "echo".to_string(), // Use 'echo' as a test executable
-        "127.0.0.1:9000".to_string(),
-        30,
-        1,
-        "./www-default".to_string(),
-        vec![],
-        vec![]
-    );
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // Test that we can call start and stop methods
-    handler.start();
-    handler.stop();
-}
+    #[test]
+    fn test_path_info() {
+        assert_eq!(compute_path_info("/wp-admin", "/wp-admin/index.php"), "");
+        assert_eq!(compute_path_info("/wp-admin/", "/wp-admin/index.php"), "");
+        assert_eq!(compute_path_info("/wp-admin/index.php", "/wp-admin/index.php"), "");
+        assert_eq!(compute_path_info("/wp-admin/index.php/foo", "/wp-admin/index.php"), "/foo");
+        assert_eq!(compute_path_info("/wp-admin/index.php/foo/bar", "/wp-admin/index.php"), "/foo/bar");
+        assert_eq!(compute_path_info("/wp-admin/abc/def", "/wp-admin/index.php"), ""); // Does not start with script
+        assert_eq!(compute_path_info("/wp-admin/index.phpfoo", "/wp-admin/index.php"), "/foo");
+        assert_eq!(compute_path_info("/wp-admin/index.php?x=1", "/wp-admin/index.php"), "");
+    }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_php_handler_concurrent_processing() {
-    let handler = PHPHandler::new(
-        "echo".to_string(),
-        "127.0.0.1:9000".to_string(),
-        30,
-        3,
-        "./www-default".to_string(),
-        vec![],
-        vec![]
-    );
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_generate_fastcgi_params() {
+        let params_result = generate_fast_cgi_params(
+            &"GET".to_string(),
+            &"/".to_string(),
+            &"/".to_string(),
+            &HeaderMap::new(),
+            &vec![],
+            &"D:/old-d/websites/wpsynchro1/public/index.php".to_string(),
+            &"D:/old-d/websites/wpsynchro1/public".to_string(),
+            &"".to_string(),
+            false,
+            "127.0.0.1",
+            &80,
+            &"HTTP/1.1".to_string(),
+        );
 
-    // Start and stop the handler
-    handler.start();
-    handler.stop();
-}
+        assert!(params_result.is_ok());
+        let params = params_result.unwrap();
 
-#[test]
-fn test_fastcgi_binary_response_parsing() {
-    // Test that the parse_fastcgi_response function correctly handles binary data
-    // This simulates a FastCGI response with binary content in the body
+        assert_eq!(params.get("REQUEST_METHOD").unwrap(), "GET");
+        assert_eq!(params.get("SCRIPT_NAME").unwrap(), "/index.php");
+        assert_eq!(params.get("SCRIPT_FILENAME").unwrap(), "D:/old-d/websites/wpsynchro1/public/index.php");
+        assert_eq!(params.get("DOCUMENT_ROOT").unwrap(), "D:/old-d/websites/wpsynchro1/public");
+        assert_eq!(params.get("PATH_INFO").unwrap(), "");
+    }
 
-    // Create a mock FastCGI STDOUT record with binary data
-    let mut fastcgi_response = Vec::new();
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_php_handler_creation() {
+        let handler = PHPHandler::new("php-cgi.exe".to_string(), "127.0.0.1:9000".to_string(), 30, 2, "./www-default".to_string(), vec![], vec![]);
 
-    // FastCGI header: version=1, type=6 (STDOUT), request_id=1, content_length, padding=0, reserved=0
-    let binary_content = vec![0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD]; // Some binary data
-    let headers = b"Content-Type: application/octet-stream\r\n\r\n";
-    let full_content = [headers.as_slice(), &binary_content].concat();
+        assert_eq!(handler.get_handler_type(), "php");
+        assert_eq!(handler.get_file_matches(), vec![".php".to_string()]);
+    }
 
-    fastcgi_response.push(1); // version
-    fastcgi_response.push(6); // type: FCGI_STDOUT
-    fastcgi_response.extend(&1u16.to_be_bytes()); // request_id
-    fastcgi_response.extend(&(full_content.len() as u16).to_be_bytes()); // content_length
-    fastcgi_response.push(0); // padding_length
-    fastcgi_response.push(0); // reserved
-    fastcgi_response.extend(&full_content);
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_php_handler_with_single_process() {
+        let handler = PHPHandler::new(
+            "echo".to_string(), // Use 'echo' as a test executable
+            "".to_string(),     // Empty string means use internal PHP-CGI process
+            30,
+            2,
+            "./www-default".to_string(),
+            vec![],
+            vec![],
+        );
 
-    // Add FCGI_END_REQUEST record
-    fastcgi_response.push(1); // version
-    fastcgi_response.push(3); // type: FCGI_END_REQUEST
-    fastcgi_response.extend(&1u16.to_be_bytes()); // request_id
-    fastcgi_response.extend(&8u16.to_be_bytes()); // content_length (8 bytes for end request)
-    fastcgi_response.push(0); // padding_length
-    fastcgi_response.push(0); // reserved
-    fastcgi_response.extend(&[0u8; 8]); // end request body
+        // Test that handler can be created and will use single internal process
+        assert_eq!(handler.get_handler_type(), "php");
+        assert_eq!(handler.get_file_matches(), vec![".php".to_string()]);
 
-    // Parse the response using our updated function
-    let parsed_response = PHPHandler::parse_fastcgi_response(&fastcgi_response);
+        // Start and stop the handler (internal process management is now hidden)
+        handler.start();
+        handler.stop();
+    }
 
-    // Verify the binary data is preserved
-    assert!(parsed_response.len() > 0);
-    assert!(parsed_response.windows(binary_content.len()).any(|w| w == binary_content.as_slice()));
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_php_handler_lifecycle() {
+        let handler = PHPHandler::new(
+            "echo".to_string(), // Use 'echo' as a test executable
+            "127.0.0.1:9000".to_string(),
+            30,
+            1,
+            "./www-default".to_string(),
+            vec![],
+            vec![],
+        );
+
+        // Test that we can call start and stop methods
+        handler.start();
+        handler.stop();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_php_handler_concurrent_processing() {
+        let handler = PHPHandler::new("echo".to_string(), "127.0.0.1:9000".to_string(), 30, 3, "./www-default".to_string(), vec![], vec![]);
+
+        // Start and stop the handler
+        handler.start();
+        handler.stop();
+    }
+
+    #[test]
+    fn test_fastcgi_binary_response_parsing() {
+        // Test that the parse_fastcgi_response function correctly handles binary data
+        // This simulates a FastCGI response with binary content in the body
+
+        // Create a mock FastCGI STDOUT record with binary data
+        let mut fastcgi_response = Vec::new();
+
+        // FastCGI header: version=1, type=6 (STDOUT), request_id=1, content_length, padding=0, reserved=0
+        let binary_content = vec![0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD]; // Some binary data
+        let headers = b"Content-Type: application/octet-stream\r\n\r\n";
+        let full_content = [headers.as_slice(), &binary_content].concat();
+
+        fastcgi_response.push(1); // version
+        fastcgi_response.push(6); // type: FCGI_STDOUT
+        fastcgi_response.extend(&1u16.to_be_bytes()); // request_id
+        fastcgi_response.extend(&(full_content.len() as u16).to_be_bytes()); // content_length
+        fastcgi_response.push(0); // padding_length
+        fastcgi_response.push(0); // reserved
+        fastcgi_response.extend(&full_content);
+
+        // Add FCGI_END_REQUEST record
+        fastcgi_response.push(1); // version
+        fastcgi_response.push(3); // type: FCGI_END_REQUEST
+        fastcgi_response.extend(&1u16.to_be_bytes()); // request_id
+        fastcgi_response.extend(&8u16.to_be_bytes()); // content_length (8 bytes for end request)
+        fastcgi_response.push(0); // padding_length
+        fastcgi_response.push(0); // reserved
+        fastcgi_response.extend(&[0u8; 8]); // end request body
+
+        // Parse the response using our updated function
+        let parsed_response = PHPHandler::parse_fastcgi_response(&fastcgi_response);
+
+        // Verify the binary data is preserved
+        assert!(parsed_response.len() > 0);
+        assert!(parsed_response.windows(binary_content.len()).any(|w| w == binary_content.as_slice()));
+    }
 }

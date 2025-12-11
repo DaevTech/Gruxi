@@ -7,6 +7,7 @@ use crate::file::file_cache::CachedFile;
 use crate::file::file_util::check_path_secure;
 use crate::file::file_util::get_full_file_path;
 use crate::http::http_util::*;
+use crate::logging::syslog::{debug, trace};
 use chrono::Local;
 use http_body_util::BodyExt;
 use http_body_util::combinators::BoxBody;
@@ -15,7 +16,6 @@ use hyper::body::Body;
 use hyper::body::Bytes;
 use hyper::header::HeaderValue;
 use hyper::{Request, Response};
-use crate::logging::syslog::{debug, trace};
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
@@ -33,16 +33,10 @@ pub async fn handle_request_entry(
     let headers = req.headers();
 
     // Get the hostname that is requested
-    let requested_hostname = headers
-        .get(":authority")
-        .or_else(|| headers.get("Host"))
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+    let requested_hostname = headers.get(":authority").or_else(|| headers.get("Host")).and_then(|h| h.to_str().ok()).unwrap_or("").to_string();
 
     request_data.insert("remote_ip".to_string(), remote_ip.clone());
     request_data.insert("requested_hostname".to_string(), requested_hostname.clone());
-
 
     // Get HTTP version
     let http_version = match req.version() {
@@ -191,6 +185,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
     let mut file_data = file_data_result.unwrap();
     let mut file_path = file_data.file_path.clone();
 
+    // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
     if !file_data.exists {
         trace(format!("File does not exist: {}", file_path));
         if rewrite_functions.contains_key("OnlyWebRootIndexForSubdirs") {
@@ -210,6 +205,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
         }
     }
 
+    let mut uri_is_a_dir_with_index_file_inside = false;
     if file_data.is_directory {
         // If it's a directory, we will try to return the index file
         trace(format!("File is a directory: {}", file_path));
@@ -227,6 +223,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
             file_path = file_data.file_path.clone();
             trace(format!("Found index file: {}", file_path));
             found_index = true;
+            uri_is_a_dir_with_index_file_inside = true;
             break;
         }
 
@@ -276,14 +273,14 @@ async fn handle_request(req: Request<hyper::body::Incoming>, binding: &Binding, 
         }
 
         let handler_response_result = external_request_handlers
-            .handle_external_request(handler_id, &method, &uri, &headers, &body_bytes, &site, &file_path, &remote_ip, &http_version)
+            .handle_external_request(handler_id, &method, &uri, &headers, &body_bytes, &site, &file_path, uri_is_a_dir_with_index_file_inside, &remote_ip, &http_version)
             .await;
         match handler_response_result {
             Ok(resp) => {
                 handler_did_stuff = true;
                 response = resp;
             }
-                Err(e) => {
+            Err(e) => {
                 debug(format!("Error from external handler {}: {}", handler_id, e));
                 return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
             }

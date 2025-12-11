@@ -66,7 +66,6 @@ pub fn split_path(base_path: &str, path_str: &str) -> (String, String) {
 
     if path_str_cleaned.starts_with(&base_path_cleaned) {
         let remaining = &path_str_cleaned[base_path_cleaned.len()..];
-        let remaining = remaining.trim_start_matches('/'); // Remove leading slash if present
         (base_path_cleaned, remaining.to_string())
     } else {
         ("".to_string(), path_str_cleaned)

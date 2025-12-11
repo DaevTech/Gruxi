@@ -1,13 +1,13 @@
+use crate::logging::syslog::{debug, error};
 use crate::{
     configuration::{request_handler::RequestHandler, site::Site},
     core::running_state_manager::get_running_state_manager,
-    external_request_handlers::{php_handler::PHPHandler},
+    external_request_handlers::php_handler::PHPHandler,
     http::http_util::empty_response_with_status,
 };
 use http_body_util::combinators::BoxBody;
 use hyper::Response;
 use hyper::body::Bytes;
-use crate::logging::syslog::{debug, error};
 use std::collections::HashMap;
 
 pub struct ExternalRequestHandlers {
@@ -29,6 +29,7 @@ pub trait ExternalRequestHandler {
         body: &Vec<u8>,
         site: &Site,
         full_file_path: &String,
+        uri_is_a_dir_with_index_file_inside: bool,
         remote_ip: &str,
         http_version: &String,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>;
@@ -154,6 +155,7 @@ impl ExternalRequestHandlers {
         body: &Vec<u8>,
         site: &Site,
         full_file_path: &String,
+        uri_is_a_dir_with_index_file_inside: bool,
         remote_ip: &str,
         http_version: &String,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
@@ -173,7 +175,7 @@ impl ExternalRequestHandlers {
         match handler_type.as_str() {
             "php" => {
                 if let Some(php_handler) = self.php.get(handler_id) {
-                    php_handler.handle_request(method, uri, headers, body, site, full_file_path, remote_ip, http_version).await
+                    php_handler.handle_request(method, uri, headers, body, site, full_file_path, uri_is_a_dir_with_index_file_inside, remote_ip, http_version).await
                 } else {
                     error(format!("PHP handler with id {} not found.", handler_id));
                     Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR))

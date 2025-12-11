@@ -66,14 +66,36 @@ impl Configuration {
                         "*.php".to_string(),
                     ],
                     whitelisted_file_patterns: vec!["*/.well-known/*".to_string()],
-                    operation_mode: "PRODUCTION".to_string()
+                    operation_mode: "PRODUCTION".to_string(),
                 },
             },
             request_handlers: vec![],
         }
     }
 
-    /// Validates the entire configuration
+    // Sanitize the configuration before use
+    pub fn sanitize(&mut self) {
+        // Sanitize sites
+        for site in &mut self.sites {
+            site.sanitize();
+        }
+        /*
+        // Sanitize bindings
+        for binding in &mut self.bindings {
+            binding.sanitize();
+        }
+
+        // Sanitize core settings
+        self.core.sanitize();
+
+        // Sanitize request handlers
+        for handler in &mut self.request_handlers {
+            handler.sanitize();
+        }
+        */
+    }
+
+    // Validates the entire configuration
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
@@ -267,7 +289,7 @@ impl Configuration {
             request_timeout: 30,   // seconds
             concurrent_threads: 0, // 0 = automatically based on CPU cores on this machine - If PHP
             file_match: vec![".php".to_string()],
-            executable: "".to_string(), // Path to the PHP CGI executable (windows only)
+            executable: "".to_string(),              // Path to the PHP CGI executable (windows only)
             ip_and_port: "php-fpm:9000".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
             other_webroot: "/var/www/html".to_string(),
             extra_handler_config: vec![],

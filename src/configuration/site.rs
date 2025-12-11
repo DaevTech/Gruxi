@@ -34,6 +34,38 @@ pub struct Site {
 pub static REWRITE_FUNCTIONS: &[&str] = &["OnlyWebRootIndexForSubdirs"];
 
 impl Site {
+    pub fn sanitize(&mut self) {
+        // Trim whitespace from hostnames
+        for hostname in &mut self.hostnames {
+            *hostname = hostname.trim().to_string();
+        }
+
+        // Trim whitespace from web root
+        self.web_root = self.web_root.trim().to_string();
+
+        // Convert backslashes to forward slashes in web root (for Windows paths)
+        self.web_root = self.web_root.replace("\\", "/");
+
+        // Trim whitespace from index files
+        for file in &mut self.web_root_index_file_list {
+            *file = file.trim().to_string();
+        }
+
+        // Trim whitespace from rewrite functions
+        for func in &mut self.rewrite_functions {
+            *func = func.trim().to_string();
+        }
+
+        // Trim whitespace from access log file
+        self.access_log_file = self.access_log_file.trim().to_string();
+
+        // Trim whitespace from extra headers
+        for kv in &mut self.extra_headers {
+            kv.key = kv.key.trim().to_string();
+            kv.value = kv.value.trim().to_string();
+        }
+    }
+
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 

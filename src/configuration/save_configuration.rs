@@ -14,7 +14,10 @@ use sqlite::State;
 /// Save a new configuration to the database
 /// Returns Ok(true) if changes were saved, Ok(false) if no changes were needed
 pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
-    // First validate the configuration
+    // First, we sanitize the configuration
+    config.sanitize();
+
+    // Then we validate the configuration
     config.validate().map_err(|errors| format!("Configuration validation failed: {}", errors.join("; ")))?;
 
     // Check if the configuration is different from what's currently in the database
