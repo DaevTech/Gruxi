@@ -2,6 +2,11 @@ use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::Response;
 use hyper::body::Bytes;
 
+use crate::core::running_state_manager::get_running_state_manager;
+use crate::file::file_cache::CachedFile;
+use crate::file::file_util::get_full_file_path;
+use crate::logging::syslog::trace;
+
 pub fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
     Full::new(chunk.into()).map_err(|never| match never {}).boxed()
 }
@@ -61,6 +66,21 @@ pub fn clean_url_path(path: &str) -> String {
 
     // Final safety check - ensure we never return a trailing slash
     if result.ends_with('/') { result[..result.len() - 1].to_string() } else { result }
+}
+
+
+// Combine the web root and path, and resolve to a full path
+pub async fn resolve_web_root_and_path_and_get_file(web_root: &str, path: &str) -> Result<CachedFile, std::io::Error> {
+    let path_cleaned = clean_url_path(&path);
+    let mut file_path = format!("{}/{}", web_root, path_cleaned);
+    trace(format!("Resolved file path for resolving: {}", file_path));
+    file_path = get_full_file_path(&file_path)?;
+
+    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+    let file_cache_rwlock = running_state.get_file_cache();
+    let file_cache = file_cache_rwlock.read().await;
+    let file_data = file_cache.get_file(&file_path).unwrap();
+    Ok(file_data)
 }
 
 pub fn empty_response_with_status(status: hyper::StatusCode) -> Response<BoxBody<Bytes, hyper::Error>> {

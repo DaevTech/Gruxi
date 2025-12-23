@@ -17,9 +17,7 @@ const props = defineProps({
 const emit = defineEmits(['close']);
 
 // Available rewrite function options
-const rewriteFunctionOptions = [
-    'OnlyWebRootIndexForSubdirs',
-];
+const rewriteFunctionOptions = ['OnlyWebRootIndexForSubdirs'];
 
 // State
 const isLoading = ref(false);
@@ -34,7 +32,7 @@ const config = ref(null);
 const expandedSections = reactive({
     bindings: false,
     sites: false,
-    requestHandlers: false,
+    externalRequestHandlers: false,
     core: false,
 });
 
@@ -42,7 +40,9 @@ const expandedSections = reactive({
 const expandedItems = reactive({
     bindings: {},
     sites: {},
-    requestHandlers: {},
+    siteProcessors: {},
+    siteSubsections: {},
+    externalRequestHandlers: {},
     coreSubsections: {
         fileCache: false,
         gzip: false,
@@ -227,11 +227,19 @@ const toggleSite = (siteIndex) => {
     expandedItems.sites[siteIndex] = !expandedItems.sites[siteIndex];
 };
 
-const toggleRequestHandler = (handlerIndex) => {
-    if (!expandedItems.requestHandlers[handlerIndex]) {
-        expandedItems.requestHandlers[handlerIndex] = false;
+const toggleExternalRequestHandler = (handlerIndex) => {
+    if (!expandedItems.externalRequestHandlers[handlerIndex]) {
+        expandedItems.externalRequestHandlers[handlerIndex] = false;
     }
-    expandedItems.requestHandlers[handlerIndex] = !expandedItems.requestHandlers[handlerIndex];
+    expandedItems.externalRequestHandlers[handlerIndex] = !expandedItems.externalRequestHandlers[handlerIndex];
+};
+
+const toggleSiteProcessor = (siteIndex, processorIndex) => {
+    const key = `${siteIndex}-${processorIndex}`;
+    if (!expandedItems.siteProcessors[key]) {
+        expandedItems.siteProcessors[key] = false;
+    }
+    expandedItems.siteProcessors[key] = !expandedItems.siteProcessors[key];
 };
 
 // Helper functions to check if items are expanded
@@ -243,8 +251,27 @@ const isSiteExpanded = (siteIndex) => {
     return expandedItems.sites[siteIndex] || false;
 };
 
-const isRequestHandlerExpanded = (handlerIndex) => {
-    return expandedItems.requestHandlers[handlerIndex] || false;
+const isExternalRequestHandlerExpanded = (handlerIndex) => {
+    return expandedItems.externalRequestHandlers[handlerIndex] || false;
+};
+
+const isSiteProcessorExpanded = (siteIndex, processorIndex) => {
+    const key = `${siteIndex}-${processorIndex}`;
+    return expandedItems.siteProcessors[key] || false;
+};
+
+// Toggle site subsections (processors, TLS)
+const toggleSiteSubsection = (siteIndex, subsection) => {
+    const key = `${siteIndex}-${subsection}`;
+    if (!expandedItems.siteSubsections[key]) {
+        expandedItems.siteSubsections[key] = false;
+    }
+    expandedItems.siteSubsections[key] = !expandedItems.siteSubsections[key];
+};
+
+const isSiteSubsectionExpanded = (siteIndex, subsection) => {
+    const key = `${siteIndex}-${subsection}`;
+    return expandedItems.siteSubsections[key] || false;
 };
 
 // Toggle core subsections
@@ -254,6 +281,20 @@ const toggleCoreSubsection = (subsection) => {
 
 const isCoreSubsectionExpanded = (subsection) => {
     return expandedItems.coreSubsections[subsection] || false;
+};
+
+// Get processors for a site by looking up request handlers
+const getSiteProcessors = (siteIndex) => {
+    if (!config.value || !config.value.sites || !config.value.sites[siteIndex]) {
+        return [];
+    }
+    const site = config.value.sites[siteIndex];
+    if (!site.request_handlers || !config.value.request_handlers) {
+        return [];
+    }
+
+    // Map request handler IDs to actual request handler objects
+    return site.request_handlers.map((handlerId) => config.value.request_handlers.find((h) => h.id === handlerId)).filter((handler) => handler !== undefined);
 };
 
 // Add new binding
@@ -290,20 +331,19 @@ const addSite = () => {
         config.value.sites = [];
     }
     const newId = Math.max(0, ...config.value.sites.map((s) => s.id)) + 1;
+
     config.value.sites.push({
         id: newId,
         hostnames: ['example.com'],
         is_default: false,
         is_enabled: true,
-        web_root: './www-default/',
-        web_root_index_file_list: ['index.html'],
-        enabled_handlers: [],
-        extra_headers: [],
         tls_cert_path: '',
         tls_cert_content: '',
         tls_key_path: '',
         tls_key_content: '',
         rewrite_functions: [],
+        request_handlers: [],
+        extra_headers: [],
         access_log_enabled: false,
         access_log_file: '',
     });
@@ -322,24 +362,22 @@ const removeSite = (index) => {
     }
 };
 
-// Add new request handler
-const addRequestHandler = () => {
+// Add new external request handler
+const addExternalRequestHandler = () => {
     if (!config.value.request_handlers) {
         config.value.request_handlers = [];
     }
 
-    // Generate a unique ID
-    const existingIds = config.value.request_handlers.map((h) => parseInt(h.id)).filter((id) => !isNaN(id));
-    const newId = existingIds.length > 0 ? (Math.max(...existingIds) + 1).toString() : '1';
+    // Generate a unique ID using crypto.randomUUID()
+    const newId = crypto.randomUUID();
 
     config.value.request_handlers.push({
         id: newId,
         is_enabled: true,
-        name: 'New Handler',
+        name: 'New External Handler',
         handler_type: 'php',
         request_timeout: 30,
         concurrent_threads: 0,
-        file_match: ['.php'],
         executable: '',
         ip_and_port: '',
         other_webroot: '',
@@ -348,17 +386,21 @@ const addRequestHandler = () => {
     });
 };
 
-// Remove request handler
-const removeRequestHandler = (index) => {
+// Remove external request handler
+const removeExternalRequestHandler = (index) => {
     if (config.value.request_handlers && config.value.request_handlers.length > index) {
         const handlerId = config.value.request_handlers[index].id;
         config.value.request_handlers.splice(index, 1);
 
-        // Remove handler ID from all sites that reference it
+        // Remove handler ID from all site processors that reference it
         if (config.value.sites) {
             config.value.sites.forEach((site) => {
-                if (site.enabled_handlers) {
-                    site.enabled_handlers = site.enabled_handlers.filter((id) => id !== handlerId);
+                if (site.processors) {
+                    site.processors.forEach((processor) => {
+                        if (processor.type === 'php' && processor.external_handler_id === handlerId) {
+                            processor.external_handler_id = '';
+                        }
+                    });
                 }
             });
         }
@@ -379,34 +421,20 @@ const removeHostname = (siteIndex, hostnameIndex) => {
     }
 };
 
-// Add index file to site
-const addIndexFile = (siteIndex) => {
-    if (config.value.sites && config.value.sites[siteIndex]) {
-        config.value.sites[siteIndex].web_root_index_file_list.push('index.html');
-    }
-};
-
-// Remove index file from site
-const removeIndexFile = (siteIndex, fileIndex) => {
-    if (config.value.sites && config.value.sites[siteIndex] && config.value.sites[siteIndex].web_root_index_file_list.length > fileIndex) {
-        config.value.sites[siteIndex].web_root_index_file_list.splice(fileIndex, 1);
-    }
-};
-
 // Add enabled handler to site
 const addEnabledHandler = (siteIndex) => {
     if (config.value.sites && config.value.sites[siteIndex]) {
         // Add the first available handler ID, or empty string if none available
         const availableHandlers = getAvailableRequestHandlers();
         const handlerId = availableHandlers.length > 0 ? availableHandlers[0].id : '';
-        config.value.sites[siteIndex].enabled_handlers.push(handlerId);
+        config.value.sites[siteIndex].request_handlers.push(handlerId);
     }
 };
 
 // Remove enabled handler from site
 const removeEnabledHandler = (siteIndex, handlerIndex) => {
-    if (config.value.sites && config.value.sites[siteIndex] && config.value.sites[siteIndex].enabled_handlers.length > handlerIndex) {
-        config.value.sites[siteIndex].enabled_handlers.splice(handlerIndex, 1);
+    if (config.value.sites && config.value.sites[siteIndex] && config.value.sites[siteIndex].request_handlers.length > handlerIndex) {
+        config.value.sites[siteIndex].request_handlers.splice(handlerIndex, 1);
     }
 };
 
@@ -506,19 +534,7 @@ const removeGzipContentType = (index) => {
     }
 };
 
-// Request handler helper functions
-const addFileMatch = (handlerIndex) => {
-    if (config.value.request_handlers && config.value.request_handlers[handlerIndex]) {
-        config.value.request_handlers[handlerIndex].file_match.push('.html');
-    }
-};
-
-const removeFileMatch = (handlerIndex, matchIndex) => {
-    if (config.value.request_handlers && config.value.request_handlers[handlerIndex] && config.value.request_handlers[handlerIndex].file_match.length > matchIndex) {
-        config.value.request_handlers[handlerIndex].file_match.splice(matchIndex, 1);
-    }
-};
-
+// External request handler helper functions
 const addHandlerConfig = (handlerIndex) => {
     if (config.value.request_handlers && config.value.request_handlers[handlerIndex]) {
         config.value.request_handlers[handlerIndex].extra_handler_config.push(['key', 'value']);
@@ -541,6 +557,159 @@ const removeEnvironmentVar = (handlerIndex, envIndex) => {
     if (config.value.request_handlers && config.value.request_handlers[handlerIndex] && config.value.request_handlers[handlerIndex].extra_environment.length > envIndex) {
         config.value.request_handlers[handlerIndex].extra_environment.splice(envIndex, 1);
     }
+};
+
+// ========== Site Processor Management Functions ==========
+
+// Add processor to site
+const addProcessorToSite = (siteIndex, processorType) => {
+    if (!config.value.sites || !config.value.sites[siteIndex]) return;
+
+    const site = config.value.sites[siteIndex];
+
+    // Initialize arrays if needed
+    if (!site.request_handlers) {
+        site.request_handlers = [];
+    }
+    if (!config.value.request_handlers) {
+        config.value.request_handlers = [];
+    }
+
+    // Create processor object with UUID
+    const processorId = crypto.randomUUID();
+    let newProcessor;
+
+    if (processorType === 'static') {
+        if (!config.value.static_file_processors) {
+            config.value.static_file_processors = [];
+        }
+        newProcessor = {
+            id: processorId,
+            web_root: './www-default',
+            web_root_index_file_list: ['index.html', 'index.htm'],
+        };
+        config.value.static_file_processors.push(newProcessor);
+    } else if (processorType === 'php') {
+        if (!config.value.php_processors) {
+            config.value.php_processors = [];
+        }
+        newProcessor = {
+            id: processorId,
+            handler_address: '',
+        };
+        config.value.php_processors.push(newProcessor);
+    } else if (processorType === 'proxy') {
+        if (!config.value.proxy_processors) {
+            config.value.proxy_processors = [];
+        }
+        newProcessor = {
+            id: processorId,
+            target_url: 'http://localhost:8080',
+        };
+        config.value.proxy_processors.push(newProcessor);
+    }
+
+    // Create RequestHandler that references the processor
+    const requestHandlerId = crypto.randomUUID();
+    const newRequestHandler = {
+        id: requestHandlerId,
+        is_enabled: true,
+        name: `${processorType.charAt(0).toUpperCase() + processorType.slice(1)} Processor`,
+        priority: 1,
+        processor_type: processorType,
+        processor_id: processorId,
+        url_match: ['*'],
+    };
+
+    config.value.request_handlers.push(newRequestHandler);
+    site.request_handlers.push(requestHandlerId);
+};
+
+// Remove processor from site
+const removeProcessorFromSite = (siteIndex, processorIndex) => {
+    const processors = getSiteProcessors(siteIndex);
+    if (!processors || processorIndex >= processors.length) return;
+
+    const requestHandler = processors[processorIndex];
+    const site = config.value.sites[siteIndex];
+
+    // Remove the request handler ID from site
+    const handlerIdIndex = site.request_handlers.indexOf(requestHandler.id);
+    if (handlerIdIndex !== -1) {
+        site.request_handlers.splice(handlerIdIndex, 1);
+    }
+
+    // Remove the actual processor from the appropriate array
+    if (requestHandler.processor_type === 'static' && config.value.static_file_processors) {
+        const idx = config.value.static_file_processors.findIndex((p) => p.id === requestHandler.processor_id);
+        if (idx !== -1) config.value.static_file_processors.splice(idx, 1);
+    } else if (requestHandler.processor_type === 'php' && config.value.php_processors) {
+        const idx = config.value.php_processors.findIndex((p) => p.id === requestHandler.processor_id);
+        if (idx !== -1) config.value.php_processors.splice(idx, 1);
+    } else if (requestHandler.processor_type === 'proxy' && config.value.proxy_processors) {
+        const idx = config.value.proxy_processors.findIndex((p) => p.id === requestHandler.processor_id);
+        if (idx !== -1) config.value.proxy_processors.splice(idx, 1);
+    }
+
+    // Remove the request handler from top level
+    const rhIndex = config.value.request_handlers.findIndex((h) => h.id === requestHandler.id);
+    if (rhIndex !== -1) {
+        config.value.request_handlers.splice(rhIndex, 1);
+    }
+};
+
+// Add URL match pattern to processor
+const addUrlMatchToProcessor = (siteIndex, processorIndex, value = '*') => {
+    const processors = getSiteProcessors(siteIndex);
+    if (processors && processors[processorIndex] && value.trim()) {
+        processors[processorIndex].url_match.push(value.trim());
+    }
+};
+
+// Remove URL match pattern from processor
+const removeUrlMatchFromProcessor = (siteIndex, processorIndex, matchIndex) => {
+    const processors = getSiteProcessors(siteIndex);
+    if (processors && processors[processorIndex]) {
+        processors[processorIndex].url_match.splice(matchIndex, 1);
+    }
+};
+
+// Add index file to static processor
+const addIndexFileToProcessor = (siteIndex, processorIndex) => {
+    const processors = getSiteProcessors(siteIndex);
+    if (!processors || !processors[processorIndex]) return;
+
+    const requestHandler = processors[processorIndex];
+    if (requestHandler.processor_type === 'static' && config.value.static_file_processors) {
+        const staticProcessor = config.value.static_file_processors.find((p) => p.id === requestHandler.processor_id);
+        if (staticProcessor && staticProcessor.web_root_index_file_list) {
+            staticProcessor.web_root_index_file_list.push('index.html');
+        }
+    }
+};
+
+// Remove index file from static processor
+const removeIndexFileFromProcessor = (siteIndex, processorIndex, fileIndex) => {
+    const processors = getSiteProcessors(siteIndex);
+    if (!processors || !processors[processorIndex]) return;
+
+    const requestHandler = processors[processorIndex];
+    if (requestHandler.processor_type === 'static' && config.value.static_file_processors) {
+        const staticProcessor = config.value.static_file_processors.find((p) => p.id === requestHandler.processor_id);
+        if (staticProcessor && staticProcessor.web_root_index_file_list) {
+            staticProcessor.web_root_index_file_list.splice(fileIndex, 1);
+        }
+    }
+};
+
+// Get available external request handlers for PHP processor
+const getAvailableExternalHandlers = () => {
+    return (
+        config.value.request_handlers?.map((h) => ({
+            id: h.id,
+            label: `${h.name} (${h.handler_type})`,
+        })) || []
+    );
 };
 
 // MB to bytes conversion for file cache
@@ -639,7 +808,6 @@ onMounted(() => {
                         <span v-else>Reload Config</span>
                     </button>
 
-
                     <!-- Unsaved changes indicator -->
                     <div v-if="hasUnsavedChanges" class="changes-indicator-top">You have unsaved changes</div>
                 </div>
@@ -726,7 +894,7 @@ onMounted(() => {
                                 <h4 class="site-hostname-title">{{ site.hostnames.join(' - ') || 'No hostnames' }}</h4>
                                 <span v-if="site.is_default" class="default-badge">DEFAULT</span>
                                 <span v-if="!site.is_enabled" class="admin-badge">DISABLED</span>
-                                <span v-if="getSiteBindings(site.id).some(bindingId => config.bindings?.find(b => b.id === bindingId)?.is_admin)" class="admin-badge">ADMIN PORTAL</span>
+                                <span v-if="getSiteBindings(site.id).some((bindingId) => config.bindings?.find((b) => b.id === bindingId)?.is_admin)" class="admin-badge">ADMIN PORTAL</span>
                             </div>
                             <button @click.stop="removeSite(siteIndex)" class="remove-button compact" :disabled="config.sites.length === 1">Remove</button>
                         </div>
@@ -760,24 +928,14 @@ onMounted(() => {
                                 </div>
                             </div>
 
-                            <div class="form-grid compact">
+                            <div v-if="getSiteBindings(site.id).length === 0" class="form-grid compact">
                                 <div class="form-field">
-                                    <div v-if="getSiteBindings(site.id).length === 0" class="empty-association-warning-inline">⚠️ This site is not associated with any bindings and will not be accessible.</div>
+                                    <div class="empty-association-warning-inline">⚠️ This site is not associated with any bindings and will not be accessible.</div>
                                 </div>
                             </div>
 
-                            <div class="form-grid compact">
+                            <div v-if="site.access_log_enabled" class="form-grid compact">
                                 <div class="form-field">
-                                    <label>Web Root
-
-                                        <span class="help-icon" data-tooltip="The file root directory for the website's files. This is where the server will look for the site's content. Can be absolute full path or a relative path to Grux server location, such as './www-default'.">?</span>
-                                    </label>
-                                    <input v-model="site.web_root" type="text" />
-                                </div>
-                            </div>
-
-                            <div class="form-grid compact">
-                                <div v-if="site.access_log_enabled" class="form-field">
                                     <label>
                                         Access Log File
                                         <span class="help-icon" data-tooltip="Path to the access log file. If relative to grux base directory, use it like this './logs/mylog.log'. You can also have a full absolute path like '/var/logs/mylog.log' or 'C:/logs/mylog.log'.">?</span>
@@ -786,121 +944,205 @@ onMounted(() => {
                                 </div>
                             </div>
 
+                            <!-- Request Processing Section -->
+                            <div class="request-processing-section">
+                                <div class="subsection-header compact" @click="toggleSiteSubsection(siteIndex, 'requestProcessing')">
+                                    <div class="header-left">
+                                        <span class="section-icon" :class="{ expanded: isSiteSubsectionExpanded(siteIndex, 'requestProcessing') }">▶</span>
+                                        <h5 class="subsection-title">Hostnames, Headers & Rewrites</h5>
+                                    </div>
+                                </div>
+
+                                <div v-if="isSiteSubsectionExpanded(siteIndex, 'requestProcessing')" class="section-top-margin">
+                                    <!-- Hostnames -->
+                                    <div class="form-field">
+                                        <div class="list-field compact">
+                                            <label>Hostnames (use * to match all hostnames)</label>
+                                            <div class="tag-field">
+                                                <span v-for="(hostname, hostnameIndex) in site.hostnames" :key="hostnameIndex" class="tag-item">
+                                                    {{ hostname }}
+                                                    <button @click="removeHostname(siteIndex, hostnameIndex)" class="tag-remove-button" type="button">×</button>
+                                                </span>
+                                                <input
+                                                    type="text"
+                                                    class="tag-input"
+                                                    placeholder="Add hostname..."
+                                                    @keydown.enter.prevent="
+                                                        (e) => {
+                                                            if (e.target.value.trim()) {
+                                                                addHostname(siteIndex);
+                                                                site.hostnames[site.hostnames.length - 1] = e.target.value.trim();
+                                                                e.target.value = '';
+                                                            }
+                                                        }
+                                                    "
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="two-column-layout">
+                                        <div class="list-field compact half-width">
+                                            <!-- Rewrite Functions -->
+                                            <div class="form-field">
+                                                <label>Rewrite Functions - Pre-defined request rewrites</label>
+                                                <div class="doc-link">
+                                                    <a href="https://grux.eu/docs/#rewrite-functions" target="_blank">Documentation on rewrite functions</a>
+                                                </div>
+                                                <div class="list-items">
+                                                    <div v-for="(func, funcIndex) in site.rewrite_functions" :key="funcIndex" class="list-item">
+                                                        <select v-model="site.rewrite_functions[funcIndex]" class="rewrite-select">
+                                                            <option value="">-- Select Function --</option>
+                                                            <option v-for="option in rewriteFunctionOptions" :key="option" :value="option">
+                                                                {{ option }}
+                                                            </option>
+                                                        </select>
+                                                        <button @click="removeRewriteFunction(siteIndex, funcIndex)" class="remove-item-button">×</button>
+                                                    </div>
+                                                    <button @click="addRewriteFunction(siteIndex)" class="add-item-button">+ Add Function</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="list-field compact half-width">
+                                            <!-- Extra Headers -->
+                                            <div class="form-field">
+                                                <label>Extra HTTP Headers</label>
+                                                <div class="list-items">
+                                                    <div v-for="(hdr, hdrIndex) in site.extra_headers || []" :key="hdrIndex" class="list-item key-value">
+                                                        <input v-model="site.extra_headers[hdrIndex].key" type="text" placeholder="Header Key" class="key-input" />
+                                                        <input v-model="site.extra_headers[hdrIndex].value" type="text" placeholder="Header Value" class="value-input" />
+                                                        <button @click="removeExtraHeader(siteIndex, hdrIndex)" class="remove-item-button">×</button>
+                                                    </div>
+                                                    <button @click="addExtraHeader(siteIndex)" class="add-item-button">+ Add Header</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Processors Section -->
+                            <div class="processors-section">
+                                <div class="subsection-header compact" @click="toggleSiteSubsection(siteIndex, 'processors')">
+                                    <div class="header-left">
+                                        <span class="section-icon" :class="{ expanded: isSiteSubsectionExpanded(siteIndex, 'processors') }">▶</span>
+                                        <h5 class="subsection-title">Processors ({{ getSiteProcessors(siteIndex).length }})</h5>
+                                    </div>
+                                    <div class="processors-toolbar">
+                                        <button @click.stop="addProcessorToSite(siteIndex, 'static')" class="add-button small">+ Static Files</button>
+                                        <button @click.stop="addProcessorToSite(siteIndex, 'php')" class="add-button small">+ PHP</button>
+                                        <button @click.stop="addProcessorToSite(siteIndex, 'proxy')" class="add-button small">+ Proxy</button>
+                                    </div>
+                                </div>
+
+                                <div v-if="isSiteSubsectionExpanded(siteIndex, 'processors')">
+                                    <div v-if="getSiteProcessors(siteIndex).length === 0" class="empty-state-section small">
+                                        <div class="empty-icon">⚙️</div>
+                                        <p>No processors configured. This site will be unreachable.</p>
+                                    </div>
+
+                                    <!-- Processors List -->
+                                    <div v-for="(processor, processorIndex) in getSiteProcessors(siteIndex)" :key="processor.id" class="processor-item">
+                                        <div class="item-header compact" @click="toggleSiteProcessor(siteIndex, processorIndex)">
+                                            <div class="header-left">
+                                                <span class="section-icon" :class="{ expanded: isSiteProcessorExpanded(siteIndex, processorIndex) }">▶</span>
+                                                <span v-if="processor.processor_type === 'static'" class="hierarchy-indicator">📄</span>
+                                                <span v-else-if="processor.processor_type === 'php'" class="hierarchy-indicator">🐘</span>
+                                                <span v-else-if="processor.processor_type === 'proxy'" class="hierarchy-indicator">🔀</span>
+                                                <h6>{{ processor.name || processor.processor_type?.toUpperCase() + ' Processor' }}</h6>
+                                                <span class="priority-badge">Priority: {{ processor.priority }}</span>
+                                                <span v-if="!processor.is_enabled" class="admin-badge">DISABLED</span>
+                                            </div>
+                                            <button @click.stop="removeProcessorFromSite(siteIndex, processorIndex)" class="remove-button compact small">Remove</button>
+                                        </div>
+
+                                        <!-- Processor Content -->
+                                        <div v-if="isSiteProcessorExpanded(siteIndex, processorIndex)" class="item-content">
+                                            <div class="processor-config">
+                                                <div class="form-grid compact">
+                                                    <div class="form-field checkbox-grid compact">
+                                                        <label>
+                                                            <input v-model="processor.is_enabled" type="checkbox" />
+                                                            Enabled
+                                                        </label>
+                                                    </div>
+                                                </div>
+
+                                                <div class="form-grid compact">
+                                                    <div class="form-field">
+                                                        <label>Name</label>
+                                                        <input v-model="processor.name" type="text" placeholder="Processor name" />
+                                                    </div>
+                                                    <div class="form-field">
+                                                        <label>Priority (lower = higher priority)</label>
+                                                        <input v-model.number="processor.priority" type="number" min="1" max="255" />
+                                                    </div>
+
+                                                    <div class="form-field">
+                                                        <label>URL Match Patterns</label>
+                                                        <div class="tag-field">
+                                                            <div v-for="(pattern, patternIndex) in processor.url_match" :key="patternIndex" class="tag-item">
+                                                                {{ pattern }}
+                                                                <button @click="removeUrlMatchFromProcessor(siteIndex, processorIndex, patternIndex)" class="tag-remove-button">×</button>
+                                                            </div>
+                                                            <input
+                                                                @keydown.enter.prevent="
+                                                                    addUrlMatchToProcessor(siteIndex, processorIndex, $event.target.value);
+                                                                    $event.target.value = '';
+                                                                "
+                                                                type="text"
+                                                                placeholder="Enter pattern and press Enter"
+                                                                class="tag-input"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- TLS Certificate Settings -->
                             <div class="tls-settings-section">
-                                <h5 class="subsection-title">TLS Certificate Settings (Optional)</h5>
-                                <div class="info-field">
-                                    <p><strong>Note:</strong> You can either specify file paths or paste the certificate/key content directly. If both are provided, the file paths take precedence.</p>
-                                </div>
-                                <div class="tls-grid-full">
-                                    <div class="tls-paths-row">
-                                        <div class="form-field">
-                                            <label>Certificate Path
-                                                <span class="help-icon" data-tooltip="Path to the TLS certificate file. You can specify an absolute path or a path relative to the Grux server base directory. Such as './certs/mycert.pem' or '/etc/ssl/certs/mycert.pem'.">?</span>
-                                            </label>
-                                            <input v-model="site.tls_cert_path" type="text" placeholder="Path to certificate file" />
-                                        </div>
-                                        <div class="form-field">
-                                            <label>Private Key Path
-                                                <span class="help-icon" data-tooltip="Path to the TLS private key file. You can specify an absolute path or a path relative to the Grux server base directory. Such as './certs/mykey.pem' or '/etc/ssl/private/mykey.pem'.">?</span>
-                                            </label>
-                                            <input v-model="site.tls_key_path" type="text" placeholder="Path to private key file" />
-                                        </div>
-                                    </div>
-                                    <div class="tls-content-row">
-                                        <div class="form-field">
-                                            <label>Certificate Content (PEM format)</label>
-                                            <textarea v-model="site.tls_cert_content" placeholder="Paste your certificate content here in PEM format (-----BEGIN CERTIFICATE-----...)" rows="6" class="tls-content-textarea"></textarea>
-                                        </div>
-                                        <div class="form-field">
-                                            <label>Private Key Content (PEM format)</label>
-                                            <textarea v-model="site.tls_key_content" placeholder="Paste your private key content here in PEM format (-----BEGIN PRIVATE KEY-----...)" rows="6" class="tls-content-textarea"></textarea>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Lists in two columns layout -->
-                            <div class="two-column-layout">
-                                <!-- Hostnames -->
-                                <div class="list-field compact third-width">
-                                    <label>Hostnames (use * to match all hostnames)</label>
-                                    <div class="list-items">
-                                        <div v-for="(hostname, hostnameIndex) in site.hostnames" :key="hostnameIndex" class="list-item">
-                                            <input v-model="site.hostnames[hostnameIndex]" type="text" />
-                                            <button @click="removeHostname(siteIndex, hostnameIndex)" class="remove-item-button">×</button>
-                                        </div>
-                                        <button @click="addHostname(siteIndex)" class="add-item-button">+ Add Hostname</button>
+                                <div class="subsection-header compact" @click="toggleSiteSubsection(siteIndex, 'tls')">
+                                    <div class="header-left">
+                                        <span class="section-icon" :class="{ expanded: isSiteSubsectionExpanded(siteIndex, 'tls') }">▶</span>
+                                        <h5 class="subsection-title">TLS Certificate Settings</h5>
                                     </div>
                                 </div>
 
-                                <!-- Index Files -->
-                                <div class="list-field compact third-width">
-                                    <label>Index Files</label>
-                                    <div class="list-items">
-                                        <div v-for="(file, fileIndex) in site.web_root_index_file_list" :key="fileIndex" class="list-item">
-                                            <input v-model="site.web_root_index_file_list[fileIndex]" type="text" />
-                                            <button @click="removeIndexFile(siteIndex, fileIndex)" class="remove-item-button">×</button>
+                                <div v-if="isSiteSubsectionExpanded(siteIndex, 'tls')">
+                                    <div class="info-field">
+                                        <p><strong>Note:</strong> You can either specify file paths or paste the certificate/key content directly. If both are provided, the file paths take precedence.</p>
+                                    </div>
+                                    <div class="tls-grid-full">
+                                        <div class="tls-paths-row">
+                                            <div class="form-field">
+                                                <label
+                                                    >Certificate Path
+                                                    <span class="help-icon" data-tooltip="Path to the TLS certificate file. You can specify an absolute path or a path relative to the Grux server base directory. Such as './certs/mycert.pem' or '/etc/ssl/certs/mycert.pem'.">?</span>
+                                                </label>
+                                                <input v-model="site.tls_cert_path" type="text" placeholder="Path to certificate file" />
+                                            </div>
+                                            <div class="form-field">
+                                                <label
+                                                    >Private Key Path
+                                                    <span class="help-icon" data-tooltip="Path to the TLS private key file. You can specify an absolute path or a path relative to the Grux server base directory. Such as './certs/mykey.pem' or '/etc/ssl/private/mykey.pem'.">?</span>
+                                                </label>
+                                                <input v-model="site.tls_key_path" type="text" placeholder="Path to private key file" />
+                                            </div>
                                         </div>
-                                        <button @click="addIndexFile(siteIndex)" class="add-item-button">+ Add Index File</button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Second row for handlers and rewrite functions -->
-                            <div class="two-column-layout">
-                                <!-- Enabled Handlers -->
-                                <div class="list-field compact half-width">
-                                    <label>Enabled Request Handlers</label>
-                                    <div class="list-items">
-                                        <div v-for="(handlerId, handlerIndex) in site.enabled_handlers" :key="handlerIndex" class="list-item">
-                                            <select v-model="site.enabled_handlers[handlerIndex]" class="handler-select">
-                                                <option value="">-- Select Handler --</option>
-                                                <option v-for="handler in getAvailableRequestHandlers()" :key="handler.id" :value="handler.id">
-                                                    {{ handler.label }}
-                                                </option>
-                                            </select>
-                                            <button @click="removeEnabledHandler(siteIndex, handlerIndex)" class="remove-item-button">×</button>
+                                        <div class="tls-content-row">
+                                            <div class="form-field">
+                                                <label>Certificate Content (PEM format)</label>
+                                                <textarea v-model="site.tls_cert_content" placeholder="Paste your certificate content here in PEM format (-----BEGIN CERTIFICATE-----...)" rows="6" class="tls-content-textarea"></textarea>
+                                            </div>
+                                            <div class="form-field">
+                                                <label>Private Key Content (PEM format)</label>
+                                                <textarea v-model="site.tls_key_content" placeholder="Paste your private key content here in PEM format (-----BEGIN PRIVATE KEY-----...)" rows="6" class="tls-content-textarea"></textarea>
+                                            </div>
                                         </div>
-                                        <button @click="addEnabledHandler(siteIndex)" class="add-item-button">+ Add Handler</button>
-                                    </div>
-                                    <div v-if="site.enabled_handlers.length === 0" class="handler-info">
-                                        <p><strong>Info:</strong> No request handlers are enabled for this site. Static files will be served directly.</p>
-                                    </div>
-                                </div>
-
-                                <!-- Rewrite Functions -->
-                                <div class="list-field compact half-width">
-                                    <label>Rewrite Functions - Pre-defined request rewrites</label>
-                                    <div class="doc-link">
-                                        <a href="https://grux.eu/docs/#rewrite-functions" target="_blank">Documentation on rewrite functions</a>
-                                    </div>
-                                    <div class="list-items">
-                                        <div v-for="(func, funcIndex) in site.rewrite_functions" :key="funcIndex" class="list-item">
-                                            <select v-model="site.rewrite_functions[funcIndex]" class="rewrite-select">
-                                                <option value="">-- Select Function --</option>
-                                                <option v-for="option in rewriteFunctionOptions" :key="option" :value="option">
-                                                    {{ option }}
-                                                </option>
-                                            </select>
-                                            <button @click="removeRewriteFunction(siteIndex, funcIndex)" class="remove-item-button">×</button>
-                                        </div>
-                                        <button @click="addRewriteFunction(siteIndex)" class="add-item-button">+ Add Function</button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Extra Headers -->
-                            <div class="two-column-layout">
-                                <div class="list-field compact half-width">
-                                    <label>Extra HTTP Headers</label>
-                                    <div class="list-items">
-                                        <div v-for="(hdr, hdrIndex) in (site.extra_headers || [])" :key="hdrIndex" class="list-item key-value">
-                                            <input v-model="site.extra_headers[hdrIndex].key" type="text" placeholder="Header Key" class="key-input" />
-                                            <input v-model="site.extra_headers[hdrIndex].value" type="text" placeholder="Header Value" class="value-input" />
-                                            <button @click="removeExtraHeader(siteIndex, hdrIndex)" class="remove-item-button">×</button>
-                                        </div>
-                                        <button @click="addExtraHeader(siteIndex)" class="add-item-button">+ Add Header</button>
                                     </div>
                                 </div>
                             </div>
@@ -909,37 +1151,37 @@ onMounted(() => {
                 </div>
             </div>
 
-            <!-- Request Handlers Section -->
+            <!-- External Request Handlers Section -->
             <div class="config-section">
-                <div class="section-header" @click="toggleSection('requestHandlers')">
-                    <span class="section-icon" :class="{ expanded: expandedSections.requestHandlers }">▶</span>
-                    <span class="section-title-icon">⚙️</span>
-                    <h3>Request Handlers</h3>
-                    <button @click.stop="addRequestHandler" class="add-button">+ Add Handler</button>
+                <div class="section-header" @click="toggleSection('externalRequestHandlers')">
+                    <span class="section-icon" :class="{ expanded: expandedSections.externalRequestHandlers }">▶</span>
+                    <span class="section-title-icon">🔌</span>
+                    <h3>External Request Handlers</h3>
+                    <button @click.stop="addExternalRequestHandler" class="add-button">+ Add Handler</button>
                 </div>
 
-                <div v-if="expandedSections.requestHandlers" class="section-content">
+                <div v-if="expandedSections.externalRequestHandlers" class="section-content">
                     <div v-if="!config.request_handlers || config.request_handlers.length === 0" class="empty-state-section">
-                        <div class="empty-icon">⚙️</div>
-                        <p>No request handlers configured</p>
-                        <button @click="addRequestHandler" class="add-button">+ Add First Handler</button>
+                        <div class="empty-icon">🔌</div>
+                        <p>No external request handlers configured</p>
+                        <button @click="addExternalRequestHandler" class="add-button">+ Add First Handler</button>
                     </div>
 
-                    <!-- Request Handlers List -->
+                    <!-- External Request Handlers List -->
                     <div v-for="(handler, handlerIndex) in config.request_handlers" :key="handler.id" class="server-item">
-                        <div class="item-header compact" @click="toggleRequestHandler(handlerIndex)">
+                        <div class="item-header compact" @click="toggleExternalRequestHandler(handlerIndex)">
                             <div class="header-left">
-                                <span class="section-icon" :class="{ expanded: isRequestHandlerExpanded(handlerIndex) }">▶</span>
-                                <span class="hierarchy-indicator handler-indicator">⚙️</span>
+                                <span class="section-icon" :class="{ expanded: isExternalRequestHandlerExpanded(handlerIndex) }">▶</span>
+                                <span class="hierarchy-indicator handler-indicator">🔌</span>
                                 <h4>{{ handler.name }}</h4>
-                                <span class="handler-type-badge">{{ handler.handler_type.toUpperCase() }}</span>
+                                <span class="handler-type-badge">{{ handler.handler_type?.toUpperCase() || 'NO TYPE' }}</span>
                                 <span v-if="!handler.is_enabled" class="admin-badge">DISABLED</span>
                             </div>
-                            <button @click.stop="removeRequestHandler(handlerIndex)" class="remove-button compact">Remove</button>
+                            <button @click.stop="removeExternalRequestHandler(handlerIndex)" class="remove-button compact">Remove</button>
                         </div>
 
-                        <!-- Request Handler Content -->
-                        <div v-if="isRequestHandlerExpanded(handlerIndex)" class="item-content">
+                        <!-- External Request Handler Content -->
+                        <div v-if="isExternalRequestHandlerExpanded(handlerIndex)" class="item-content">
                             <!-- Enabled checkbox at the top -->
                             <div class="form-grid compact">
                                 <div class="form-field checkbox-grid compact">
@@ -956,12 +1198,12 @@ onMounted(() => {
                                 <div class="handler-column">
                                     <div class="form-field">
                                         <label>Handler Name</label>
-                                        <input v-model="handler.name" type="text" placeholder="e.g., PHP Handler" />
+                                        <input v-model="handler.name" type="text" placeholder="e.g., PHP-CGI Pool" />
                                     </div>
                                     <div class="form-field">
                                         <label>Handler Type</label>
                                         <select v-model="handler.handler_type">
-                                            <option value=""></option>
+                                            <option value="">-- Select Type --</option>
                                             <option value="php">PHP</option>
                                         </select>
                                     </div>
@@ -986,22 +1228,8 @@ onMounted(() => {
                                         <input v-model="handler.ip_and_port" type="text" placeholder="e.g., 127.0.0.1:9000" />
                                     </div>
                                     <div class="form-field">
-                                        <label>Alternative Web Root (optional - Used in cases like PHP-FPM running in Docker, with its own file system)</label>
+                                        <label>Alternative Web Root (optional)</label>
                                         <input v-model="handler.other_webroot" type="text" placeholder="Override site web root for this handler" />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- File Match Patterns -->
-                            <div class="two-column-layout">
-                                <div class="list-field compact half-width">
-                                    <label>File Match Patterns</label>
-                                    <div class="list-items">
-                                        <div v-for="(pattern, patternIndex) in handler.file_match" :key="patternIndex" class="list-item">
-                                            <input v-model="handler.file_match[patternIndex]" type="text" placeholder=".php" />
-                                            <button @click="removeFileMatch(handlerIndex, patternIndex)" class="remove-item-button">×</button>
-                                        </div>
-                                        <button @click="addFileMatch(handlerIndex)" class="add-item-button">+ Add Pattern</button>
                                     </div>
                                 </div>
                             </div>
@@ -1134,11 +1362,6 @@ onMounted(() => {
             </div>
         </div>
 
-        <!-- Empty State -->
-        <div v-else class="empty-state">
-            <button @click="loadConfiguration" class="load-button">Load Configuration</button>
-        </div>
-
         <!-- Reload Configuration Modal -->
         <div v-if="showReloadModal" class="modal-overlay" @click="hideReloadConfirmation">
             <div class="modal-content" @click.stop>
@@ -1173,7 +1396,16 @@ onMounted(() => {
                 <div class="modal-footer">
                     <div v-if="reloadError" class="modal-actions-error">
                         <button @click="hideReloadConfirmation" class="modal-button secondary">Close</button>
-                        <button @click="() => { reloadError = ''; confirmReloadConfiguration(); }" class="modal-button danger" :disabled="isReloading">
+                        <button
+                            @click="
+                                () => {
+                                    reloadError = '';
+                                    confirmReloadConfiguration();
+                                }
+                            "
+                            class="modal-button danger"
+                            :disabled="isReloading"
+                        >
                             <span v-if="isReloading">Reloading...</span>
                             <span v-else>Try Again</span>
                         </button>
@@ -1327,7 +1559,7 @@ onMounted(() => {
 }
 
 .list-field.compact {
-    margin: 1rem;
+    margin: 0;
     padding: 1rem;
 }
 
@@ -1654,6 +1886,10 @@ onMounted(() => {
     background: #fafbfc;
 }
 
+.section-top-margin {
+    margin-top: 20px;
+}
+
 .server-item {
     margin: 1rem;
     background: white;
@@ -1730,11 +1966,104 @@ onMounted(() => {
 
 .subsection-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     margin: 1rem 1.25rem 0.75rem 1.25rem;
     padding-bottom: 0.375rem;
     border-bottom: 2px solid #e2e8f0;
+}
+
+.subsection-header.compact {
+    cursor: pointer;
+    padding: 0.75rem 1rem;
+    margin: 0;
+    border-radius: 6px;
+    transition: background 0.2s ease;
+    border: 0;
+}
+
+.subsection-header.compact:hover {
+    background: #f8fafc;
+}
+
+.subsection-content {
+    padding: 1rem 1.25rem;
+}
+
+/* Tag Field Styles */
+.tag-field {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+    min-height: 48px;
+    align-items: center;
+    transition: all 0.2s ease;
+}
+
+.tag-field:focus-within {
+    border-color: #3b82f6;
+    background: white;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.tag-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.375rem 0.625rem;
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: white;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.25;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+}
+
+.tag-item:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.tag-remove-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 0.125rem;
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    font-size: 0.875rem;
+    line-height: 1;
+    transition: all 0.2s ease;
+}
+
+.tag-remove-button:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.1);
+}
+
+.tag-input {
+    flex: 1;
+    min-width: 150px;
+    border: none;
+    outline: none;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.875rem;
+    background: transparent;
+    color: #1e293b;
+}
+
+.tag-input::placeholder {
+    color: #94a3b8;
 }
 
 .subsection-header h5,
@@ -1766,8 +2095,8 @@ onMounted(() => {
 }
 
 .add-button.small {
-    padding: 0.375rem 0.75rem;
-    font-size: 0.8rem;
+    padding: 0.275rem 0.55rem;
+    font-size: 12px;
 }
 
 .remove-button {
@@ -1806,7 +2135,7 @@ onMounted(() => {
 
 .form-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
     gap: 1.5rem;
     padding: 1.5rem 1.25rem;
     background: white;
@@ -2084,14 +2413,6 @@ onMounted(() => {
 }
 
 /* TLS Settings Section */
-.tls-settings-section {
-    margin: 1rem 1.25rem;
-    padding: 1.25rem;
-    background: #f8fafc;
-    border-radius: 8px;
-    border: 1px solid #e2e8f0;
-}
-
 .subsection-title {
     margin: 0 0 1rem 0;
     font-size: 0.875rem;
@@ -2168,6 +2489,49 @@ onMounted(() => {
 .tls-content-textarea::placeholder {
     color: #9ca3af;
     font-size: 0.8rem;
+}
+
+/* Request Processing Section */
+.request-processing-section,
+.processors-section,
+.tls-settings-section {
+    margin: 1rem 1.25rem;
+    padding: 5px;
+    background: #f8fafc;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+}
+
+.processors-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0 0 0 20px;
+    flex-wrap: wrap;
+}
+
+.processor-item {
+    margin: 0.75rem 0;
+    background: white;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+}
+
+.processor-item .item-header {
+    background: linear-gradient(135deg, #fefcfb 0%, #f3f4f6 100%);
+    border-left: 3px solid #8b5cf6;
+    margin-left: -3px;
+}
+
+.processor-item .item-header h6 {
+    margin: 0;
+    font-weight: 700;
+    color: #6b21a8;
+    font-size: 0.9rem;
+}
+
+.processor-config {
+    padding: 0;
 }
 
 .info-field {
@@ -2530,6 +2894,15 @@ onMounted(() => {
     color: #7c3aed;
 }
 
+.priority-badge {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    background: #fef3c7;
+    color: #92400e;
+}
+
 .handler-select {
     flex: 1;
     padding: 0.45rem;
@@ -2687,7 +3060,6 @@ onMounted(() => {
         gap: 1rem;
     }
 }
-
 
 /* Modal Styles */
 .modal-overlay {

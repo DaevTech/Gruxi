@@ -7,33 +7,26 @@ use crate::core::monitoring::get_monitoring_state;
 use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
 use crate::core::triggers::get_trigger_handler;
 use crate::http::http_util::full;
-use http_body_util::BodyExt;
+use crate::http::requests::grux_request::GruxRequest;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
-use hyper::{Request, Response};
+use hyper::{Response};
 use crate::logging::syslog::{error, debug, info};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
 use std::path::Path;
 
-pub async fn handle_login_request(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn handle_login_request(mut grux_request:GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check if this is a POST request
-    if req.method() != hyper::Method::POST {
+    if grux_request.get_http_method() != "POST" {
         let mut resp = Response::new(full("Method not allowed"));
         *resp.status_mut() = hyper::StatusCode::METHOD_NOT_ALLOWED;
         return Ok(resp);
     }
 
     // Read the request body
-    let body_bytes = match req.collect().await {
-        Ok(body) => body.to_bytes(),
-        Err(_) => {
-            let mut resp = Response::new(full("Failed to read request body"));
-            *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
-            return Ok(resp);
-        }
-    };
+    let body_bytes = grux_request.get_body_bytes();
 
     // Parse JSON body
     let login_request: LoginRequest = match serde_json::from_slice(&body_bytes) {
@@ -96,16 +89,16 @@ pub async fn handle_login_request(req: Request<hyper::body::Incoming>, _admin_si
     Ok(resp)
 }
 
-pub async fn handle_logout_request(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn handle_logout_request(mut grux_request: GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check if this is a POST request
-    if req.method() != hyper::Method::POST {
+    if grux_request.get_http_method() != "POST" {
         let mut resp = Response::new(full("Method not allowed"));
         *resp.status_mut() = hyper::StatusCode::METHOD_NOT_ALLOWED;
         return Ok(resp);
     }
 
     // Get the session token from Authorization header or request body
-    let token = get_session_token_from_request(&req).await;
+    let token = get_session_token_from_request(&grux_request).await;
 
     if let Some(token) = token {
         match invalidate_session(&token) {
@@ -142,9 +135,9 @@ pub async fn handle_logout_request(req: Request<hyper::body::Incoming>, _admin_s
     }
 }
 
-pub async fn admin_get_configuration_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_get_configuration_endpoint(grux_request: GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check authentication first
-    match require_authentication(&req).await {
+    match require_authentication(&grux_request).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with getting configuration
             debug("User authenticated, retrieving configuration".to_string());
@@ -182,9 +175,9 @@ pub async fn admin_get_configuration_endpoint(req: Request<hyper::body::Incoming
     Ok(resp)
 }
 
-pub async fn admin_post_configuration_reload(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_post_configuration_reload(grux_request: GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check authentication first
-    match require_authentication(&req).await {
+    match require_authentication(&grux_request).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with reloading configuration
             debug("User authenticated, reloading configuration".to_string());
@@ -220,9 +213,9 @@ pub async fn admin_post_configuration_reload(req: Request<hyper::body::Incoming>
     Ok(resp)
 }
 
-pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_post_configuration_endpoint(mut grux_request: GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check if this is a POST request
-    if req.method() != hyper::Method::POST {
+    if grux_request.get_http_method() != "POST" {
         let mut resp = Response::new(full(r#"{"error": "Method not allowed"}"#));
         *resp.status_mut() = hyper::StatusCode::METHOD_NOT_ALLOWED;
         resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
@@ -230,7 +223,7 @@ pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incomin
     }
 
     // Check authentication first
-    match require_authentication(&req).await {
+    match require_authentication(&grux_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated for configuration update".to_string());
         }
@@ -246,16 +239,13 @@ pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incomin
     }
 
     // Read the request body
-    let body_bytes = match req.collect().await {
-        Ok(body) => body.to_bytes(),
-        Err(e) => {
-            error(format!("Failed to read request body: {}", e));
-            let mut resp = Response::new(full(r#"{"error": "Failed to read request body"}"#));
-            *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
-            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
-            return Ok(resp);
-        }
-    };
+    if grux_request.get_body_size() == 0 {
+        let mut resp = Response::new(full(r#"{"error": "Empty request body"}"#));
+        *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+        resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        return Ok(resp);
+    }
+    let body_bytes = grux_request.get_body_bytes();
 
     // Parse JSON body into Configuration struct
     let mut configuration: Configuration = match serde_json::from_slice(&body_bytes) {
@@ -343,9 +333,9 @@ pub async fn admin_post_configuration_endpoint(req: Request<hyper::body::Incomin
 }
 
 // Helper function to extract session token from request
-async fn get_session_token_from_request(req: &Request<hyper::body::Incoming>) -> Option<String> {
+async fn get_session_token_from_request(grux_request: &GruxRequest) -> Option<String> {
     // First, check for Authorization header (Bearer token)
-    if let Some(auth_header) = req.headers().get("Authorization") {
+    if let Some(auth_header) = grux_request.get_headers().get("Authorization") {
         if let Ok(auth_str) = auth_header.to_str() {
             if auth_str.starts_with("Bearer ") {
                 return Some(auth_str[7..].to_string());
@@ -362,8 +352,8 @@ pub fn verify_session(token: &str) -> Result<Option<crate::core::admin_user::Ses
 }
 
 // Middleware-like function to check if request is authenticated
-pub async fn require_authentication(req: &Request<hyper::body::Incoming>) -> Result<Option<crate::core::admin_user::Session>, Response<BoxBody<Bytes, hyper::Error>>> {
-    let token = get_session_token_from_request(req).await;
+pub async fn require_authentication(grux_request: &GruxRequest) -> Result<Option<crate::core::admin_user::Session>, Response<BoxBody<Bytes, hyper::Error>>> {
+    let token = get_session_token_from_request(grux_request).await;
 
     if let Some(token) = token {
         match verify_session(&token) {
@@ -391,9 +381,9 @@ pub async fn require_authentication(req: &Request<hyper::body::Incoming>) -> Res
 }
 
 // Admin monitoring endpoint - returns monitoring data as JSON
-pub async fn admin_monitoring_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_monitoring_endpoint(grux_request: GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check authentication first
-    match require_authentication(&req).await {
+    match require_authentication(&grux_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated, retrieving monitoring data".to_string());
         }
@@ -418,7 +408,7 @@ pub async fn admin_monitoring_endpoint(req: Request<hyper::body::Incoming>, _adm
 }
 
 // Admin healthcheck endpoint - returns simple status without authentication
-pub async fn admin_healthcheck_endpoint(_req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_healthcheck_endpoint(_grux_request: GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     let mut resp = Response::new(full("absolutely"));
     resp.headers_mut().insert("Content-Type", "text/plain".parse().unwrap());
     *resp.status_mut() = hyper::StatusCode::OK;
@@ -426,9 +416,9 @@ pub async fn admin_healthcheck_endpoint(_req: Request<hyper::body::Incoming>, _a
 }
 
 // Admin logs endpoint - lists available log files or returns specific log content
-pub async fn admin_logs_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_logs_endpoint(mut grux_request: GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check authentication first
-    match require_authentication(&req).await {
+    match require_authentication(&grux_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated, retrieving logs".to_string());
         }
@@ -443,7 +433,7 @@ pub async fn admin_logs_endpoint(req: Request<hyper::body::Incoming>, _admin_sit
         }
     }
 
-    let path = req.uri().path();
+    let path = grux_request.get_path();
     let path_parts: Vec<&str> = path.split('/').collect();
 
     // Parse the request path: /logs or /logs/{filename}
@@ -629,9 +619,9 @@ struct OperationModeRequest {
 }
 
 // Admin operation mode GET endpoint - returns current operation mode
-pub async fn admin_get_operation_mode_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_get_operation_mode_endpoint(grux_request: GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check authentication first
-    match require_authentication(&req).await {
+    match require_authentication(&grux_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated, retrieving operation mode".to_string());
         }
@@ -669,9 +659,9 @@ pub async fn admin_get_operation_mode_endpoint(req: Request<hyper::body::Incomin
 }
 
 // Admin operation mode POST endpoint - changes operation mode
-pub async fn admin_post_operation_mode_endpoint(req: Request<hyper::body::Incoming>, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+pub async fn admin_post_operation_mode_endpoint(mut grux_request: GruxRequest, _admin_site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Check if this is a POST request
-    if req.method() != hyper::Method::POST {
+    if grux_request.get_http_method() != "POST" {
         let mut resp = Response::new(full(r#"{"error": "Method not allowed"}"#));
         *resp.status_mut() = hyper::StatusCode::METHOD_NOT_ALLOWED;
         resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
@@ -679,7 +669,7 @@ pub async fn admin_post_operation_mode_endpoint(req: Request<hyper::body::Incomi
     }
 
     // Check authentication first
-    match require_authentication(&req).await {
+    match require_authentication(&grux_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated for operation mode update".to_string());
         }
@@ -695,16 +685,13 @@ pub async fn admin_post_operation_mode_endpoint(req: Request<hyper::body::Incomi
     }
 
     // Read the request body
-    let body_bytes = match req.collect().await {
-        Ok(body) => body.to_bytes(),
-        Err(e) => {
-            error(format!("Failed to read request body: {}", e));
-            let mut resp = Response::new(full(r#"{"error": "Failed to read request body"}"#));
-            *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
-            resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
-            return Ok(resp);
-        }
-    };
+    if grux_request.get_body_size() == 0 {
+        let mut resp = Response::new(full(r#"{"error": "Empty request body"}"#));
+        *resp.status_mut() = hyper::StatusCode::BAD_REQUEST;
+        resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        return Ok(resp);
+    }
+    let body_bytes = grux_request.get_body_bytes();
 
     // Parse JSON body
     let mode_request: OperationModeRequest = match serde_json::from_slice(&body_bytes) {
@@ -742,8 +729,6 @@ pub async fn admin_post_operation_mode_endpoint(req: Request<hyper::body::Incomi
     } else {
         format!("Operation mode was already set to {}", mode_request.mode)
     };
-
-    println!("{}", return_message);
 
     let success_response = serde_json::json!({
         "success": was_changed,

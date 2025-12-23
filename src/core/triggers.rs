@@ -13,7 +13,7 @@ pub struct Triggers {
 impl Triggers {
     pub fn new() -> Self {
         let mut triggers = HashMap::new();
-        let known_triggers = vec!["refresh_cached_configuration", "reload_configuration", "stop_services", "shutdown", "operation_mode_changed"];
+        let known_triggers = vec!["refresh_cached_configuration", "reload_configuration", "configuration_changed", "stop_services", "shutdown", "operation_mode_changed"];
         for trigger_name in known_triggers {
             triggers.insert(trigger_name.to_string(), Arc::new(RwLock::new(CancellationToken::new())));
         }

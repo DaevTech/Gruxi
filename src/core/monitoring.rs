@@ -1,5 +1,5 @@
 use crate::core::{running_state_manager::get_running_state_manager, triggers::get_trigger_handler};
-use crate::logging::syslog::{info, trace};
+use crate::logging::syslog::{debug, trace};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{select, sync::OnceCell};
 
@@ -33,7 +33,7 @@ impl MonitoringState {
 
     // Background monitoring task.
     pub fn initialize_monitoring(&self) {
-        info("Monitoring initialized");
+        debug("Monitoring initialized");
         tokio::spawn(Self::monitoring_task());
     }
 

@@ -14,10 +14,6 @@ pub enum OperationMode {
     PRODUCTION,
     SPEEDTEST,
 }
-// Set the operation mode here
-// Change this to OperationMode::Production when deploying to production
-// Or set via an environment variable or config file as needed
-pub static GRUX_OPERATION_MODE: OperationMode = OperationMode::PRODUCTION;
 
 pub fn load_operation_mode() -> OperationMode {
     // Parse command line args

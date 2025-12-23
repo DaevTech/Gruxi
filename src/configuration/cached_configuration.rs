@@ -24,7 +24,7 @@ impl CachedConfiguration {
 
     pub async fn check_if_cached_configuration_should_be_refreshed() {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        trace("Starting thread to monitor for configuration refresh signal");
+        trace("Starting thread to monitor for configuration refresh signal for the cached configuration");
 
         let triggers = get_trigger_handler();
         let refresh_trigger = triggers.get_trigger("refresh_cached_configuration").expect("Failed to get refresh_cached_configuration trigger");
@@ -39,6 +39,9 @@ impl CachedConfiguration {
                 let cached_configuration = get_cached_configuration();
                 let mut config_write_guard = cached_configuration.configuration.write().await;
                 *config_write_guard = new_configuration;
+
+                // Trigger configuration_changed trigger
+                triggers.run_trigger("configuration_changed").await;
             }
 
             // Get new token for next time

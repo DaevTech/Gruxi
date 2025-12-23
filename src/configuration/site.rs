@@ -13,16 +13,14 @@ pub struct Site {
     pub hostnames: Vec<String>,
     pub is_default: bool,
     pub is_enabled: bool,
-    pub web_root: String,
-    pub web_root_index_file_list: Vec<String>,
-    pub enabled_handlers: Vec<String>, // List of enabled handler IDs for this site
     // TLS certificate path or actual content
     pub tls_cert_path: String,
     pub tls_cert_content: String,
     // TLS private key path or actual content
     pub tls_key_path: String,
     pub tls_key_content: String,
-    pub rewrite_functions: Vec<String>,
+    pub rewrite_functions: Vec<String>, // List of rewrite functions to apply
+    pub request_handlers: Vec<String>,  // List of request handler IDs for this site
     #[serde(default)]
     pub extra_headers: Vec<HeaderKV>,
     // Logs
@@ -38,17 +36,6 @@ impl Site {
         // Trim whitespace from hostnames
         for hostname in &mut self.hostnames {
             *hostname = hostname.trim().to_string();
-        }
-
-        // Trim whitespace from web root
-        self.web_root = self.web_root.trim().to_string();
-
-        // Convert backslashes to forward slashes in web root (for Windows paths)
-        self.web_root = self.web_root.replace("\\", "/");
-
-        // Trim whitespace from index files
-        for file in &mut self.web_root_index_file_list {
-            *file = file.trim().to_string();
         }
 
         // Trim whitespace from rewrite functions
@@ -79,22 +66,6 @@ impl Site {
                 errors.push(format!("Hostname {} cannot be empty", hostname_idx + 1));
             } else if hostname.trim() != "*" && hostname.trim().len() < 3 {
                 errors.push(format!("Hostname '{}' is too short (minimum 3 characters unless wildcard '*')", hostname.trim()));
-            }
-        }
-
-        // Validate web root
-        if self.web_root.trim().is_empty() {
-            errors.push("Web root cannot be empty".to_string());
-        }
-
-        // Validate index files
-        if self.web_root_index_file_list.is_empty() {
-            errors.push("Site must have at least one index file".to_string());
-        }
-
-        for (file_idx, file) in self.web_root_index_file_list.iter().enumerate() {
-            if file.trim().is_empty() {
-                errors.push(format!("Index file {} cannot be empty", file_idx + 1));
             }
         }
 
@@ -160,6 +131,14 @@ impl Site {
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+
+    pub fn get_rewrite_functions_hashmap(&self) -> std::collections::HashMap<String, ()> {
+        let mut hashmap = std::collections::HashMap::new();
+        for func in &self.rewrite_functions {
+            hashmap.insert(func.clone(), ());
+        }
+        hashmap
     }
 }
 
@@ -355,13 +334,11 @@ fn create_valid_site() -> Site {
         hostnames: vec!["example.com".to_string()],
         is_default: false,
         is_enabled: true,
-        web_root: "./www-default".to_string(),
-        web_root_index_file_list: vec!["index.html".to_string()],
-        enabled_handlers: vec![],
         tls_cert_path: "".to_string(),
         tls_cert_content: "".to_string(),
         tls_key_path: "".to_string(),
         tls_key_content: "".to_string(),
+        request_handlers: vec![],
         rewrite_functions: vec![],
         extra_headers: vec![],
         access_log_enabled: false,

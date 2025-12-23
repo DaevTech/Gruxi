@@ -1,7 +1,10 @@
 use crate::configuration::binding::Binding;
-use crate::http::handle_request::handle_request_entry;
+use crate::http::handle_request::handle_request;
 use crate::http::http_tls::build_tls_acceptor;
-use crate::logging::syslog::{error, info, trace, warn};
+use crate::http::requests::grux_request::GruxRequest;
+use crate::logging::syslog::{debug, error, info, trace, warn};
+use hyper::Request;
+use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -89,59 +92,77 @@ async fn start_server_binding(binding: Binding) {
 
         loop {
             select! {
-                _ = shutdown_token.cancelled() => {
-                    trace(format!("Shutdown signal received, stopping server on {}:{}", binding.ip, binding.port));
-                    break;
-                },
-                _ = stop_services_token.cancelled() => {
-                    trace(format!("Service cancellation signal received, stopping server on {}:{}", binding.ip, binding.port));
-                    break;
-                },
-                result = listener.accept() => {
-                    match result {
-                        Ok((tcp_stream, _)) => {
-                            let remote_addr = tcp_stream.peer_addr().map(|addr| addr.to_string()).ok();
-                            let remote_addr_string = remote_addr.unwrap_or_else(|| "<unknown>".to_string());
-                            let remote_addr_ip = remote_addr_string.split(':').next().unwrap_or("").to_string();
+                            _ = shutdown_token.cancelled() => {
+                                trace(format!("Shutdown signal received, stopping server on {}:{}", binding.ip, binding.port));
+                                break;
+                            },
+                            _ = stop_services_token.cancelled() => {
+                                trace(format!("Service cancellation signal received, stopping server on {}:{}", binding.ip, binding.port));
+                                break;
+                            },
+                            result = listener.accept() => {
+                                match result {
+                                    Ok((tcp_stream, _)) => {
+                                        let remote_addr = tcp_stream.peer_addr().map(|addr| addr.to_string()).ok();
+                                        let remote_addr_string = remote_addr.unwrap_or_else(|| "<unknown>".to_string());
+                                        let remote_addr_ip = remote_addr_string.split(':').next().unwrap_or("").to_string();
 
-                            let acceptor = acceptor.clone();
-                            let shutdown_token = shutdown_token.clone();
-                            let stop_services_token = stop_services_token.clone();
-                            tokio::task::spawn({
-                                let binding = binding.clone();
-                                let remote_addr_ip = remote_addr_ip.clone();
+                                        let acceptor = acceptor.clone();
+                                        let shutdown_token = shutdown_token.clone();
+                                        let stop_services_token = stop_services_token.clone();
+                                        tokio::task::spawn({
+                                            let binding = binding.clone();
+                                            let remote_addr_ip = remote_addr_ip.clone();
 
-                                async move {
-                                    match acceptor.accept(tcp_stream).await {
-                                        Ok(tls_stream) => {
-                                            // Decide protocol based on ALPN
-                                            let is_h2 = negotiated_h2(&tls_stream);
-                                            let io = TokioIo::new(tls_stream);
-                                            let svc = service_fn(move |req| handle_request_entry(req, binding.clone(), remote_addr_ip.clone(), shutdown_token.clone(), stop_services_token.clone()));
-                                            if is_h2 {
-                                                if let Err(err) = http2::Builder::new(TokioExecutor::new()).serve_connection(io, svc).await {
-                                                    trace(format!("TLS h2 error serving connection: {:?}", err));
-                                                }
-                                            } else {
-                                                if let Err(err) = http1::Builder::new().serve_connection(io, svc).await {
-                                                    trace(format!("TLS http1.1 error serving connection: {:?}", err));
+                                            async move {
+                                                match acceptor.accept(tcp_stream).await {
+                                                    Ok(tls_stream) => {
+                                                        // Decide protocol based on ALPN
+                                                        let is_h2 = negotiated_h2(&tls_stream);
+                                                        let io = TokioIo::new(tls_stream);
+
+                                                        let svc = service_fn(move |req: Request<Incoming>| {
+                                                            let binding = binding.clone();
+                                                            let remote_ip = remote_addr_ip.clone();
+                                                            let shutdown_token = shutdown_token.clone();
+                                                            let stop_services_token = stop_services_token.clone();
+
+                                                            async move {
+                                                                // Convert hyper Request<Incoming> to GruxRequest
+                                                                let mut grux_req = GruxRequest::from_hyper(req).await?;
+                                                                grux_req.add_calculated_data("remote_ip", &remote_ip);
+
+                                                                // Call your application handler
+                                                                let response = handle_request(grux_req, binding, shutdown_token, stop_services_token).await;
+                                                                debug(format!("Responding with: {:?}", response));
+                                                                response
+                                                            }
+                                                        });
+
+                                                        if is_h2 {
+                                                            if let Err(err) = http2::Builder::new(TokioExecutor::new()).serve_connection(io, svc).await {
+                                                                trace(format!("TLS h2 error serving connection: {:?}", err));
+                                                            }
+                                                        } else {
+                                                            if let Err(err) = http1::Builder::new().serve_connection(io, svc).await {
+                                                                trace(format!("TLS http1.1 error serving connection: {:?}", err));
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(err) => {
+                                                        trace(format!("TLS handshake error: {:?}", err));
+                                                    }
                                                 }
                                             }
-                                        }
-                                        Err(err) => {
-                                            trace(format!("TLS handshake error: {:?}", err));
-                                        }
+                                        });
+                                    }
+                                    Err(err) => {
+                                        error(format!("Failed to accept connection: {:?}", err));
                                     }
                                 }
-                            });
-                        }
-                        Err(err) => {
-                            error(format!("Failed to accept connection: {:?}", err));
-                        }
-                    }
-                }
+                            }
 
-            };
+                        };
         }
     } else {
         // Non-TLS path
@@ -174,9 +195,24 @@ async fn start_server_binding(binding: Binding) {
                                 let binding = binding.clone();
                                 let remote_addr_ip = remote_addr_ip.clone();
                                 async move {
-                                    let svc = service_fn(move |req| {
-                                        handle_request_entry(req, binding.clone(), remote_addr_ip.clone(), shutdown_token.clone(), stop_services_token.clone())
+                                     let svc = service_fn(move |req: Request<Incoming>| {
+                                        let binding = binding.clone();
+                                        let remote_ip = remote_addr_ip.clone();
+                                        let shutdown_token = shutdown_token.clone();
+                                        let stop_services_token = stop_services_token.clone();
+
+                                        async move {
+                                            // Convert hyper Request<Incoming> to GruxRequest
+                                            let mut grux_req = GruxRequest::from_hyper(req).await?;
+                                            grux_req.add_calculated_data("remote_ip", &remote_ip);
+
+                                            // Call your application handler
+                                            let response = handle_request(grux_req, binding, shutdown_token, stop_services_token).await;
+                                            debug(format!("Responding with: {:?}", response));
+                                            response
+                                        }
                                     });
+
                                     if let Err(err) = http1::Builder::new().serve_connection(io, svc).await {
                                         trace(format!("Error serving connection: {:?}", err));
                                     }

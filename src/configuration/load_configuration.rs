@@ -1,15 +1,17 @@
 use crate::configuration::binding_site_relation::BindingSiteRelationship;
 use crate::configuration::configuration::CURRENT_CONFIGURATION_VERSION;
-use crate::core::operation_mode::{OperationMode, get_operation_mode};
+
+use crate::external_connections::php_cgi;
+use crate::http::request_handlers::processors::php;
+use crate::http::request_handlers::processors::static_files::StaticFileProcessor;
+use crate::logging::syslog::info;
 use crate::{
-    configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::Site, site::HeaderKV},
+    configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::HeaderKV, site::Site},
     core::database_connection::get_database_connection,
 };
-use crate::logging::syslog::info;
 use sqlite::Connection;
 use sqlite::State;
 use std::collections::HashMap;
-
 
 // Load the configuration from the database or create a default one if it doesn't exist
 pub fn init() -> Result<Configuration, String> {
@@ -25,7 +27,7 @@ pub fn init() -> Result<Configuration, String> {
             State::Row => {
                 let version_str: String = statement.read(0).map_err(|e| format!("Failed to read schema version: {}", e))?;
                 version_str.parse::<i64>().map_err(|e| format!("Failed to parse schema version: {}", e))?
-            },
+            }
             State::Done => 0, // No version found, assume 0
         }
     };
@@ -37,13 +39,6 @@ pub fn init() -> Result<Configuration, String> {
             info("No configuration found, creating default configuration");
 
             let mut configuration = Configuration::get_default();
-
-            // Load default configuration based on operation mode
-            let operation_mode = get_operation_mode();
-            if operation_mode == OperationMode::DEV {
-                info("Loading dev configuration");
-                Configuration::add_testing_to_configuration(&mut configuration);
-            }
 
             // Process the binding-site relationships
             handle_relationship_binding_sites(&configuration.binding_sites, &mut configuration.bindings, &mut configuration.sites);
@@ -69,12 +64,21 @@ pub fn init() -> Result<Configuration, String> {
 pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
     let connection = get_database_connection()?;
 
-    // Load all configuration components
+    // Basic sites and bindings
     let mut bindings = load_bindings(&connection)?;
     let sites = load_sites(&connection)?;
     let binding_sites = load_binding_sites_relationships(&connection)?;
+
+    // Server configuration
     let core = load_core_config(&connection)?;
+
+    // Request handlers and attached processors
     let request_handlers = load_request_handlers(&connection)?;
+    let static_file_processors = load_static_file_processors(&connection)?;
+    let php_processors = load_php_processors(&connection)?;
+
+    // External systems
+    let php_cgi_handlers = load_php_cgi_handlers(&connection)?;
 
     // Process the binding-site relationships
     handle_relationship_binding_sites(&binding_sites, &mut bindings, &sites);
@@ -87,10 +91,61 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
         binding_sites,
         core,
         request_handlers,
+        static_file_processors,
+        php_processors,
+        proxy_processors: vec![],
+        php_cgi_handlers: php_cgi_handlers,
     };
     configuration.sanitize();
 
     Ok(configuration)
+}
+
+fn load_php_processors(connection: &Connection) -> Result<Vec<php::PHPProcessor>, String> {
+    let mut statement = connection
+        .prepare("SELECT * FROM php_processors")
+        .map_err(|e| format!("Failed to prepare PHP processors query: {}", e))?;
+
+    let mut processors = Vec::new();
+    while let sqlite::State::Row = statement.next().map_err(|e| format!("Failed to execute PHP processors query: {}", e))? {
+        let processor_id: String = statement.read(0).map_err(|e| format!("Failed to read processor id: {}", e))?;
+        let served_by_type: String = statement.read(1).map_err(|e| format!("Failed to read served_by_type: {}", e))?;
+        let php_cgi_handler_id: String = statement.read(2).map_err(|e| format!("Failed to read php_cgi_handler_id: {}", e))?;
+        let fastcgi_ip_and_port: String = statement.read(3).map_err(|e| format!("Failed to read fastcgi_ip_and_port: {}", e))?;
+        let request_timeout: i64 = statement.read(4).map_err(|e| format!("Failed to read request_timeout: {}", e))?;
+        let local_web_root: String = statement.read(5).map_err(|e| format!("Failed to read local_web_root: {}", e))?;
+        let fastcgi_web_root: String = statement.read(6).map_err(|e| format!("Failed to read fastcgi_web_root: {}", e))?;
+
+        processors.push(php::PHPProcessor {
+            id: processor_id,
+            served_by_type,
+            php_cgi_handler_id,
+            fastcgi_ip_and_port,
+            request_timeout: request_timeout as u32,
+            local_web_root,
+            fastcgi_web_root,
+        });
+    }
+
+    Ok(processors)
+}
+
+fn load_php_cgi_handlers(connection: &Connection) -> Result<Vec<php_cgi::PhpCgi>, String> {
+    let mut statement = connection
+        .prepare("SELECT * FROM php_cgi_handlers")
+        .map_err(|e| format!("Failed to prepare PHP-CGI handlers query: {}", e))?;
+
+    let mut handlers = Vec::new();
+    while let sqlite::State::Row = statement.next().map_err(|e| format!("Failed to execute PHP-CGI handlers query: {}", e))? {
+        let handler_id: String = statement.read(0).map_err(|e| format!("Failed to read handler id: {}", e))?;
+        let request_timeout: i64 = statement.read(1).map_err(|e| format!("Failed to read request_timeout: {}", e))?;
+        let concurrent_threads: i64 = statement.read(2).map_err(|e| format!("Failed to read concurrent_threads: {}", e))?;
+        let executable: String = statement.read(3).map_err(|e| format!("Failed to read executable: {}", e))?;
+
+        handlers.push(php_cgi::PhpCgi::new(handler_id, request_timeout as u32, concurrent_threads as u32, executable));
+    }
+
+    Ok(handlers)
 }
 
 pub fn handle_relationship_binding_sites(relationships: &Vec<BindingSiteRelationship>, bindings: &mut Vec<Binding>, sites: &Vec<Site>) {
@@ -200,48 +255,38 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
         let hostnames_str: String = statement.read(3).map_err(|e| format!("Failed to read hostnames: {}", e))?;
         let hostnames = parse_comma_separated_list(&hostnames_str);
 
-        let web_root: String = statement.read(4).map_err(|e| format!("Failed to read web_root: {}", e))?;
+        let tls_cert_path: String = statement.read(4).ok().unwrap_or_default();
+        let tls_cert_content: String = statement.read(5).ok().unwrap_or_default();
+        let tls_key_path: String = statement.read(6).ok().unwrap_or_default();
+        let tls_key_content: String = statement.read(7).ok().unwrap_or_default();
 
-        // Index files is comma separated
-        let web_root_index_file_list_str: String = statement.read(5).map_err(|e| format!("Failed to read web_root_index_file_list: {}", e))?;
-        let web_root_index_file_list = parse_comma_separated_list(&web_root_index_file_list_str);
-
-        let enabled_handlers_str: String = statement.read(6).map_err(|e| format!("Failed to read enabled_handlers: {}", e))?;
-        let enabled_handlers = parse_comma_separated_list(&enabled_handlers_str);
-
-        let tls_cert_path: String = statement.read(7).ok().unwrap_or_default();
-        let tls_cert_content: String = statement.read(8).ok().unwrap_or_default();
-        let tls_key_path: String = statement.read(9).ok().unwrap_or_default();
-        let tls_key_content: String = statement.read(10).ok().unwrap_or_default();
+        // Request handlers is comma separated
+        let request_handlers_str: String = statement.read(8).map_err(|e| format!("Failed to read request_handlers: {}", e))?;
+        let request_handlers: Vec<String> = parse_comma_separated_list(&request_handlers_str);
 
         // Rewrite functions is comma separated
-        let rewrite_functions_str: String = statement.read(11).map_err(|e| format!("Failed to read rewrite_functions: {}", e))?;
+        let rewrite_functions_str: String = statement.read(9).map_err(|e| format!("Failed to read rewrite_functions: {}", e))?;
         let rewrite_functions: Vec<String> = parse_comma_separated_list(&rewrite_functions_str);
 
         // Access log
-        let access_log_enabled: i64 = statement.read(12).map_err(|e| format!("Failed to read access_log_enabled: {}", e))?;
-        let access_log_file: String = statement.read(13).map_err(|e| format!("Failed to read access_log_file: {}", e))?;
+        let access_log_enabled: i64 = statement.read(10).map_err(|e| format!("Failed to read access_log_enabled: {}", e))?;
+        let access_log_file: String = statement.read(11).map_err(|e| format!("Failed to read access_log_file: {}", e))?;
 
         // Optional extra_headers column (comma separated key=value)
-        let extra_headers_str: String = statement.read(14).ok().unwrap_or_default();
+        let extra_headers_str: String = statement.read(12).ok().unwrap_or_default();
         let extra_headers_pairs = parse_key_value_pairs(&extra_headers_str);
-        let extra_headers: Vec<HeaderKV> = extra_headers_pairs
-            .into_iter()
-            .map(|(k, v)| HeaderKV { key: k, value: v })
-            .collect();
+        let extra_headers: Vec<HeaderKV> = extra_headers_pairs.into_iter().map(|(k, v)| HeaderKV { key: k, value: v }).collect();
 
         sites.push(Site {
             id: site_id as usize,
             hostnames,
             is_default: is_default != 0,
             is_enabled: is_enabled != 0,
-            web_root,
-            web_root_index_file_list,
-            enabled_handlers,
             tls_cert_path,
             tls_cert_content,
             tls_key_path,
             tls_key_content,
+            request_handlers,
             rewrite_functions,
             access_log_enabled: access_log_enabled != 0,
             access_log_file,
@@ -273,7 +318,7 @@ fn load_binding_sites_relationships(connection: &Connection) -> Result<Vec<Bindi
 
 fn load_request_handlers(connection: &Connection) -> Result<Vec<RequestHandler>, String> {
     let mut statement = connection
-        .prepare("SELECT * FROM request_handlers")
+        .prepare("SELECT * FROM request_handler")
         .map_err(|e| format!("Failed to prepare request handlers query: {}", e))?;
 
     let mut request_handlers = Vec::new();
@@ -281,38 +326,49 @@ fn load_request_handlers(connection: &Connection) -> Result<Vec<RequestHandler>,
         let handler_id: String = statement.read(0).map_err(|e| format!("Failed to read handler id: {}", e))?;
         let is_enabled: i64 = statement.read(1).map_err(|e| format!("Failed to read is_enabled: {}", e))?;
         let name: String = statement.read(2).map_err(|e| format!("Failed to read name: {}", e))?;
-        let handler_type: String = statement.read(3).map_err(|e| format!("Failed to read handler type: {}", e))?;
-        let request_timeout: i64 = statement.read(4).map_err(|e| format!("Failed to read request timeout: {}", e))?;
-        let concurrent_threads: i64 = statement.read(5).map_err(|e| format!("Failed to read concurrent threads: {}", e))?;
-        let file_match_str: Option<String> = statement.read(6).ok();
-        let executable: String = statement.read(7).map_err(|e| format!("Failed to read executable: {}", e))?;
-        let ip_and_port: Option<String> = statement.read(8).ok();
-        let other_webroot: Option<String> = statement.read(9).ok();
-        let extra_handler_config_str: Option<String> = statement.read(10).ok();
-        let extra_environment_str: Option<String> = statement.read(11).ok();
+        let priority: i64 = statement.read(3).map_err(|e| format!("Failed to read priority: {}", e))?;
+        let processor_type: String = statement.read(4).map_err(|e| format!("Failed to read processor_type: {}", e))?;
+        let processor_id: String = statement.read(5).map_err(|e| format!("Failed to read processor_id: {}", e))?;
+        let url_match_str: Option<String> = statement.read(6).ok();
 
         // Parse comma-separated strings
-        let file_match = parse_comma_separated_list(&file_match_str.unwrap_or_default());
-        let extra_handler_config = parse_key_value_pairs(&extra_handler_config_str.unwrap_or_default());
-        let extra_environment = parse_key_value_pairs(&extra_environment_str.unwrap_or_default());
+        let url_match = parse_comma_separated_list(&url_match_str.unwrap_or_default());
 
         request_handlers.push(RequestHandler {
             id: handler_id,
             is_enabled: is_enabled != 0,
             name,
-            handler_type,
-            request_timeout: request_timeout as usize,
-            concurrent_threads: concurrent_threads as usize,
-            file_match,
-            executable,
-            ip_and_port: ip_and_port.unwrap_or_default(),
-            other_webroot: other_webroot.unwrap_or_default(),
-            extra_handler_config,
-            extra_environment,
+            priority: priority as u8,
+            processor_type,
+            processor_id,
+            url_match,
         });
     }
 
     Ok(request_handlers)
+}
+
+fn load_static_file_processors(connection: &Connection) -> Result<Vec<StaticFileProcessor>, String> {
+    let mut statement = connection
+        .prepare("SELECT * FROM static_file_processors")
+        .map_err(|e| format!("Failed to prepare static file processors query: {}", e))?;
+
+    let mut processors = Vec::new();
+    while let sqlite::State::Row = statement.next().map_err(|e| format!("Failed to execute static file processors query: {}", e))? {
+        let processor_id: String = statement.read(0).map_err(|e| format!("Failed to read processor id: {}", e))?;
+        let web_root: String = statement.read(1).map_err(|e| format!("Failed to read web_root: {}", e))?;
+        let web_root_index_file_list_str: String = statement.read(2).map_err(|e| format!("Failed to read web_root_index_file_list: {}", e))?;
+
+        let web_root_index_file_list = parse_comma_separated_list(&web_root_index_file_list_str);
+
+        processors.push(StaticFileProcessor {
+            id: processor_id,
+            web_root,
+            web_root_index_file_list,
+        });
+    }
+
+    Ok(processors)
 }
 
 fn parse_comma_separated_list(input: &str) -> Vec<String> {

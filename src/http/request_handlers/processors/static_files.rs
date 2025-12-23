@@ -1,0 +1,171 @@
+use crate::{
+    configuration::site::Site,
+    file::{
+        file_util::{check_path_secure, get_full_file_path},
+    },
+    http::{
+        http_util::{empty_response_with_status, full, resolve_web_root_and_path_and_get_file},
+        request_handlers::processor_trait::ProcessorTrait,
+        requests::grux_request::GruxRequest,
+    },
+    logging::syslog::{debug, trace},
+};
+use http_body_util::combinators::BoxBody;
+use hyper::{Response, body::Bytes, header::HeaderValue};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StaticFileProcessor {
+    pub id: String,                            // Unique identifier for the processor
+    pub web_root: String,                      // Web root directory for static files
+    pub web_root_index_file_list: Vec<String>, // List of index files to look for in directories
+}
+
+impl StaticFileProcessor {
+    pub fn new(web_root: String, web_root_index_file_list: Vec<String>) -> Self {
+        let id = Uuid::new_v4().to_string();
+        Self {
+            id,
+            web_root,
+            web_root_index_file_list,
+        }
+    }
+}
+
+impl ProcessorTrait for StaticFileProcessor {
+    fn sanitize(&mut self) {
+        // Trim whitespace from web root
+        self.web_root = self.web_root.trim().to_string();
+
+        // Convert backslashes to forward slashes in web root (for Windows paths)
+        self.web_root = self.web_root.replace("\\", "/");
+    }
+
+    fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // Validate web root
+        if self.web_root.trim().is_empty() {
+            errors.push("Web root cannot be empty".to_string());
+        }
+
+        // Validate index file list
+        if self.web_root_index_file_list.is_empty() {
+            errors.push("Index file list cannot be empty".to_string());
+        } else {
+            for (idx, file) in self.web_root_index_file_list.iter().enumerate() {
+                if file.trim().is_empty() {
+                    errors.push(format!("Index file at position {} cannot be empty", idx + 1));
+                }
+            }
+        }
+
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+
+    async fn handle_request(&self, grux_request: &mut GruxRequest, site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, ()> {
+        // First, check if there is a specific file requested
+        let web_root_result = get_full_file_path(&self.web_root);
+        if let Err(e) = web_root_result {
+            debug(format!("Failed to get full web root path: {}", e));
+            return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
+        }
+        let web_root = web_root_result.unwrap();
+        let mut path = grux_request.get_path().clone();
+
+        // Get the cached file, if it exists
+        let file_data_result = resolve_web_root_and_path_and_get_file(&web_root, &path).await;
+        if let Err(_) = file_data_result {
+            // If we fail to get the file, return cant/wont handle
+            return Err(());
+        }
+        let mut file_data = file_data_result.unwrap();
+        let mut file_path = file_data.file_path.clone();
+
+        // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
+        if !file_data.exists {
+            trace(format!("File does not exist: {}", file_path));
+            if site.get_rewrite_functions_hashmap().contains_key("OnlyWebRootIndexForSubdirs") {
+                trace(format!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path));
+                // We rewrite the path to just "/" which will make it serve the index file
+                path = "/".to_string();
+
+                // Get the cached file, if it exists
+                let file_data_result = resolve_web_root_and_path_and_get_file(&web_root, &path).await;
+                if let Err(_) = file_data_result {
+                    return Err(());
+                }
+                file_data = file_data_result.unwrap();
+                file_path = file_data.file_path.clone();
+            } else {
+                return Err(());
+            }
+        }
+
+        if file_data.is_directory {
+            // If it's a directory, we will try to return the index file
+            trace(format!("File is a directory: {}", file_path));
+
+            // Check if we can find a index file in the directory
+            let mut found_index = false;
+            for file in &self.web_root_index_file_list {
+                // Get the cached file, if it exists
+                let file_data_result = resolve_web_root_and_path_and_get_file(&file_path, &file).await;
+                if let Err(_) = file_data_result {
+                    trace(format!("Index files in dir does not exist: {}", file_path));
+                    continue;
+                }
+                file_data = file_data_result.unwrap();
+                file_path = file_data.file_path.clone();
+                trace(format!("Found index file: {}", file_path));
+                found_index = true;
+                break;
+            }
+
+            if !found_index {
+                trace(format!("Did not find index file: {}", file_path));
+                return Err(());
+            }
+        }
+
+        // Do a safety check of the path, make sure it's still under the web root and not blocked
+        if !check_path_secure(&web_root, &file_path).await {
+            trace(format!("File path is not secure: {}", file_path));
+            // We should probably not reveal that the file is blocked, so we return a 404
+            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+        }
+
+        // Get configuration, as we need to check for gzip support
+        let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
+        let config = cached_configuration.get_configuration().await;
+        let gzip_enabled = &config.core.gzip.is_enabled;
+        let gzip_compressable_mime_types = &config.core.gzip.compressible_content_types;
+
+        // Gzip body or raw content
+        let mut is_gzipped = false;
+        let body_content = if file_data.gzip_content.is_empty() || !gzip_enabled || !gzip_compressable_mime_types.contains(&file_data.mime_type) {
+            file_data.content
+        } else {
+            is_gzipped = true;
+            file_data.gzip_content
+        };
+
+        let mut response = Response::new(full(body_content));
+        response.headers_mut().insert("Content-Type", HeaderValue::from_str(&file_data.mime_type).unwrap());
+        if is_gzipped {
+            response.headers_mut().insert("Content-Encoding", HeaderValue::from_str("gzip").unwrap());
+        }
+        *response.status_mut() = hyper::StatusCode::OK;
+
+        Ok(response)
+    }
+
+    fn get_type(&self) -> String {
+        "static".to_string()
+    }
+
+    fn get_default_pretty_name(&self) -> String {
+        "Static File Processor".to_string()
+    }
+}

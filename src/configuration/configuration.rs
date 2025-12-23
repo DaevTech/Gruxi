@@ -5,17 +5,27 @@ use crate::configuration::request_handler::RequestHandler;
 use crate::configuration::server_settings::ServerSettings;
 use crate::configuration::site::Site;
 use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship};
+use crate::external_connections::php_cgi::PhpCgi;
+use crate::http::request_handlers::processors::php::PHPProcessor;
+use crate::http::request_handlers::processors::proxy::ProxyProcessor;
+use crate::http::request_handlers::processors::static_files::StaticFileProcessor;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[allow(unused)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Configuration {
     pub version: String,
     pub bindings: Vec<Binding>,
     pub sites: Vec<Site>,
     pub binding_sites: Vec<BindingSiteRelationship>,
     pub core: Core,
+    // Request handlers and the processors they use
     pub request_handlers: Vec<RequestHandler>,
+    pub static_file_processors: Vec<StaticFileProcessor>,
+    pub php_processors: Vec<PHPProcessor>,
+    pub proxy_processors: Vec<ProxyProcessor>,
+    // External systems, such as PHP-CGI instances, FastCGI handlers, etc.
+    pub php_cgi_handlers: Vec<PhpCgi>,
 }
 
 pub static CURRENT_CONFIGURATION_VERSION: i32 = 1;
@@ -69,6 +79,10 @@ impl Configuration {
                 },
             },
             request_handlers: vec![],
+            static_file_processors: vec![],
+            php_processors: vec![],
+            proxy_processors: vec![],
+            php_cgi_handlers: vec![],
         }
     }
 
@@ -152,56 +166,6 @@ impl Configuration {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    pub fn add_testing_to_configuration(configuration: &mut Configuration) {
-        let test_wp_site = Site {
-            id: 3,
-            hostnames: vec!["gruxsite".to_string()],
-            is_default: false,
-            is_enabled: true,
-            web_root: "D:/dev/grux-website".to_string(),
-            web_root_index_file_list: vec!["index.php".to_string()],
-            enabled_handlers: vec!["1".to_string()], // For testing
-            tls_cert_path: "".to_string(),
-            tls_cert_content: "".to_string(),
-            tls_key_path: "".to_string(),
-            tls_key_content: "".to_string(),
-            rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
-            extra_headers: vec![],
-            access_log_enabled: false,
-            access_log_file: "./logs/gruxsite-access-log.log".to_string(),
-        };
-        configuration.sites.push(test_wp_site);
-        configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 3 });
-
-        let testing_site = Site {
-            id: 4,
-            hostnames: vec!["gruxtest".to_string()],
-            is_default: false,
-            is_enabled: true,
-            web_root: "./www-testing".to_string(),
-            web_root_index_file_list: vec!["index.php".to_string()],
-            enabled_handlers: vec!["1".to_string()], // For testing
-            tls_cert_path: "".to_string(),
-            tls_cert_content: "".to_string(),
-            tls_key_path: "".to_string(),
-            tls_key_content: "".to_string(),
-            rewrite_functions: vec![],
-            extra_headers: vec![],
-            access_log_enabled: true,
-            access_log_file: "./logs/gruxtest-access-log.log".to_string(),
-        };
-        configuration.sites.push(testing_site);
-        configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 4 });
-
-        // Enable file cache
-        configuration.core.file_cache.is_enabled = true;
-
-        // Enable PHP, using Windows
-        configuration.request_handlers[0].executable = "D:/dev/php/8.4.13nts/php-cgi.exe".to_string();
-        configuration.request_handlers[0].ip_and_port = "".to_string();
-        configuration.request_handlers[0].other_webroot = "".to_string();
-    }
-
     pub fn get_default() -> Self {
         let mut configuration = Self::new();
 
@@ -236,19 +200,31 @@ impl Configuration {
         };
         configuration.bindings.push(default_binding_tls);
 
+        // Static file processor for first site
+        let request1_static_processor = StaticFileProcessor::new("./www-default".to_string(), vec!["index.html".to_string()]);
+
+        // Request handler for first site
+        let request_handler1 = RequestHandler {
+            id: Uuid::new_v4().to_string(),
+            is_enabled: true,
+            name: "Static File Handler".to_string(),
+            processor_type: "static".to_string(),
+            processor_id: request1_static_processor.id.clone(),
+            priority: 1,
+            url_match: vec!["*".to_string()],
+        };
+
         // Sites
         let default_site = Site {
             id: 1,
             hostnames: vec!["*".to_string()],
             is_default: true,
             is_enabled: true,
-            web_root: "./www-default".to_string(),
-            web_root_index_file_list: vec!["index.html".to_string()],
-            enabled_handlers: vec![], // No specific handlers enabled by default
             tls_cert_path: "".to_string(),
             tls_cert_content: "".to_string(),
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
+            request_handlers: vec![request_handler1.id.clone()],
             rewrite_functions: vec![],
             extra_headers: vec![],
             access_log_enabled: false,
@@ -257,19 +233,33 @@ impl Configuration {
         configuration.sites.push(default_site);
         configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 1 });
         configuration.binding_sites.push(BindingSiteRelationship { binding_id: 3, site_id: 1 });
+        configuration.request_handlers.push(request_handler1);
+        configuration.static_file_processors.push(request1_static_processor);
+
+        // Static file processor for admin site
+        let request2_static_processor = StaticFileProcessor::new("./www-admin".to_string(), vec!["index.html".to_string()]);
+
+        // Request handler for admin site
+        let request_handler2 = RequestHandler {
+            id: Uuid::new_v4().to_string(),
+            is_enabled: true,
+            name: "Static File Handler".to_string(),
+            priority: 1,
+            processor_type: "static".to_string(),
+            processor_id: request2_static_processor.id.clone(),
+            url_match: vec!["*".to_string()],
+        };
 
         let admin_site = Site {
             id: 2,
             hostnames: vec!["*".to_string()],
             is_default: true,
             is_enabled: true,
-            web_root: "./www-admin".to_string(),
-            web_root_index_file_list: vec!["index.html".to_string()],
-            enabled_handlers: vec![], // No specific handlers enabled by default
             tls_cert_path: "".to_string(),
             tls_cert_content: "".to_string(),
             tls_key_path: "".to_string(),
             tls_key_content: "".to_string(),
+            request_handlers: vec![request_handler2.id.clone()],
             rewrite_functions: vec![],
             extra_headers: vec![],
             access_log_enabled: false,
@@ -277,24 +267,64 @@ impl Configuration {
         };
         configuration.sites.push(admin_site);
         configuration.binding_sites.push(BindingSiteRelationship { binding_id: 1, site_id: 2 });
+        configuration.request_handlers.push(request_handler2);
+        configuration.static_file_processors.push(request2_static_processor);
 
-        // Add request handlers
-        let php_request_handler = RequestHandler {
-            id: "1".to_string(),
+        // External systems
+        let php1_cgi_id = Uuid::new_v4().to_string();
+        let php_cgi_handler = PhpCgi::new(php1_cgi_id.clone(), 30, 0, "D:/dev/php/8.4.13nts/php-cgi.exe".to_string());
+        configuration.php_cgi_handlers.push(php_cgi_handler);
+
+        // Request handler for php
+        let mut request2_php_processor = PHPProcessor::new();
+        request2_php_processor.served_by_type = "win-php-cgi".to_string();
+        request2_php_processor.php_cgi_handler_id = php1_cgi_id.clone();
+        request2_php_processor.local_web_root = "D:/dev/grux-website".to_string();
+
+
+        let request_handler2 = RequestHandler {
+            id: Uuid::new_v4().to_string(),
             is_enabled: true,
-            name: "PHP Handler".to_string(),
-            handler_type: "php".to_string(),
-            request_timeout: 30,   // seconds
-            concurrent_threads: 0, // 0 = automatically based on CPU cores on this machine - If PHP
-            file_match: vec![".php".to_string()],
-            executable: "".to_string(),              // Path to the PHP CGI executable (windows only)
-            ip_and_port: "php-fpm:9000".to_string(), // IP and port to connect to the handler (only for FastCGI, like PHP-FPM - primarily Linux, but also Windows with something like php-cgi.exe running in fastcgi mode or php-fpm in Docker/WSL)
-            other_webroot: "/var/www/html".to_string(),
-            extra_handler_config: vec![],
-            extra_environment: vec![],
+            name: "PHP processor".to_string(),
+            priority: 1,
+            processor_type: "php".to_string(),
+            processor_id: request2_php_processor.id.clone(),
+            url_match: vec!["*".to_string()],
         };
 
-        configuration.request_handlers.push(php_request_handler);
+        // Request handler for the static files
+        let request3_static_processor = StaticFileProcessor::new("D:/dev/grux-website".to_string(), vec!["".to_string()]);
+        let request_handler3 = RequestHandler {
+            id: Uuid::new_v4().to_string(),
+            is_enabled: true,
+            name: "Static File Handler".to_string(),
+            priority: 2,
+            processor_type: "static".to_string(),
+            processor_id: request3_static_processor.id.clone(),
+            url_match: vec!["*".to_string()],
+        };
+
+        let grux_site = Site {
+            id: 3,
+            hostnames: vec!["gruxsite".to_string()],
+            is_default: false,
+            is_enabled: true,
+            tls_cert_path: "".to_string(),
+            tls_cert_content: "".to_string(),
+            tls_key_path: "".to_string(),
+            tls_key_content: "".to_string(),
+            request_handlers: vec![request_handler3.id.clone(), request_handler2.id.clone()],
+            rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
+            extra_headers: vec![],
+            access_log_enabled: false,
+            access_log_file: "".to_string(),
+        };
+        configuration.sites.push(grux_site);
+        configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 3 });
+        configuration.request_handlers.push(request_handler2);
+        configuration.request_handlers.push(request_handler3);
+        configuration.static_file_processors.push(request3_static_processor);
+        configuration.php_processors.push(request2_php_processor);
 
         configuration
     }

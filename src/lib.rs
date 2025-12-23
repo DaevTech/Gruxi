@@ -1,5 +1,5 @@
 pub mod file;
-pub mod external_request_handlers;
+pub mod external_connections;
 pub mod network;
 pub mod core;
 pub mod http;

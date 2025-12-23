@@ -66,13 +66,11 @@ fn get_init_sql() -> Vec<String> {
         is_default BOOLEAN NOT NULL DEFAULT 0,
         is_enabled BOOLEAN NOT NULL DEFAULT 1,
         hostnames TEXT NOT NULL DEFAULT '',
-        web_root TEXT NOT NULL,
-        web_root_index_file_list TEXT NOT NULL DEFAULT '',
-        enabled_handlers TEXT NOT NULL DEFAULT '',
         tls_cert_path TEXT NOT NULL DEFAULT '',
         tls_cert_content TEXT NOT NULL DEFAULT '',
         tls_key_path TEXT NOT NULL DEFAULT '',
         tls_key_content TEXT NOT NULL DEFAULT '',
+        request_handlers TEXT NOT NULL DEFAULT '',
         rewrite_functions TEXT NOT NULL DEFAULT '',
         access_log_enabled BOOLEAN NOT NULL DEFAULT 0,
         access_log_file TEXT NOT NULL DEFAULT '',
@@ -90,19 +88,39 @@ fn get_init_sql() -> Vec<String> {
     );"
         .to_string(),
         // Request handlers
-        "CREATE TABLE IF NOT EXISTS request_handlers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        "CREATE TABLE IF NOT EXISTS request_handler (
+        id TEXT PRIMARY KEY,
         is_enabled BOOLEAN NOT NULL DEFAULT 1,
         name TEXT NOT NULL DEFAULT '',
-        handler_type TEXT NOT NULL DEFAULT '',
+        priority INTEGER NOT NULL DEFAULT 1,
+        processor_type TEXT NOT NULL DEFAULT '',
+        processor_id TEXT NOT NULL DEFAULT '',
+        url_match TEXT NOT NULL DEFAULT ''
+    );"
+        .to_string(),
+        // Processor table
+        "CREATE TABLE IF NOT EXISTS static_file_processors (
+        id TEXT PRIMARY KEY,
+        web_root TEXT NOT NULL DEFAULT '',
+        web_root_index_file_list TEXT NOT NULL DEFAULT ''
+    );"
+        .to_string(),
+        "CREATE TABLE IF NOT EXISTS php_processors (
+        id TEXT PRIMARY KEY,
+        served_by_type TEXT NOT NULL DEFAULT '',
+        php_cgi_handler_id TEXT NOT NULL DEFAULT '',
+        fastcgi_ip_and_port TEXT NOT NULL DEFAULT '',
+        request_timeout INTEGER NOT NULL DEFAULT 30,
+        local_web_root TEXT NOT NULL DEFAULT '',
+        fastcgi_web_root TEXT NOT NULL DEFAULT ''
+    );"
+        .to_string(),
+        // PHP-CGI handlers table
+        "CREATE TABLE IF NOT EXISTS php_cgi_handlers (
+        id TEXT PRIMARY KEY,
         request_timeout INTEGER NOT NULL DEFAULT 30,
         concurrent_threads INTEGER NOT NULL DEFAULT 0,
-        file_match TEXT NOT NULL DEFAULT '',
-        executable TEXT NOT NULL DEFAULT '',
-        ip_and_port TEXT NOT NULL DEFAULT '',
-        other_webroot TEXT NOT NULL DEFAULT '',
-        extra_handler_config TEXT NOT NULL DEFAULT '',
-        extra_environment TEXT NOT NULL DEFAULT ''
+        executable TEXT NOT NULL DEFAULT ''
     );"
         .to_string(),
         // Users table for admin portal

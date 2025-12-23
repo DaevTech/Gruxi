@@ -18,11 +18,13 @@ pub fn get_port_manager() -> &'static PortManager {
 /// - Singleton pattern - only one instance exists globally
 /// - Port range: 9000-10000
 /// - Support for multiple service types
-#[derive(Clone)]
+
+#[derive(Clone, Debug)]
 pub struct PortManager {
     inner: Arc<Mutex<PortManagerInner>>,
 }
 
+#[derive(Clone, Debug)]
 struct PortManagerInner {
     /// Starting port number for allocation
     start_port: u16,
@@ -153,6 +155,12 @@ impl PortManager {
         let total_range = (inner.max_port - inner.start_port + 1) as usize;
         let allocated_count = inner.allocated_ports.len();
         total_range - allocated_count
+    }
+}
+
+impl Default for PortManager {
+    fn default() -> Self {
+        Self::new(9000, 10000)
     }
 }
 

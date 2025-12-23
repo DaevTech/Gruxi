@@ -6,6 +6,9 @@ use crate::configuration::request_handler::RequestHandler;
 use crate::configuration::site::HeaderKV;
 use crate::configuration::site::Site;
 use crate::core::database_connection::get_database_connection;
+use crate::external_connections::php_cgi::PhpCgi;
+use crate::http::request_handlers::processors::php::PHPProcessor;
+use crate::http::request_handlers::processors::static_files::StaticFileProcessor;
 use crate::logging::syslog::{info, trace};
 use serde_json;
 use sqlite::Connection;
@@ -70,9 +73,36 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
             .map_err(|e| format!("Failed to insert binding-site relationship: {}", e))?;
     }
 
-    // Save request handlers
+    // Save request handlers, but clear existing one first
+    connection
+        .execute("DELETE FROM request_handler")
+        .map_err(|e| format!("Failed to clear existing request handlers: {}", e))?;
     for handler in &config.request_handlers {
         save_request_handler(&connection, handler)?;
+    }
+
+    // Save static file processors, clear existing first
+    connection
+        .execute("DELETE FROM static_file_processors")
+        .map_err(|e| format!("Failed to clear existing processors: {}", e))?;
+    for processor in &config.static_file_processors {
+        save_static_file_processor(&connection, processor)?;
+    }
+
+    // Save PHP processors, clear existing first
+    connection
+        .execute("DELETE FROM php_processors")
+        .map_err(|e| format!("Failed to clear existing PHP processors: {}", e))?;
+    for processor in &config.php_processors {
+        save_php_processor(&connection, processor)?;
+    }
+
+    // Save PHP-CGI handlers, clear existing first
+    connection
+        .execute("DELETE FROM php_cgi_handlers")
+        .map_err(|e| format!("Failed to clear existing PHP-CGI handlers: {}", e))?;
+    for handler in &config.php_cgi_handlers {
+        save_php_cgi_handler(&connection, handler)?;
     }
 
     // Commit transaction
@@ -81,6 +111,50 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
     info("Configuration saved successfully");
 
     Ok(true) // Changes were saved
+}
+
+fn save_php_processor(connection: &Connection, processor: &PHPProcessor) -> Result<(), String> {
+    connection
+        .execute(format!(
+            "INSERT INTO php_processors (id, served_by_type, php_cgi_handler_id, fastcgi_ip_and_port, request_timeout, local_web_root, fastcgi_web_root) VALUES ('{}', '{}', '{}', '{}', {}, '{}', '{}')",
+            processor.id,
+            processor.served_by_type.replace("'", "''"),
+            processor.php_cgi_handler_id.replace("'", "''"),
+            processor.fastcgi_ip_and_port.replace("'", "''"),
+            processor.request_timeout,
+            processor.local_web_root.replace("'", "''"),
+            processor.fastcgi_web_root.replace("'", "''")
+        ))
+        .map_err(|e| format!("Failed to insert PHP processor: {}", e))?;
+
+    Ok(())
+}
+
+fn save_php_cgi_handler(connection: &Connection, handler: &PhpCgi) -> Result<(), String> {
+    connection
+        .execute(format!(
+            "INSERT INTO php_cgi_handlers (id, request_timeout, concurrent_threads, executable) VALUES ('{}', {}, {}, '{}')",
+            handler.id,
+            handler.request_timeout,
+            handler.concurrent_threads,
+            handler.executable.replace("'", "''")
+        ))
+        .map_err(|e| format!("Failed to insert PHP-CGI handler: {}", e))?;
+
+    Ok(())
+}
+
+fn save_static_file_processor(connection: &Connection, processor: &StaticFileProcessor) -> Result<(), String> {
+    connection
+        .execute(format!(
+            "INSERT INTO static_file_processors (id, web_root, web_root_index_file_list) VALUES ('{}', '{}', '{}')",
+            processor.id,
+            processor.web_root.replace("'", "''"),
+            processor.web_root_index_file_list.join(",").replace("'", "''")
+        ))
+        .map_err(|e| format!("Failed to insert static file processor: {}", e))?;
+
+    Ok(())
 }
 
 fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> {
@@ -175,19 +249,17 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
 
     connection
         .execute(format!(
-            "INSERT INTO sites (id, is_default, is_enabled, hostnames, web_root, web_root_index_file_list, enabled_handlers, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, rewrite_functions, access_log_enabled, access_log_file, extra_headers) VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}', '{}')",
+            "INSERT INTO sites (id, is_default, is_enabled, hostnames, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, request_handlers, rewrite_functions, access_log_enabled, access_log_file, extra_headers) VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}', '{}')",
             site.id,
             if site.is_default { 1 } else { 0 },
             if site.is_enabled { 1 } else { 0 },
             site.hostnames.join(",").replace("'", "''"),
-            site.web_root.replace("'", "''"),
-            site.web_root_index_file_list.join(",").replace("'", "''"),
-            site.enabled_handlers.join(",").replace("'", "''"),
             site.tls_cert_path.replace("'", "''"),
             site.tls_cert_content.replace("'", "''"),
             site.tls_key_path.replace("'", "''"),
             site.tls_key_content.replace("'", "''"),
-            site.rewrite_functions.join(",").replace("'", "''"),
+            site.request_handlers.join(","),
+            site.rewrite_functions.join(","),
             if site.access_log_enabled { 1 } else { 0 },
             site.access_log_file.replace("'", "''"),
             extra_headers_str
@@ -201,37 +273,19 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
 
 fn save_request_handler(connection: &Connection, handler: &RequestHandler) -> Result<(), String> {
     // Prepare comma-separated strings
-    let file_match_str = handler.file_match.join(",");
-    let extra_config_str = handler.extra_handler_config.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<String>>().join(",");
-    let extra_env_str = handler.extra_environment.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<String>>().join(",");
-
-    let ip_and_port = if handler.ip_and_port.is_empty() {
-        "NULL".to_string()
-    } else {
-        format!("'{}'", handler.ip_and_port.replace("'", "''"))
-    };
-    let other_webroot = if handler.other_webroot.is_empty() {
-        "NULL".to_string()
-    } else {
-        format!("'{}'", handler.other_webroot.replace("'", "''"))
-    };
+    let url_match_str = handler.url_match.join(",");
 
     // Insert request handler with comma-separated fields
     connection
         .execute(format!(
-            "INSERT OR REPLACE INTO request_handlers (id, is_enabled, name, handler_type, request_timeout, concurrent_threads, file_match, executable, ip_and_port, other_webroot, extra_handler_config, extra_environment) VALUES ({}, {}, '{}', '{}', {}, {}, '{}', '{}', {}, {}, '{}', '{}')",
+            "INSERT INTO request_handler (id, is_enabled, name, priority, processor_type, processor_id, url_match) VALUES ('{}', {}, '{}', {}, '{}', '{}', '{}')",
             handler.id,
             if handler.is_enabled { 1 } else { 0 },
             handler.name.replace("'", "''"),
-            handler.handler_type.replace("'", "''"),
-            handler.request_timeout,
-            handler.concurrent_threads,
-            file_match_str.replace("'", "''"),
-            handler.executable.replace("'", "''"),
-            ip_and_port,
-            other_webroot,
-            extra_config_str.replace("'", "''"),
-            extra_env_str.replace("'", "''")
+            handler.priority,
+            handler.processor_type,
+            handler.processor_id,
+            url_match_str
         ))
         .map_err(|e| format!("Failed to insert request handler: {}", e))?;
 
