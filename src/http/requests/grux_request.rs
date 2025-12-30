@@ -1,53 +1,81 @@
+use http::request::Parts;
 use http_body_util::BodyExt;
 use hyper::HeaderMap;
 use hyper::Request;
 use hyper::body::Body;
 use hyper::body::Bytes;
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
+
+
+#[derive(Debug)]
+pub enum GruxBody {
+    Buffered(Bytes),
+    Streaming(hyper::body::Incoming),
+}
 
 // Wrapper around hyper Request to add calculated data and serve as a request in Grux
 #[derive(Debug)]
 pub struct GruxRequest {
-    request: Request<Bytes>,
-    body_bytes: Vec<u8>,
+    // Parts of the original request
+    parts: Parts,
+    body: GruxBody,
+    // Calculated data cache, such as remote_ip, hostname etc
     pub calculated_data: HashMap<String, String>,
+    // Optional connection semaphore for limiting concurrent requests
     pub connection_semaphore: Option<Arc<Semaphore>>,
+    // Upgrade future for handling protocol upgrades
+    upgrade_future: Option<hyper::upgrade::OnUpgrade>,
 }
 
 impl GruxRequest {
-    pub fn new(request: Request<Bytes>, body_bytes: Vec<u8>) -> Self {
+    // Created new buffered request from hyper Request<Bytes>
+    pub fn new(hyper_request: Request<Bytes>) -> Self {
+        let (mut parts, body) = hyper_request.into_parts();
+
+        // Check if this request has the Upgrade header - if so, we need to extract the upgrade extensions
+        let upgrade_future = parts.extensions.remove::<hyper::upgrade::OnUpgrade>();
+
+        // Calculated data cache, such as remote_ip, hostname etc
+        let mut calculated_data = HashMap::new();
+        calculated_data.insert("body_size_hint".to_string(), body.len().to_string());
+
         Self {
-            request,
-            body_bytes,
-            calculated_data: HashMap::new(),
+            parts,
+            body: GruxBody::Buffered(body),
+            calculated_data,
             connection_semaphore: None,
+            upgrade_future,
         }
     }
 
-    pub async fn from_hyper<B>(req: Request<B>) -> Result<Self, hyper::Error>
-    where
-        B: Body + Send + 'static
-    {
-        // Split parts and body
-        let (parts, body) = req.into_parts();
+    // Created new streaming request from hyper Request<Incoming>
+    pub fn from_hyper(hyper_request: Request<hyper::body::Incoming>) -> Self {
+        let body_size_hint = hyper_request.body().size_hint().upper().unwrap_or(0);
 
-        // Collect the body into Bytes
-        let body_bytes_result = body.collect().await;
-        let body_bytes = match body_bytes_result {
-            Ok(bytes) => bytes.to_bytes(),
-            Err(_) => Bytes::new(),
-        };
+        let (mut parts, body) = hyper_request.into_parts();
+        let body = GruxBody::Streaming(body);
 
-        // Rebuild a Request<Bytes>
-        let req = Request::from_parts(parts, Bytes::new());
-        let grux_request = GruxRequest::new(req, body_bytes.to_vec());
-        Ok(grux_request)
+        // Check if this request has the Upgrade header - if so, we need to extract the upgrade extensions
+        let upgrade_future = parts.extensions.remove::<hyper::upgrade::OnUpgrade>();
+
+        // Calculated data cache, such as remote_ip, hostname etc
+        let mut calculated_data = HashMap::new();
+        calculated_data.insert("body_size_hint".to_string(), body_size_hint.to_string());
+
+        Self {
+            parts,
+            body,
+            calculated_data,
+            connection_semaphore: None,
+            upgrade_future,
+        }
     }
 
     pub fn get_headers(&self) -> &HeaderMap {
-        self.request.headers()
+        &self.parts.headers
     }
 
     pub fn get_connection_semaphore(&self) -> Option<Arc<Semaphore>> {
@@ -71,10 +99,10 @@ impl GruxRequest {
             return host_header.to_string();
         }
         let requested_hostname = self
-            .request
-            .headers()
+            .parts
+            .headers
             .get(":authority")
-            .or_else(|| self.request.headers().get("Host"))
+            .or_else(|| self.parts.headers.get("Host"))
             .and_then(|h| h.to_str().ok())
             .unwrap_or("")
             .to_string();
@@ -86,7 +114,7 @@ impl GruxRequest {
         if let Some(http_version) = self.calculated_data.get("http_version") {
             return http_version.to_string();
         }
-        let http_version = match self.request.version() {
+        let http_version = match self.parts.version {
             hyper::Version::HTTP_09 => "HTTP/0.9".to_string(),
             hyper::Version::HTTP_10 => "HTTP/1.0".to_string(),
             hyper::Version::HTTP_11 => "HTTP/1.1".to_string(),
@@ -102,16 +130,16 @@ impl GruxRequest {
         if let Some(http_method) = self.calculated_data.get("http_method") {
             return http_method.to_string();
         }
-        let http_method = self.request.method().to_string();
+        let http_method = self.parts.method.to_string();
         self.add_calculated_data("http_method", &http_method);
         http_method
     }
 
     pub fn get_uri(&mut self) -> String {
-        if let Some(http_method) = self.calculated_data.get("uri") {
-            return http_method.to_string();
+        if let Some(uri) = self.calculated_data.get("uri") {
+            return uri.to_string();
         }
-        let uri = self.request.uri().to_string();
+        let uri = self.parts.uri.to_string();
         self.add_calculated_data("uri", &uri);
         uri
     }
@@ -120,7 +148,7 @@ impl GruxRequest {
         if let Some(path) = self.calculated_data.get("path") {
             return path.to_string();
         }
-        let path = self.request.uri().path().to_string();
+        let path = self.parts.uri.path().to_string();
         self.add_calculated_data("path", &path);
         path
     }
@@ -129,7 +157,7 @@ impl GruxRequest {
         if let Some(query) = self.calculated_data.get("query") {
             return query.to_string();
         }
-        let query = self.request.uri().query().unwrap_or("").to_string();
+        let query = self.parts.uri.query().unwrap_or("").to_string();
         self.add_calculated_data("query", &query);
         query
     }
@@ -138,9 +166,9 @@ impl GruxRequest {
         if let Some(path_and_query) = self.calculated_data.get("path_and_query") {
             return path_and_query.to_string();
         }
-        let path_and_query = match self.request.uri().query() {
-            Some(query) => format!("{}?{}", self.request.uri().path(), query),
-            None => self.request.uri().path().to_string(),
+        let path_and_query = match self.parts.uri.query() {
+            Some(query) => format!("{}?{}", self.parts.uri.path(), query),
+            None => self.parts.uri.path().to_string(),
         };
         self.add_calculated_data("path_and_query", &path_and_query);
         path_and_query
@@ -153,12 +181,38 @@ impl GruxRequest {
         return "".to_string();
     }
 
-    pub fn get_body_size(&self) -> u64 {
-        self.body_bytes.len() as u64
+    // Returns the full body bytes. Beware this consumes the internal body bytes
+    pub async fn get_body_bytes(&mut self) -> Bytes {
+        match &mut self.body {
+            GruxBody::Buffered(bytes) => bytes.clone(),
+            GruxBody::Streaming(incoming_body) => {
+                let body = incoming_body.collect().await;
+                match body {
+                    Ok(bytes) => bytes.to_bytes(),
+                    Err(_) => Bytes::new(),
+                }
+            }
+        }
     }
 
-    pub fn get_body_bytes(&self) -> &Vec<u8> {
-        self.body_bytes.as_ref()
+    pub fn get_streaming_http_request(&mut self) -> Result<Request<hyper::body::Incoming>, ()> {
+        match mem::replace(&mut self.body, GruxBody::Buffered(Bytes::new())) {
+            GruxBody::Streaming(incoming_body) => {
+                let request = Request::from_parts(self.parts.clone(), incoming_body);
+                Ok(request)
+            }
+            other => {
+                self.body = other;
+                Err(())
+            }
+        }
+    }
+
+    pub fn get_body_size(&mut self) -> u64 {
+        if let Some(body_size_hint) = self.calculated_data.get("body_size_hint") {
+            return body_size_hint.parse().unwrap_or(0);
+        }
+        0
     }
 
     pub fn is_https(&mut self) -> bool {
@@ -166,7 +220,7 @@ impl GruxRequest {
             return is_https == "true";
         }
 
-        let is_https = if let Some(scheme) = self.request.uri().scheme_str() {
+        let is_https = if let Some(scheme) = self.parts.uri.scheme_str() {
             scheme.eq_ignore_ascii_case("https")
         } else {
             false
@@ -180,7 +234,7 @@ impl GruxRequest {
             return server_port.parse().unwrap_or(80);
         }
 
-        let server_port = if let Some(port) = self.request.uri().port_u16() {
+        let server_port = if let Some(port) = self.parts.uri.port_u16() {
             port
         } else if self.is_https() {
             443
@@ -189,5 +243,16 @@ impl GruxRequest {
         };
         self.calculated_data.insert("server_port".to_string(), server_port.to_string());
         server_port
+    }
+
+    // Add this method:
+    pub fn take_upgrade(&mut self) -> Option<hyper::upgrade::OnUpgrade> {
+        self.upgrade_future.take()
+    }
+
+    pub fn set_new_uri(&mut self, new_uri: &str) {
+        let uri = new_uri.parse().unwrap_or(self.parts.uri.clone());
+        self.parts.uri = uri;
+        self.add_calculated_data("uri", new_uri);
     }
 }

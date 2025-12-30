@@ -1,13 +1,13 @@
 [package]
 name = "grux"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 
 [dependencies]
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "io-util", "time", "sync", "macros", "process", "signal"] }
 http-body-util = "0.1"
-hyper-util = { version = "0.1", features = ["tokio", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "http2", "client", "client-legacy"] }
 sqlite = "0.37.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.141"
@@ -28,6 +28,7 @@ random_password_generator = "0.1.0"
 wildcard = "0.3.0"
 tokio-util = "0.7.17"
 rustls-pki-types = "1.13.1"
+http = "1.4.0"
 
 [lib]
 name = "grux"

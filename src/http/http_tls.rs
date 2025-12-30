@@ -271,7 +271,6 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
         }
     }
 
-    // Ensure we have at least one certificate in the resolver
     if !site_added {
         return Err("No valid TLS certificates could be configured for this binding".into());
     }

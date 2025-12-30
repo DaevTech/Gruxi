@@ -547,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "grux"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "bcrypt",
  "cached",
@@ -555,6 +555,7 @@ dependencies = [
  "clap",
  "flate2",
  "futures",
+ "http",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -694,10 +695,13 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "hyper",
+ "libc",
  "pin-project-lite",
+ "socket2",
  "tokio",
  "tower-service",
  "tracing",

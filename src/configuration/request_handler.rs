@@ -38,8 +38,20 @@ impl RequestHandler {
     }
 
     // Check URL match, can be * or /path or /path* or .html or .php*
+    // Input can be path only or path+query, we only care about path here, but if there is query, it will still work
     pub fn matches_url(&self, url_path: &str) -> bool {
+        // If the url_path contains '?', we only care about the part before it
+        let url_path = match url_path.find('?') {
+            Some(pos) => &url_path[..pos],
+            None => url_path,
+        };
+
+        // We always compare on lowercase
+        let url_path = url_path.to_lowercase();
+
         for pattern in &self.url_match {
+            let pattern = pattern.to_lowercase();
+
             if pattern == "*" {
                 return true;
             } else if pattern.starts_with('*') {
@@ -47,13 +59,14 @@ impl RequestHandler {
                 if url_path.ends_with(suffix) {
                     return true;
                 }
-            } else if pattern.starts_with('/') {
-                if url_path.starts_with(pattern) {
-                    return true;
-                }
             } else if pattern.ends_with('*') {
                 let prefix = &pattern[..pattern.len() - 1]; // Remove the '*' character
+
                 if url_path.starts_with(prefix) {
+                    return true;
+                }
+            } else if pattern.starts_with('/') {
+                if url_path == pattern {
                     return true;
                 }
             } else {
@@ -165,6 +178,67 @@ impl RequestHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_request_handler_matches_url_all() {
+        let mut handler = create_valid_handler();
+        handler.url_match = vec!["*".to_string()];
+
+        assert!(handler.matches_url("/any/path"));
+        assert!(handler.matches_url("/api"));
+        assert!(handler.matches_url("/admin/dashboard"));
+        assert!(handler.matches_url("/index.php"));
+        assert!(handler.matches_url("/whatever/my.php"));
+        assert!(handler.matches_url("/static/image.png"));
+    }
+
+    #[test]
+    fn test_request_handler_matches_url_specific_subpath() {
+        let mut handler = create_valid_handler();
+        handler.url_match = vec!["/api".to_string()];
+
+        assert!(!handler.matches_url("/any/path"));
+        assert!(handler.matches_url("/api"));
+        assert!(!handler.matches_url("/api/myendpoint"));
+        assert!(!handler.matches_url("/admin/dashboard"));
+        assert!(!handler.matches_url("/index.php"));
+        assert!(!handler.matches_url("/whatever/my.php"));
+        assert!(!handler.matches_url("/static/image.png"));
+    }
+
+    #[test]
+    fn test_request_handler_matches_url_wildcard_subpath_trailing_slash() {
+        let mut handler = create_valid_handler();
+        handler.url_match = vec!["/admin/*".to_string()];
+
+        assert!(!handler.matches_url("/any/path"));
+        assert!(!handler.matches_url("/api"));
+        assert!(handler.matches_url("/admin/dashboard"));
+        assert!(handler.matches_url("/admin/dashboard/mysettings"));
+        assert!(handler.matches_url("/admin/dashboard/mysettings?query=1"));
+        assert!(!handler.matches_url("/admin?query=1"));
+        assert!(handler.matches_url("/admin/?query=1"));
+        assert!(!handler.matches_url("/index.php"));
+        assert!(!handler.matches_url("/whatever/my.php"));
+        assert!(!handler.matches_url("/static/image.png"));
+    }
+
+    #[test]
+    fn test_request_handler_matches_url_wildcard_subpath_without_trailing_slash() {
+        let mut handler = create_valid_handler();
+        handler.url_match = vec!["/admin*".to_string()];
+
+        assert!(!handler.matches_url("/any/path"));
+        assert!(!handler.matches_url("/api"));
+        assert!(handler.matches_url("/admin/dashboard"));
+        assert!(handler.matches_url("/admin/dashboard/mysettings"));
+        assert!(handler.matches_url("/admin/dashboard/mysettings?query=1"));
+        assert!(handler.matches_url("/admin?query=1"));
+        assert!(handler.matches_url("/admin/?query=1"));
+        assert!(!handler.matches_url("/index.php"));
+        assert!(!handler.matches_url("/whatever/my.php"));
+        assert!(!handler.matches_url("/static/image.png"));
+    }
 
     #[test]
     fn test_request_handler_validation_valid() {

@@ -6,9 +6,9 @@ use crate::configuration::server_settings::ServerSettings;
 use crate::configuration::site::Site;
 use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship};
 use crate::external_connections::php_cgi::PhpCgi;
-use crate::http::request_handlers::processors::php::PHPProcessor;
-use crate::http::request_handlers::processors::proxy::ProxyProcessor;
-use crate::http::request_handlers::processors::static_files::StaticFileProcessor;
+use crate::http::request_handlers::processors::php_processor::PHPProcessor;
+use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorUrlRewrite};
+use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -325,6 +325,47 @@ impl Configuration {
         configuration.request_handlers.push(request_handler3);
         configuration.static_file_processors.push(request3_static_processor);
         configuration.php_processors.push(request2_php_processor);
+
+        // Request handler for the static files
+        let mut request4_proxy_processor = ProxyProcessor::new();
+        request4_proxy_processor.upstream_servers = vec!["http://192.168.0.186:5000".to_string()];
+        request4_proxy_processor.url_rewrites = vec![
+            ProxyProcessorUrlRewrite {
+                from: "/test".to_string(),
+                to: "/tests1".to_string(),
+                is_case_insensitive: true,
+            }
+        ];
+
+        let request_handler4 = RequestHandler {
+            id: Uuid::new_v4().to_string(),
+            is_enabled: true,
+            name: "Proxy test".to_string(),
+            priority: 2,
+            processor_type: "proxy".to_string(),
+            processor_id: request4_proxy_processor.id.clone(),
+            url_match: vec!["*".to_string()],
+        };
+
+        let grux_proxy = Site {
+            id: 4,
+            hostnames: vec!["gruxproxy".to_string()],
+            is_default: false,
+            is_enabled: true,
+            tls_cert_path: "".to_string(),
+            tls_cert_content: "".to_string(),
+            tls_key_path: "".to_string(),
+            tls_key_content: "".to_string(),
+            request_handlers: vec![request_handler4.id.clone()],
+            rewrite_functions: vec!["OnlyWebRootIndexForSubdirs".to_string()],
+            extra_headers: vec![],
+            access_log_enabled: false,
+            access_log_file: "".to_string(),
+        };
+        configuration.sites.push(grux_proxy);
+        configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 4 });
+        configuration.request_handlers.push(request_handler4);
+        configuration.proxy_processors.push(request4_proxy_processor);
 
         configuration
     }

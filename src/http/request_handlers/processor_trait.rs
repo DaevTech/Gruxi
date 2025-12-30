@@ -3,8 +3,7 @@ use http_body_util::combinators::BoxBody;
 
 use crate::{configuration::site::Site, http::requests::grux_request::GruxRequest};
 
-
-// Trait that request handlers must implement
+// Trait that processors must implement
 #[allow(async_fn_in_trait)]
 pub trait ProcessorTrait {
     // Sanitize

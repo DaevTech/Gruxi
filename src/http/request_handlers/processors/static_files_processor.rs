@@ -1,8 +1,6 @@
 use crate::{
     configuration::site::Site,
-    file::{
-        file_util::{check_path_secure, get_full_file_path},
-    },
+    file::file_util::{check_path_secure, get_full_file_path},
     http::{
         http_util::{empty_response_with_status, full, resolve_web_root_and_path_and_get_file},
         request_handlers::processor_trait::ProcessorTrait,
@@ -40,6 +38,16 @@ impl ProcessorTrait for StaticFileProcessor {
 
         // Convert backslashes to forward slashes in web root (for Windows paths)
         self.web_root = self.web_root.replace("\\", "/");
+
+        // Trim whitespace from each index file and remove empty entries
+        self.web_root_index_file_list = self.web_root_index_file_list.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+
+        // For index files, remove any non-allowed characters (basic sanitization)
+        for file in &mut self.web_root_index_file_list {
+            *file = file.replace("..", ""); // Prevent directory traversal
+            *file = file.replace("\\", "/"); // Normalize slashes
+            *file = file.replace("//", "/"); // Remove double slashes
+        }
     }
 
     fn validate(&self) -> Result<(), Vec<String>> {
@@ -51,13 +59,9 @@ impl ProcessorTrait for StaticFileProcessor {
         }
 
         // Validate index file list
-        if self.web_root_index_file_list.is_empty() {
-            errors.push("Index file list cannot be empty".to_string());
-        } else {
-            for (idx, file) in self.web_root_index_file_list.iter().enumerate() {
-                if file.trim().is_empty() {
-                    errors.push(format!("Index file at position {} cannot be empty", idx + 1));
-                }
+        for (idx, file) in self.web_root_index_file_list.iter().enumerate() {
+            if file.trim().is_empty() {
+                errors.push(format!("Index file at position {} cannot be empty", idx + 1));
             }
         }
 

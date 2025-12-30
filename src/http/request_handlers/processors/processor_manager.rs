@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::http::request_handlers::processors::{php::PHPProcessor, proxy::ProxyProcessor, static_files::StaticFileProcessor};
+use crate::http::request_handlers::processors::{php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor};
 
 pub struct ProcessorManager {
     pub static_file_processors: HashMap<String, StaticFileProcessor>,
@@ -29,7 +29,7 @@ impl ProcessorManager {
             processor_manager.php_processors.insert(p.id.clone(), p.clone());
         });
 
-        // Insert the PHP processors from config
+        // Insert the proxy processors from config
         config.proxy_processors.iter().for_each(|p| {
             processor_manager.proxy_processors.insert(p.id.clone(), p.clone());
         });
@@ -45,7 +45,7 @@ impl ProcessorManager {
         self.php_processors.get(processor_id)
     }
 
-    pub fn get_proxy_processor_by_id(&self, processor_id: &String) -> Option<&PHPProcessor> {
-        self.php_processors.get(processor_id)
+    pub fn get_proxy_processor_by_id(&self, processor_id: &String) -> Option<&ProxyProcessor> {
+        self.proxy_processors.get(processor_id)
     }
 }

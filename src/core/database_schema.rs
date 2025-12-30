@@ -115,6 +115,17 @@ fn get_init_sql() -> Vec<String> {
         fastcgi_web_root TEXT NOT NULL DEFAULT ''
     );"
         .to_string(),
+        // Proxy processors table
+        "CREATE TABLE IF NOT EXISTS proxy_processors (
+        id TEXT PRIMARY KEY,
+        proxy_type TEXT NOT NULL DEFAULT '',
+        upstream_servers TEXT NOT NULL DEFAULT '',
+        load_balancing_strategy TEXT NOT NULL DEFAULT '',
+        timeout_seconds INTEGER NOT NULL DEFAULT 30,
+        health_check_path TEXT NOT NULL DEFAULT '',
+        url_rewrites TEXT NOT NULL DEFAULT ''
+    );"
+        .to_string(),
         // PHP-CGI handlers table
         "CREATE TABLE IF NOT EXISTS php_cgi_handlers (
         id TEXT PRIMARY KEY,

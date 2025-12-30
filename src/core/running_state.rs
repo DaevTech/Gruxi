@@ -1,6 +1,6 @@
 use crate::{
     external_connections::external_system_handler::ExternalSystemHandler,
-    http::request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager},
+    http::request_handlers::{processors::{load_balancer::load_balancer::LoadBalancer, processor_manager::ProcessorManager}, request_handler_manager::RequestHandlerManager},
     logging::syslog::debug,
 };
 use std::sync::Arc;
@@ -14,6 +14,7 @@ pub struct RunningState {
     pub request_handler_manager: RequestHandlerManager,
     pub processor_manager: ProcessorManager,
     pub external_system_handler: ExternalSystemHandler,
+    pub proxy_processor_load_balancer: LoadBalancer
 }
 
 impl RunningState {
@@ -38,12 +39,17 @@ impl RunningState {
         let processor_manager = ProcessorManager::new().await;
         debug("Processor manager initialized");
 
+        // Start proxy processor load balancer
+        let proxy_processor_load_balancer = LoadBalancer::new();
+
+
         RunningState {
             access_log_buffer: Arc::new(RwLock::new(access_log_buffer)),
             file_cache: Arc::new(RwLock::new(file_cache)),
             request_handler_manager: request_handler_manager,
             processor_manager: processor_manager,
             external_system_handler: external_system_handler,
+            proxy_processor_load_balancer: proxy_processor_load_balancer,
         }
     }
 
@@ -61,6 +67,10 @@ impl RunningState {
 
     pub fn get_processor_manager(&self) -> &ProcessorManager {
         &self.processor_manager
+    }
+
+    pub fn get_proxy_processor_load_balancer(&self) -> &LoadBalancer {
+        &self.proxy_processor_load_balancer
     }
 
     pub fn get_external_system_handler(&self) -> &ExternalSystemHandler {

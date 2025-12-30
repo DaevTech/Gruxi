@@ -298,8 +298,9 @@ impl FastCgi {
         }
 
         // Send body if present
-        if grux_request.get_body_size() > 0 {
-            let stdin_data = Self::create_fastcgi_stdin(grux_request.get_body_bytes());
+        let body_bytes = grux_request.get_body_bytes().await;
+        if body_bytes.len() > 0 {
+            let stdin_data = Self::create_fastcgi_stdin(&body_bytes);
             if let Err(e) = stream.write_all(&stdin_data).await {
                 error(format!("Failed to send STDIN: {}", e));
                 return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
@@ -544,7 +545,6 @@ impl FastCgi {
 
 #[cfg(test)]
 mod tests {
-    use http_body_util::Full;
     use hyper::body::Bytes;
 
     use crate::http::requests::grux_request::GruxRequest;
@@ -566,8 +566,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_generate_fastcgi_params() {
         // Try with scenario where user requests the root
-        let request = hyper::Request::builder().method("GET").uri("/").header("Host", "localhost").body(Full::new(Bytes::new())).unwrap();
-        let mut grux_request = GruxRequest::from_hyper(request).await.unwrap();
+        let request = hyper::Request::builder().method("GET").uri("/").header("Host", "localhost").body(Bytes::new()).unwrap();
+        let mut grux_request = GruxRequest::new(request);
         grux_request.add_calculated_data("fastcgi_script_file", "D:/websites/test1/public/index.php");
         grux_request.add_calculated_data("fastcgi_local_web_root", "D:/websites/test1/public");
         grux_request.add_calculated_data("fastcgi_web_root", "");

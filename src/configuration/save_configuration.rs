@@ -7,8 +7,9 @@ use crate::configuration::site::HeaderKV;
 use crate::configuration::site::Site;
 use crate::core::database_connection::get_database_connection;
 use crate::external_connections::php_cgi::PhpCgi;
-use crate::http::request_handlers::processors::php::PHPProcessor;
-use crate::http::request_handlers::processors::static_files::StaticFileProcessor;
+use crate::http::request_handlers::processors::php_processor::PHPProcessor;
+use crate::http::request_handlers::processors::proxy_processor::ProxyProcessor;
+use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
 use crate::logging::syslog::{info, trace};
 use serde_json;
 use sqlite::Connection;
@@ -97,6 +98,15 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
         save_php_processor(&connection, processor)?;
     }
 
+    // Save proxy processors, clear existing first
+    connection
+        .execute("DELETE FROM proxy_processors")
+        .map_err(|e| format!("Failed to clear existing Proxy processors: {}", e))?;
+    for processor in &config.proxy_processors {
+        // Implement save_proxy_processor similarly to other save functions
+        save_proxy_processor(&connection, processor)?;
+    }
+
     // Save PHP-CGI handlers, clear existing first
     connection
         .execute("DELETE FROM php_cgi_handlers")
@@ -111,6 +121,25 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, String> {
     info("Configuration saved successfully");
 
     Ok(true) // Changes were saved
+}
+
+fn save_proxy_processor(connection: &Connection, processor: &ProxyProcessor) -> Result<(), String> {
+    let url_rewrites_json = serde_json::to_string(&processor.url_rewrites).map_err(|e| format!("Failed to serialize URL rewrites: {}", e))?;
+
+    connection
+        .execute(format!(
+            "INSERT INTO proxy_processors (id, proxy_type, upstream_servers, load_balancing_strategy, timeout_seconds, health_check_path, url_rewrites) VALUES ('{}', '{}', '{}', '{}', {}, '{}', '{}')",
+            processor.id,
+            processor.proxy_type.replace("'", "''"),
+            processor.upstream_servers.join(",").replace("'", "''"),
+            processor.load_balancing_strategy.replace("'", "''"),
+            processor.timeout_seconds,
+            processor.health_check_path.replace("'", "''"),
+            url_rewrites_json.replace("'", "''")
+        ))
+        .map_err(|e| format!("Failed to insert Proxy processor: {}", e))?;
+
+    Ok(())
 }
 
 fn save_php_processor(connection: &Connection, processor: &PHPProcessor) -> Result<(), String> {

@@ -26,7 +26,7 @@ pub async fn handle_login_request(mut grux_request:GruxRequest, _admin_site: &Si
     }
 
     // Read the request body
-    let body_bytes = grux_request.get_body_bytes();
+    let body_bytes = grux_request.get_body_bytes().await;
 
     // Parse JSON body
     let login_request: LoginRequest = match serde_json::from_slice(&body_bytes) {
@@ -245,7 +245,7 @@ pub async fn admin_post_configuration_endpoint(mut grux_request: GruxRequest, _a
         resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(resp);
     }
-    let body_bytes = grux_request.get_body_bytes();
+    let body_bytes = grux_request.get_body_bytes().await;
 
     // Parse JSON body into Configuration struct
     let mut configuration: Configuration = match serde_json::from_slice(&body_bytes) {
@@ -691,7 +691,7 @@ pub async fn admin_post_operation_mode_endpoint(mut grux_request: GruxRequest, _
         resp.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(resp);
     }
-    let body_bytes = grux_request.get_body_bytes();
+    let body_bytes = grux_request.get_body_bytes().await;
 
     // Parse JSON body
     let mode_request: OperationModeRequest = match serde_json::from_slice(&body_bytes) {

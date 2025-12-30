@@ -2,8 +2,9 @@ use crate::configuration::binding_site_relation::BindingSiteRelationship;
 use crate::configuration::configuration::CURRENT_CONFIGURATION_VERSION;
 
 use crate::external_connections::php_cgi;
-use crate::http::request_handlers::processors::php;
-use crate::http::request_handlers::processors::static_files::StaticFileProcessor;
+use crate::http::request_handlers::processors::php_processor;
+use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorUrlRewrite};
+use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
 use crate::logging::syslog::info;
 use crate::{
     configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::HeaderKV, site::Site},
@@ -76,6 +77,7 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
     let request_handlers = load_request_handlers(&connection)?;
     let static_file_processors = load_static_file_processors(&connection)?;
     let php_processors = load_php_processors(&connection)?;
+    let proxy_processors = load_proxy_processors(&connection)?;
 
     // External systems
     let php_cgi_handlers = load_php_cgi_handlers(&connection)?;
@@ -93,7 +95,7 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
         request_handlers,
         static_file_processors,
         php_processors,
-        proxy_processors: vec![],
+        proxy_processors,
         php_cgi_handlers: php_cgi_handlers,
     };
     configuration.sanitize();
@@ -101,7 +103,42 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
     Ok(configuration)
 }
 
-fn load_php_processors(connection: &Connection) -> Result<Vec<php::PHPProcessor>, String> {
+fn load_proxy_processors(connection: &Connection) -> Result<Vec<ProxyProcessor>, String> {
+    let mut statement = connection
+        .prepare("SELECT * FROM proxy_processors")
+        .map_err(|e| format!("Failed to prepare Proxy processors query: {}", e))?;
+
+    let mut processors = Vec::new();
+    while let sqlite::State::Row = statement.next().map_err(|e| format!("Failed to execute Proxy processors query: {}", e))? {
+        let processor_id: String = statement.read(0).map_err(|e| format!("Failed to read processor id: {}", e))?;
+        let proxy_type: String = statement.read(1).map_err(|e| format!("Failed to read proxy_type: {}", e))?;
+        let upstream_servers_str: String = statement.read(2).map_err(|e| format!("Failed to read upstream_servers: {}", e))?;
+        let load_balancing_strategy: String = statement.read(3).map_err(|e| format!("Failed to read load_balancing_strategy: {}", e))?;
+        let timeout_seconds: i64 = statement.read(4).map_err(|e| format!("Failed to read timeout_seconds: {}", e))?;
+        let health_check_path: String = statement.read(5).map_err(|e| format!("Failed to read health_check_path: {}", e))?;
+        let url_rewrites_str: String = statement.read(6).map_err(|e| format!("Failed to read url_rewrites: {}", e))?;
+
+        // Upstream servers is stored as comma separated
+        let upstream_servers = parse_comma_separated_list(&upstream_servers_str);
+
+        // Url rewrites is stored as JSON array
+        let url_rewrites: Vec<ProxyProcessorUrlRewrite> = serde_json::from_str(&url_rewrites_str)
+            .map_err(|e| format!("Failed to parse url_rewrites JSON: {}", e))?;
+
+        processors.push(ProxyProcessor {
+            id: processor_id,
+            proxy_type,
+            upstream_servers,
+            load_balancing_strategy,
+            timeout_seconds: timeout_seconds as u16,
+            health_check_path,
+            url_rewrites,
+        });
+    }
+    Ok(processors)
+}
+
+fn load_php_processors(connection: &Connection) -> Result<Vec<php_processor::PHPProcessor>, String> {
     let mut statement = connection
         .prepare("SELECT * FROM php_processors")
         .map_err(|e| format!("Failed to prepare PHP processors query: {}", e))?;
@@ -116,7 +153,7 @@ fn load_php_processors(connection: &Connection) -> Result<Vec<php::PHPProcessor>
         let local_web_root: String = statement.read(5).map_err(|e| format!("Failed to read local_web_root: {}", e))?;
         let fastcgi_web_root: String = statement.read(6).map_err(|e| format!("Failed to read fastcgi_web_root: {}", e))?;
 
-        processors.push(php::PHPProcessor {
+        processors.push(php_processor::PHPProcessor {
             id: processor_id,
             served_by_type,
             php_cgi_handler_id,

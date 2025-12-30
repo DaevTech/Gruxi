@@ -5,11 +5,10 @@ use crate::http::requests::grux_request::GruxRequest;
 use crate::logging::syslog::{debug, error, info, trace, warn};
 use hyper::Request;
 use hyper::body::Incoming;
-use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as HttpAutoBuilder;
 use std::net::SocketAddr;
-use tls_listener::rustls as tokio_rustls;
 use tokio::net::TcpListener;
 use tokio::select;
 
@@ -77,9 +76,10 @@ async fn start_server_binding(binding: Binding) {
     trace(format!("Listening on binding: {:?}", binding));
 
     let triggers = crate::core::triggers::get_trigger_handler();
+    let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
+    let stop_services_token = triggers.get_trigger("stop_services").expect("Failed to get stop_services trigger").read().await.clone();
 
     if binding.is_tls {
-        // TLS path using tokio-rustls so we can inspect ALPN to choose HTTP/2 vs HTTP/1.1
         let acceptor = match build_tls_acceptor(&binding).await {
             Ok(a) => a,
             Err(e) => {
@@ -87,88 +87,49 @@ async fn start_server_binding(binding: Binding) {
                 return;
             }
         };
-        let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
-        let stop_services_token = triggers.get_trigger("stop_services").expect("Failed to get stop_services trigger").read().await.clone();
 
         loop {
             select! {
-                            _ = shutdown_token.cancelled() => {
-                                trace(format!("Shutdown signal received, stopping server on {}:{}", binding.ip, binding.port));
-                                break;
-                            },
-                            _ = stop_services_token.cancelled() => {
-                                trace(format!("Service cancellation signal received, stopping server on {}:{}", binding.ip, binding.port));
-                                break;
-                            },
-                            result = listener.accept() => {
-                                match result {
-                                    Ok((tcp_stream, _)) => {
-                                        let remote_addr = tcp_stream.peer_addr().map(|addr| addr.to_string()).ok();
-                                        let remote_addr_string = remote_addr.unwrap_or_else(|| "<unknown>".to_string());
-                                        let remote_addr_ip = remote_addr_string.split(':').next().unwrap_or("").to_string();
+                _ = shutdown_token.cancelled() => {
+                    trace(format!("Shutdown signal received, stopping server on {}:{}", binding.ip, binding.port));
+                    break;
+                },
+                _ = stop_services_token.cancelled() => {
+                    trace(format!("Service cancellation signal received, stopping server on {}:{}", binding.ip, binding.port));
+                    break;
+                },
+                result = listener.accept() => {
+                    match result {
+                        Ok((tcp_stream, _)) => {
+                            let remote_addr_ip = tcp_stream.peer_addr()
+                                .map(|addr| addr.ip().to_string())
+                                .unwrap_or_else(|_| "<unknown>".to_string());
 
-                                        let acceptor = acceptor.clone();
-                                        let shutdown_token = shutdown_token.clone();
-                                        let stop_services_token = stop_services_token.clone();
-                                        tokio::task::spawn({
-                                            let binding = binding.clone();
-                                            let remote_addr_ip = remote_addr_ip.clone();
+                            let acceptor = acceptor.clone();
+                            let binding = binding.clone();
+                            let shutdown_token = shutdown_token.clone();
+                            let stop_services_token = stop_services_token.clone();
 
-                                            async move {
-                                                match acceptor.accept(tcp_stream).await {
-                                                    Ok(tls_stream) => {
-                                                        // Decide protocol based on ALPN
-                                                        let is_h2 = negotiated_h2(&tls_stream);
-                                                        let io = TokioIo::new(tls_stream);
-
-                                                        let svc = service_fn(move |req: Request<Incoming>| {
-                                                            let binding = binding.clone();
-                                                            let remote_ip = remote_addr_ip.clone();
-                                                            let shutdown_token = shutdown_token.clone();
-                                                            let stop_services_token = stop_services_token.clone();
-
-                                                            async move {
-                                                                // Convert hyper Request<Incoming> to GruxRequest
-                                                                let mut grux_req = GruxRequest::from_hyper(req).await?;
-                                                                grux_req.add_calculated_data("remote_ip", &remote_ip);
-
-                                                                // Call your application handler
-                                                                let response = handle_request(grux_req, binding, shutdown_token, stop_services_token).await;
-                                                                debug(format!("Responding with: {:?}", response));
-                                                                response
-                                                            }
-                                                        });
-
-                                                        if is_h2 {
-                                                            if let Err(err) = http2::Builder::new(TokioExecutor::new()).serve_connection(io, svc).await {
-                                                                trace(format!("TLS h2 error serving connection: {:?}", err));
-                                                            }
-                                                        } else {
-                                                            if let Err(err) = http1::Builder::new().serve_connection(io, svc).await {
-                                                                trace(format!("TLS http1.1 error serving connection: {:?}", err));
-                                                            }
-                                                        }
-                                                    }
-                                                    Err(err) => {
-                                                        trace(format!("TLS handshake error: {:?}", err));
-                                                    }
-                                                }
-                                            }
-                                        });
+                            tokio::spawn(async move {
+                                match acceptor.accept(tcp_stream).await {
+                                    Ok(tls_stream) => {
+                                        let io = TokioIo::new(tls_stream);
+                                        serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token).await;
                                     }
                                     Err(err) => {
-                                        error(format!("Failed to accept connection: {:?}", err));
+                                        trace(format!("TLS handshake error: {:?}", err));
                                     }
                                 }
-                            }
-
-                        };
+                            });
+                        }
+                        Err(err) => {
+                            error(format!("Failed to accept connection: {:?}", err));
+                        }
+                    }
+                }
+            };
         }
     } else {
-        // Non-TLS path
-        let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
-        let stop_services_token = triggers.get_trigger("stop_services").expect("Failed to get stop_services trigger").read().await.clone();
-
         loop {
             select! {
                 _ = shutdown_token.cancelled() => {
@@ -180,43 +141,19 @@ async fn start_server_binding(binding: Binding) {
                     break;
                 },
                 result = listener.accept() => {
-
                     match result {
                         Ok((tcp_stream, _)) => {
-                            let remote_addr = tcp_stream.peer_addr().map(|addr| addr.to_string()).ok();
-                            let remote_addr_string = remote_addr.clone().unwrap_or_else(|| "<unknown>".to_string());
-                            let remote_addr_ip = remote_addr_string.split(':').next().unwrap_or("").to_string();
-                            let io = TokioIo::new(tcp_stream);
+                            let remote_addr_ip = tcp_stream.peer_addr()
+                                .map(|addr| addr.ip().to_string())
+                                .unwrap_or_else(|_| "<unknown>".to_string());
 
+                            let io = TokioIo::new(tcp_stream);
+                            let binding = binding.clone();
                             let shutdown_token = shutdown_token.clone();
                             let stop_services_token = stop_services_token.clone();
 
-                            tokio::task::spawn({
-                                let binding = binding.clone();
-                                let remote_addr_ip = remote_addr_ip.clone();
-                                async move {
-                                     let svc = service_fn(move |req: Request<Incoming>| {
-                                        let binding = binding.clone();
-                                        let remote_ip = remote_addr_ip.clone();
-                                        let shutdown_token = shutdown_token.clone();
-                                        let stop_services_token = stop_services_token.clone();
-
-                                        async move {
-                                            // Convert hyper Request<Incoming> to GruxRequest
-                                            let mut grux_req = GruxRequest::from_hyper(req).await?;
-                                            grux_req.add_calculated_data("remote_ip", &remote_ip);
-
-                                            // Call your application handler
-                                            let response = handle_request(grux_req, binding, shutdown_token, stop_services_token).await;
-                                            debug(format!("Responding with: {:?}", response));
-                                            response
-                                        }
-                                    });
-
-                                    if let Err(err) = http1::Builder::new().serve_connection(io, svc).await {
-                                        trace(format!("Error serving connection: {:?}", err));
-                                    }
-                                }
+                            tokio::spawn(async move {
+                                serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token).await;
                             });
                         }
                         Err(err) => {
@@ -229,12 +166,35 @@ async fn start_server_binding(binding: Binding) {
     }
 }
 
-// Determine if ALPN negotiated h2 for a rustls TLS stream
-fn negotiated_h2(stream: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>) -> bool {
-    // get_ref returns (IO, Connection)
-    let (_io, conn) = stream.get_ref();
-    match conn.alpn_protocol() {
-        Some(proto) => proto == b"h2",
-        None => false,
+// Helper function to serve a connection (works for both TLS and non-TLS)
+async fn serve_connection<S>(
+    io: TokioIo<S>,
+    binding: Binding,
+    remote_addr_ip: String,
+    shutdown_token: tokio_util::sync::CancellationToken,
+    stop_services_token: tokio_util::sync::CancellationToken,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let svc = service_fn(move |req: Request<Incoming>| {
+        let binding = binding.clone();
+        let remote_ip = remote_addr_ip.clone();
+        let shutdown_token = shutdown_token.clone();
+        let stop_services_token = stop_services_token.clone();
+
+        async move {
+            let mut grux_req = GruxRequest::from_hyper(req);
+            grux_req.add_calculated_data("remote_ip", &remote_ip);
+            let response = handle_request(grux_req, binding, shutdown_token, stop_services_token).await;
+            debug(format!("Responding with: {:?}", response));
+            response
+        }
+    });
+
+    if let Err(err) = HttpAutoBuilder::new(TokioExecutor::new())
+        .serve_connection_with_upgrades(io, svc)
+        .await
+    {
+        trace(format!("Connection error: {:?}", err));
     }
 }
