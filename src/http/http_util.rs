@@ -68,7 +68,6 @@ pub fn clean_url_path(path: &str) -> String {
     if result.ends_with('/') { result[..result.len() - 1].to_string() } else { result }
 }
 
-
 // Combine the web root and path, and resolve to a full path
 pub async fn resolve_web_root_and_path_and_get_file(web_root: &str, path: &str) -> Result<CachedFile, std::io::Error> {
     let path_cleaned = clean_url_path(&path);
@@ -99,8 +98,10 @@ pub fn add_standard_headers_to_response(resp: &mut Response<BoxBody<Bytes, hyper
         resp.headers_mut().insert(key, value.parse().unwrap());
     }
 
-    // Make sure we always a content type header, also when empty, then set octet-stream
+    // Always set server header
+    resp.headers_mut().insert("Server", "Grux".parse().unwrap());
 
+    // Make sure we always a content type header, also when empty, then set octet-stream
     if !resp.headers().contains_key("Content-Type") || resp.headers().get("Content-Type").unwrap().to_str().unwrap().is_empty() {
         if resp.status() == hyper::StatusCode::OK {
             resp.headers_mut().insert("Content-Type", "application/octet-stream".parse().unwrap());
@@ -110,6 +111,19 @@ pub fn add_standard_headers_to_response(resp: &mut Response<BoxBody<Bytes, hyper
     }
 }
 
+pub fn get_list_of_hop_by_hop_headers(is_websocket_upgrade: bool) -> Vec<String> {
+    // Remove hop-by-hop headers as per RFC 2616 Section 13.5.1
+    let mut hop_by_hop_headers = vec!["Keep-Alive".to_string(), "Proxy-Authenticate".to_string(), "Proxy-Authorization".to_string(), "TE".to_string(), "Trailers".to_string(), "Transfer-Encoding".to_string()];
+
+    if !is_websocket_upgrade {
+        // Also remove Connection and Upgrade headers if not a websocket upgrade
+        hop_by_hop_headers.push("Connection".to_string());
+        hop_by_hop_headers.push("Upgrade".to_string());
+    }
+
+    hop_by_hop_headers
+}
+
 fn get_standard_headers() -> Vec<(&'static str, &'static str)> {
-    return vec![("Server", "Grux"), ("Vary", "Accept-Encoding")];
+    return vec![("Vary", "Accept-Encoding")];
 }

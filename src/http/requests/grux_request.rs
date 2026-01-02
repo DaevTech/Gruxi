@@ -1,3 +1,4 @@
+use http::HeaderValue;
 use http::request::Parts;
 use http_body_util::BodyExt;
 use hyper::HeaderMap;
@@ -8,7 +9,6 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-
 
 #[derive(Debug)]
 pub enum GruxBody {
@@ -274,10 +274,62 @@ impl GruxRequest {
     }
 
     pub fn set_new_hostname(&mut self, new_hostname: &str) {
-        self.parts.headers.insert(
-            "Host",
-            hyper::header::HeaderValue::from_str(new_hostname).unwrap_or(hyper::header::HeaderValue::from_static("")),
-        );
+        self.parts
+            .headers
+            .insert("Host", hyper::header::HeaderValue::from_str(new_hostname).unwrap_or(hyper::header::HeaderValue::from_static("")));
         self.add_calculated_data("hostname", new_hostname);
+    }
+
+    pub fn remove_header(&mut self, header_name: &str) {
+        self.parts.headers.remove(header_name);
+    }
+
+    pub fn clean_hop_by_hop_headers(&mut self) {
+        let is_upgrade = self.parts.headers.get("Upgrade").is_some();
+        let connection_header_option = self.parts.headers.get("Connection");
+
+        let mut hop_by_hop_headers = crate::http::http_util::get_list_of_hop_by_hop_headers(is_upgrade);
+
+        // Check the connection header for any additional hop-by-hop headers, before we remove the connection header itself
+        if !is_upgrade {
+            if let Some(connection_header) = connection_header_option {
+                if let Ok(connection_header_str) = connection_header.to_str() {
+                    for token in connection_header_str.split(',') {
+                        let token_trimmed = token.trim();
+                        if !token_trimmed.is_empty() {
+                            hop_by_hop_headers.push(token_trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        for header in &hop_by_hop_headers {
+            self.remove_header(header);
+        }
+    }
+
+    pub fn add_forwarded_headers(&mut self) {
+        // Add X-Forwarded-For header
+        if let Some(remote_ip) = self.get_calculated_data("remote_ip") {
+            let x_forwarded_for_value = if let Some(existing_xff) = self.parts.headers.get("X-Forwarded-For") {
+                format!("{}, {}", existing_xff.to_str().unwrap_or(""), remote_ip)
+            } else {
+                remote_ip
+            };
+            self.parts
+                .headers
+                .insert("X-Forwarded-For", HeaderValue::from_str(&x_forwarded_for_value).unwrap_or(HeaderValue::from_static("")));
+        }
+
+        // Add X-Forwarded-Proto header
+        let scheme = self.get_scheme();
+        self.parts
+            .headers
+            .insert("X-Forwarded-Proto", HeaderValue::from_str(&scheme).unwrap_or(HeaderValue::from_static("http")));
+
+        // X-Forwarded-Host header
+        let hostname = self.get_hostname();
+        self.parts.headers.insert("X-Forwarded-Host", HeaderValue::from_str(&hostname).unwrap_or(HeaderValue::from_static("")));
     }
 }

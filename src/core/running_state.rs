@@ -1,6 +1,12 @@
 use crate::{
     external_connections::external_system_handler::ExternalSystemHandler,
-    http::request_handlers::{processors::{load_balancer::load_balancer::LoadBalancer, processor_manager::ProcessorManager}, request_handler_manager::RequestHandlerManager},
+    http::{
+        client::http_client::{HttpClient},
+        request_handlers::{
+            processors::{load_balancer::load_balancer::LoadBalancer, processor_manager::ProcessorManager},
+            request_handler_manager::RequestHandlerManager,
+        },
+    },
     logging::syslog::debug,
 };
 use std::sync::Arc;
@@ -14,7 +20,8 @@ pub struct RunningState {
     pub request_handler_manager: RequestHandlerManager,
     pub processor_manager: ProcessorManager,
     pub external_system_handler: ExternalSystemHandler,
-    pub proxy_processor_load_balancer: LoadBalancer
+    pub proxy_processor_load_balancer: LoadBalancer,
+    pub http_client: HttpClient,
 }
 
 impl RunningState {
@@ -42,6 +49,9 @@ impl RunningState {
         // Start proxy processor load balancer
         let proxy_processor_load_balancer = LoadBalancer::new();
 
+        // Initialize http clients
+        let http_client = HttpClient::new();
+        debug("HTTP client initialized");
 
         RunningState {
             access_log_buffer: Arc::new(RwLock::new(access_log_buffer)),
@@ -50,6 +60,7 @@ impl RunningState {
             processor_manager: processor_manager,
             external_system_handler: external_system_handler,
             proxy_processor_load_balancer: proxy_processor_load_balancer,
+            http_client: http_client,
         }
     }
 
@@ -75,5 +86,9 @@ impl RunningState {
 
     pub fn get_external_system_handler(&self) -> &ExternalSystemHandler {
         &self.external_system_handler
+    }
+
+    pub fn get_http_client(&self) -> &HttpClient {
+        &self.http_client
     }
 }

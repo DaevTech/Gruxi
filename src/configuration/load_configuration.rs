@@ -117,8 +117,9 @@ fn load_proxy_processors(connection: &Connection) -> Result<Vec<ProxyProcessor>,
         let timeout_seconds: i64 = statement.read(4).map_err(|e| format!("Failed to read timeout_seconds: {}", e))?;
         let health_check_path: String = statement.read(5).map_err(|e| format!("Failed to read health_check_path: {}", e))?;
         let url_rewrites_str: String = statement.read(6).map_err(|e| format!("Failed to read url_rewrites: {}", e))?;
-        let should_rewrite_host_header_int: i64 = statement.read(7).map_err(|e| format!("Failed to read should_rewrite_host_header: {}", e))?;
+        let preserve_host_header_int: i64 = statement.read(7).map_err(|e| format!("Failed to read preserve_host_header: {}", e))?;
         let forced_host_header: String = statement.read(8).map_err(|e| format!("Failed to read forced_host_header: {}", e))?;
+        let verify_tls_certificates_int: i64 = statement.read(9).map_err(|e| format!("Failed to read verify_tls_certificates: {}", e))?;
 
         // Upstream servers is stored as comma separated
         let upstream_servers = parse_comma_separated_list(&upstream_servers_str);
@@ -135,8 +136,9 @@ fn load_proxy_processors(connection: &Connection) -> Result<Vec<ProxyProcessor>,
             timeout_seconds: timeout_seconds as u16,
             health_check_path,
             url_rewrites,
-            should_rewrite_host_header: should_rewrite_host_header_int != 0,
+            preserve_host_header: preserve_host_header_int != 0,
             forced_host_header,
+            verify_tls_certificates: verify_tls_certificates_int != 0,
         });
     }
     Ok(processors)

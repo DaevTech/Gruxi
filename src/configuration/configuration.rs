@@ -336,6 +336,7 @@ impl Configuration {
                 is_case_insensitive: true,
             }
         ];
+        request4_proxy_processor.verify_tls_certificates = false;
 
         let request_handler4 = RequestHandler {
             id: Uuid::new_v4().to_string(),
