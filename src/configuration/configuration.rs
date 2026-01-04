@@ -7,7 +7,7 @@ use crate::configuration::site::Site;
 use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship};
 use crate::external_connections::php_cgi::PhpCgi;
 use crate::http::request_handlers::processors::php_processor::PHPProcessor;
-use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorUrlRewrite};
+use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorRewrite};
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -330,7 +330,7 @@ impl Configuration {
         let mut request4_proxy_processor = ProxyProcessor::new();
         request4_proxy_processor.upstream_servers = vec!["http://192.168.0.186:5000".to_string()];
         request4_proxy_processor.url_rewrites = vec![
-            ProxyProcessorUrlRewrite {
+            ProxyProcessorRewrite {
                 from: "/test".to_string(),
                 to: "/tests1".to_string(),
                 is_case_insensitive: true,

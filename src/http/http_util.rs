@@ -1,10 +1,10 @@
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
-use hyper::Response;
 use hyper::body::Bytes;
 
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::file::file_cache::CachedFile;
 use crate::file::file_util::get_full_file_path;
+use crate::http::request_response::grux_response::GruxResponse;
 use crate::logging::syslog::trace;
 
 pub fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
@@ -82,14 +82,13 @@ pub async fn resolve_web_root_and_path_and_get_file(web_root: &str, path: &str) 
     Ok(file_data)
 }
 
-pub fn empty_response_with_status(status: hyper::StatusCode) -> Response<BoxBody<Bytes, hyper::Error>> {
-    let mut resp = Response::new(full(""));
-    *resp.status_mut() = status;
+pub fn empty_response_with_status(status: hyper::StatusCode) -> GruxResponse {
+    let mut resp = GruxResponse::new_empty_with_status(status.as_u16());
     add_standard_headers_to_response(&mut resp);
     resp
 }
 
-pub fn add_standard_headers_to_response(resp: &mut Response<BoxBody<Bytes, hyper::Error>>) {
+pub fn add_standard_headers_to_response(resp: &mut GruxResponse) {
     // Set our standard headers, if not already set
     for (key, value) in get_standard_headers() {
         if resp.headers().contains_key(key) {
@@ -103,7 +102,7 @@ pub fn add_standard_headers_to_response(resp: &mut Response<BoxBody<Bytes, hyper
 
     // Make sure we always a content type header, also when empty, then set octet-stream
     if !resp.headers().contains_key("Content-Type") || resp.headers().get("Content-Type").unwrap().to_str().unwrap().is_empty() {
-        if resp.status() == hyper::StatusCode::OK {
+        if resp.get_status() == hyper::StatusCode::OK {
             resp.headers_mut().insert("Content-Type", "application/octet-stream".parse().unwrap());
         } else {
             resp.headers_mut().insert("Content-Type", "text/html".parse().unwrap());

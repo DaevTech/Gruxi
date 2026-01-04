@@ -1,7 +1,7 @@
-use hyper::{Response, body::Bytes};
-use http_body_util::combinators::BoxBody;
-
-use crate::{configuration::site::Site, http::requests::grux_request::GruxRequest};
+use crate::{
+    configuration::site::Site,
+    error::grux_error::GruxError, http::request_response::{grux_request::GruxRequest, grux_response::GruxResponse},
+};
 
 // Trait that processors must implement
 #[allow(async_fn_in_trait)]
@@ -19,5 +19,5 @@ pub trait ProcessorTrait {
     fn get_default_pretty_name(&self) -> String;
 
     // Handle an incoming request (details would depend on the actual implementation)
-    async fn handle_request(&self, grux_request: &mut GruxRequest, site: &Site) -> Result<Response<BoxBody<Bytes, hyper::Error>>, ()>;
+    async fn handle_request(&self, grux_request: &mut GruxRequest, site: &Site) -> Result<GruxResponse, GruxError>;
 }

@@ -1,7 +1,8 @@
 use crate::configuration::binding::Binding;
 use crate::http::handle_request::handle_request;
 use crate::http::http_tls::build_tls_acceptor;
-use crate::http::requests::grux_request::GruxRequest;
+use crate::http::request_response::grux_request::GruxRequest;
+use crate::http::request_response::grux_response::GruxResponse;
 use crate::logging::syslog::{debug, error, info, trace, warn};
 use hyper::Request;
 use hyper::body::Incoming;
@@ -167,13 +168,8 @@ async fn start_server_binding(binding: Binding) {
 }
 
 // Helper function to serve a connection (works for both TLS and non-TLS)
-async fn serve_connection<S>(
-    io: TokioIo<S>,
-    binding: Binding,
-    remote_addr_ip: String,
-    shutdown_token: tokio_util::sync::CancellationToken,
-    stop_services_token: tokio_util::sync::CancellationToken,
-) where
+async fn serve_connection<S>(io: TokioIo<S>, binding: Binding, remote_addr_ip: String, shutdown_token: tokio_util::sync::CancellationToken, stop_services_token: tokio_util::sync::CancellationToken)
+where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let svc = service_fn(move |req: Request<Incoming>| {
@@ -185,16 +181,24 @@ async fn serve_connection<S>(
         async move {
             let mut grux_req = GruxRequest::from_hyper(req);
             grux_req.add_calculated_data("remote_ip", &remote_ip);
-            let response = handle_request(grux_req, binding, shutdown_token, stop_services_token).await;
+            let grux_response_result = handle_request(grux_req, binding, shutdown_token, stop_services_token).await;
+            let response = match grux_response_result {
+                Err(err) => {
+                    error(format!("Error handling request from {}: {:?}", &remote_ip, err));
+                    let response = GruxResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16());
+                    response
+                }
+                Ok(response) => response,
+            };
+
             debug(format!("Responding with: {:?}", response));
-            response
+
+            // Convert grux_response to hyper response
+            Ok::<_, std::convert::Infallible>(response.into_hyper())
         }
     });
 
-    if let Err(err) = HttpAutoBuilder::new(TokioExecutor::new())
-        .serve_connection_with_upgrades(io, svc)
-        .await
-    {
+    if let Err(err) = HttpAutoBuilder::new(TokioExecutor::new()).serve_connection_with_upgrades(io, svc).await {
         trace(format!("Connection error: {:?}", err));
     }
 }

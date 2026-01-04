@@ -3,7 +3,7 @@ use crate::configuration::configuration::CURRENT_CONFIGURATION_VERSION;
 
 use crate::external_connections::php_cgi;
 use crate::http::request_handlers::processors::php_processor;
-use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorUrlRewrite};
+use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorRewrite};
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
 use crate::logging::syslog::info;
 use crate::{
@@ -125,7 +125,7 @@ fn load_proxy_processors(connection: &Connection) -> Result<Vec<ProxyProcessor>,
         let upstream_servers = parse_comma_separated_list(&upstream_servers_str);
 
         // Url rewrites is stored as JSON array
-        let url_rewrites: Vec<ProxyProcessorUrlRewrite> = serde_json::from_str(&url_rewrites_str)
+        let url_rewrites: Vec<ProxyProcessorRewrite> = serde_json::from_str(&url_rewrites_str)
             .map_err(|e| format!("Failed to parse url_rewrites JSON: {}", e))?;
 
         processors.push(ProxyProcessor {
@@ -138,7 +138,7 @@ fn load_proxy_processors(connection: &Connection) -> Result<Vec<ProxyProcessor>,
             url_rewrites,
             preserve_host_header: preserve_host_header_int != 0,
             forced_host_header,
-            verify_tls_certificates: verify_tls_certificates_int != 0,
+            verify_tls_certificates: verify_tls_certificates_int != 0
         });
     }
     Ok(processors)

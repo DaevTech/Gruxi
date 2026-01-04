@@ -1,14 +1,12 @@
+use crate::error::grux_error_enums::FastCgiError;
 use crate::file::file_util::get_full_file_path;
 use crate::file::file_util::replace_web_root_in_path;
 use crate::file::file_util::split_path;
-use crate::http::http_util::empty_response_with_status;
 use crate::http::http_util::full;
-use crate::http::requests::grux_request::GruxRequest;
+use crate::http::request_response::grux_request::GruxRequest;
+use crate::http::request_response::grux_response::GruxResponse;
 use crate::logging::syslog::error;
 use crate::logging::syslog::trace;
-use http_body_util::combinators::BoxBody;
-use hyper::Response;
-use hyper::body::Bytes;
 use std::time::Instant;
 use std::{collections::HashMap, time::Duration};
 use tokio::io::AsyncReadExt;
@@ -210,12 +208,12 @@ impl FastCgi {
         false
     }
 
-    pub async fn process_fastcgi_request(grux_request: &mut GruxRequest) -> Result<Response<BoxBody<Bytes, hyper::Error>>, ()> {
+    pub async fn process_fastcgi_request(grux_request: &mut GruxRequest) -> Result<GruxResponse, FastCgiError> {
         // Generate FastCGI parameters
         let params_result = Self::generate_fast_cgi_params(grux_request);
         if params_result.is_err() {
-            trace(format!("Failed to generate FastCGI parameters from request {:?}", grux_request));
-            return Err(());
+            error(format!("Failed to generate FastCGI parameters from request {:?}", grux_request));
+            return Err(FastCgiError::Initialization);
         }
         let params = params_result.unwrap();
         trace(format!("Generated FastCGI parameters: {:?}", params));
@@ -224,8 +222,8 @@ impl FastCgi {
         let ip_and_port = match grux_request.get_calculated_data("fastcgi_connect_ip_and_port") {
             Some(ip_and_port) => ip_and_port,
             None => {
-                trace("No FastCGI IP and port found in request calculated data");
-                return Err(());
+                error(format!("No FastCGI IP and port found in request calculated data ip and port: {:?}", grux_request));
+                return Err(FastCgiError::Initialization);
             }
         };
 
@@ -249,7 +247,7 @@ impl FastCgi {
                 }
                 Err(e) => {
                     error(format!("Failed to acquire connection permit for FastCGI server: {}", e));
-                    return Ok(empty_response_with_status(hyper::StatusCode::SERVICE_UNAVAILABLE));
+                    return Err(FastCgiError::ConnectionPermitAcquisition);
                 }
             };
             Self::do_fastcgi_request_and_response(grux_request, &ip_and_port, &params).await
@@ -257,18 +255,18 @@ impl FastCgi {
             Self::do_fastcgi_request_and_response(grux_request, &ip_and_port, &params).await
         };
 
-        Ok(response)
+        response
     }
 
-    pub async fn do_fastcgi_request_and_response(grux_request: &mut GruxRequest, ip_and_port: &str, params: &HashMap<String, String>) -> Response<BoxBody<Bytes, hyper::Error>> {
+    pub async fn do_fastcgi_request_and_response(grux_request: &mut GruxRequest, ip_and_port: &str, params: &HashMap<String, String>) -> Result<GruxResponse, FastCgiError> {
         trace(format!("Connecting to FastCGI server at {}", ip_and_port));
 
         // Connect to the FastCGI server
         let mut stream = match tokio::net::TcpStream::connect(&ip_and_port).await {
             Ok(stream) => stream,
             Err(e) => {
-                error(format!("Failed to connect to FastCGI server {}: {}", ip_and_port, e));
-                return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+                error(format!("FastCGI Error: Failed to connect to FastCGI server {}: {}", ip_and_port, e));
+                return Err(FastCgiError::Connection(e));
             }
         };
 
@@ -279,22 +277,22 @@ impl FastCgi {
         // Send BEGIN_REQUEST
         let begin_request = Self::create_fastcgi_begin_request();
         if let Err(e) = stream.write_all(&begin_request).await {
-            error(format!("Failed to send BEGIN_REQUEST: {}", e));
-            return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+            error(format!("FastCGI Error: Failed to send BEGIN_REQUEST: {}", e));
+            return Err(FastCgiError::Communication(e));
         }
 
         // Send parameters
         let params_data = Self::create_fastcgi_params(&params);
         if let Err(e) = stream.write_all(&params_data).await {
-            error(format!("Failed to send PARAMS: {}", e));
-            return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+            error(format!("FastCGI Error: Failed to send PARAMS: {}", e));
+            return Err(FastCgiError::Communication(e));
         }
 
         // Send empty params to signal end
         let empty_params = Self::create_fastcgi_params(&HashMap::new());
         if let Err(e) = stream.write_all(&empty_params).await {
-            error(format!("Failed to send empty params: {}", e));
-            return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+            error(format!("FastCGI Error: Failed to send empty params: {}", e));
+            return Err(FastCgiError::Communication(e));
         }
 
         // Send body if present
@@ -302,16 +300,16 @@ impl FastCgi {
         if body_bytes.len() > 0 {
             let stdin_data = Self::create_fastcgi_stdin(&body_bytes);
             if let Err(e) = stream.write_all(&stdin_data).await {
-                error(format!("Failed to send STDIN: {}", e));
-                return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+                error(format!("FastCGI Error: Failed to send STDIN: {}", e));
+                return Err(FastCgiError::Communication(e));
             }
         }
 
         // Send empty stdin to signal end
         let empty_stdin = Self::create_fastcgi_stdin(&[]);
         if let Err(e) = stream.write_all(&empty_stdin).await {
-            error(format!("Failed to send empty stdin: {}", e));
-            return empty_response_with_status(hyper::StatusCode::BAD_GATEWAY);
+            error(format!("FastCGI Error: Failed to send empty stdin: {}", e));
+            return Err(FastCgiError::Communication(e));
         }
 
         // Read response
@@ -339,26 +337,27 @@ impl FastCgi {
                             break;
                         }
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        return Err(FastCgiError::Communication(e));
+                    }
                 }
             }
-            Ok::<(), std::io::Error>(())
+            Ok::<(), FastCgiError>(())
         })
         .await
         {
             Ok(_) => {}
             Err(_) => {
                 error(format!("FastCGI response timeout after reading {} bytes", response_buffer.len()));
-                return empty_response_with_status(hyper::StatusCode::GATEWAY_TIMEOUT);
+                return Err(FastCgiError::Timeout);
             }
         }
 
         // Parse FastCGI response and extract HTTP response
         let http_response_bytes = Self::parse_fastcgi_response(&response_buffer);
-
         if http_response_bytes.is_empty() {
-            error("Empty response from PHP-CGI process".to_string());
-            return empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR);
+            error("FastCGI - Empty response from PHP-CGI process".to_string());
+            return Err(FastCgiError::InvalidResponse);
         }
 
         // Find the end of headers to separate headers from body
@@ -415,11 +414,11 @@ impl FastCgi {
                 let end_time = Instant::now();
                 let duration = end_time - start_time;
                 trace(format!("FastCGI response parsed successfully in {:?}", duration));
-                response
+                Ok(GruxResponse::from_hyper_bytes(response).await)
             }
             Err(e) => {
-                error(format!("Failed to build HTTP response: {}", e));
-                empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR)
+                error(format!("FastCGI - Failed to build HTTP response: {}", e));
+                return Err(FastCgiError::InvalidResponse);
             }
         }
     }
@@ -547,7 +546,7 @@ impl FastCgi {
 mod tests {
     use hyper::body::Bytes;
 
-    use crate::http::requests::grux_request::GruxRequest;
+    use crate::http::request_response::grux_request::GruxRequest;
 
     use super::FastCgi;
 
@@ -585,7 +584,6 @@ mod tests {
         assert_eq!(params.get("DOCUMENT_ROOT").unwrap(), "D:/websites/test1/public");
         assert_eq!(params.get("PATH_INFO").unwrap(), "");
     }
-
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_fastcgi_binary_response_parsing() {

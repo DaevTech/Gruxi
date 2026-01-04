@@ -10,11 +10,7 @@ use std::mem;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-#[derive(Debug)]
-pub enum GruxBody {
-    Buffered(Bytes),
-    Streaming(hyper::body::Incoming),
-}
+use crate::http::request_response::grux_body::GruxBody;
 
 // Wrapper around hyper Request to add calculated data and serve as a request in Grux
 #[derive(Debug)]
@@ -262,7 +258,6 @@ impl GruxRequest {
         server_port
     }
 
-    // Add this method:
     pub fn take_upgrade(&mut self) -> Option<hyper::upgrade::OnUpgrade> {
         self.upgrade_future.take()
     }
@@ -331,5 +326,14 @@ impl GruxRequest {
         // X-Forwarded-Host header
         let hostname = self.get_hostname();
         self.parts.headers.insert("X-Forwarded-Host", HeaderValue::from_str(&hostname).unwrap_or(HeaderValue::from_static("")));
+    }
+
+    pub fn get_accepted_encodings(&self) -> Vec<String> {
+        if let Some(accept_encoding_header) = self.parts.headers.get("Accept-Encoding") {
+            if let Ok(accept_encoding_str) = accept_encoding_header.to_str() {
+                return accept_encoding_str.split(',').map(|s| s.trim().to_string()).collect();
+            }
+        }
+        Vec::new()
     }
 }

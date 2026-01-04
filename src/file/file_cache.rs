@@ -1,8 +1,4 @@
-use flate2::Compression;
-use flate2::write::GzEncoder;
 use crate::logging::syslog::{debug, trace, warn};
-use tokio::select;
-use std::io::Write;
 use std::time::Instant;
 use std::time::SystemTime;
 use std::{
@@ -11,8 +7,10 @@ use std::{
     sync::{Arc, RwLock},
     time::Duration,
 };
+use tokio::select;
 use tokio::time::interval;
 
+use crate::compression::compression::Compression as GruxCompression;
 use crate::configuration::cached_configuration::get_cached_configuration;
 use crate::core::triggers::get_trigger_handler;
 
@@ -127,8 +125,8 @@ impl FileCache {
                 trace(format!("Guessed MIME type for {}: {}", file_path, mime_type));
 
                 // Create gzip version if content type is compressible
-                if self.should_compress(&mime_type, length) {
-                    match self.compress_content(&content, &mut gzip_content) {
+                if self.should_compress(mime_type.clone(), length) {
+                    match GruxCompression::compress_content(&content, &mut gzip_content) {
                         Ok(_) => {
                             // Only keep compressed version if it's significantly smaller
                             if gzip_content.len() as f64 > content.len() as f64 * 0.8 {
@@ -155,7 +153,10 @@ impl FileCache {
             };
 
             if self.is_enabled && (length < self.max_file_size) {
-                trace(format!("New cached file/dir: path={}, is_directory={}, exists={}, length={}, is_too_large={}, mime_type={}", new_cached_file.file_path, new_cached_file.is_directory, new_cached_file.exists, new_cached_file.length, new_cached_file.is_too_large, new_cached_file.mime_type));
+                trace(format!(
+                    "New cached file/dir: path={}, is_directory={}, exists={}, length={}, is_too_large={}, mime_type={}",
+                    new_cached_file.file_path, new_cached_file.is_directory, new_cached_file.exists, new_cached_file.length, new_cached_file.is_too_large, new_cached_file.mime_type
+                ));
                 self.cache.write().unwrap().insert(file_path.to_string(), new_cached_file.clone());
                 self.cached_items_last_checked
                     .write()
@@ -168,10 +169,13 @@ impl FileCache {
     }
 
     // Check if a MIME type should be compressed
-    pub fn should_compress(&self, mime_type: &str, content_length: u64) -> bool {
+    pub fn should_compress(&self, mime_type: String, content_length: u64) -> bool {
         if self.gzip_enabled {
             let check_should_compress = content_length > 1000 && content_length < (10 * 1024 * 1024) && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
-            trace(format!("Should compress check for MIME type {} and content_length: {} - Result: {}", mime_type, content_length, check_should_compress));
+            trace(format!(
+                "Should compress check for MIME type {} and content_length: {} - Result: {}",
+                mime_type, content_length, check_should_compress
+            ));
             return check_should_compress;
         }
         false
@@ -286,13 +290,5 @@ impl FileCache {
 
             debug(format!("[FileCacheUpdate] Cache update completed in {:?}", end_time.duration_since(start_time)));
         }
-    }
-
-    /// Compress content using gzip
-    pub fn compress_content(&self, content: &[u8], gzip_content: &mut Vec<u8>) -> Result<(), std::io::Error> {
-        let mut encoder = GzEncoder::new(gzip_content, Compression::default());
-        encoder.write_all(content)?;
-        encoder.finish()?;
-        Ok(())
     }
 }

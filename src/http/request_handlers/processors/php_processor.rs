@@ -1,15 +1,17 @@
 use std::time::Duration;
 
+use crate::error::grux_error::GruxError;
+use crate::error::grux_error_enums::{GruxErrorKind, PHPProcessorError};
 use crate::external_connections::fastcgi::FastCgi;
 use crate::file::file_util::get_full_file_path;
 use crate::http::http_util::resolve_web_root_and_path_and_get_file;
-use crate::logging::syslog::{error, trace};
+use crate::http::request_response::grux_response::GruxResponse;
+use crate::logging::syslog::{debug, error, trace};
 use crate::{
     configuration::site::Site,
     core::running_state_manager::get_running_state_manager,
-    http::{http_util::empty_response_with_status, request_handlers::processor_trait::ProcessorTrait, requests::grux_request::GruxRequest},
+    http::{http_util::empty_response_with_status, request_handlers::processor_trait::ProcessorTrait, request_response::grux_request::GruxRequest},
 };
-use hyper::{Response, body::Bytes};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -42,28 +44,31 @@ impl PHPProcessor {
 }
 
 impl ProcessorTrait for PHPProcessor {
-    fn sanitize(&mut self) {}
+    fn sanitize(&mut self) {
+        // TODO
+    }
 
     fn validate(&self) -> Result<(), Vec<String>> {
         let errors = Vec::new();
+        // TODO
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, grux_request: &mut GruxRequest, site: &Site) -> Result<Response<http_body_util::combinators::BoxBody<Bytes, hyper::Error>>, ()> {
+    async fn handle_request(&self, grux_request: &mut GruxRequest, site: &Site) -> Result<GruxResponse, GruxError> {
         // First we need to determine if and how to handle the request, based on the web root and the files that allow us to
         let web_root_result = get_full_file_path(&self.local_web_root);
         if let Err(e) = web_root_result {
             error(format!("Failed to get full web root path: {}", e));
-            return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
+            return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
         }
         let web_root = web_root_result.unwrap();
         let mut path = grux_request.get_path().clone();
 
         // Get the cached file, if it exists
         let file_data_result = resolve_web_root_and_path_and_get_file(&web_root, &path).await;
-        if let Err(_) = file_data_result {
-            return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+        if let Err(e) = file_data_result {
+            return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
         }
         let mut file_data = file_data_result.unwrap();
         let mut file_path = file_data.file_path.clone();
@@ -78,13 +83,13 @@ impl ProcessorTrait for PHPProcessor {
 
                 // Check if the index file exists
                 let file_data_result = resolve_web_root_and_path_and_get_file(&web_root, &path).await;
-                if let Err(_) = file_data_result {
-                    return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+                if let Err(e) = file_data_result {
+                    return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
                 }
                 file_data = file_data_result.unwrap();
                 file_path = file_data.file_path.clone();
             } else {
-                return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+                return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
             }
         }
 
@@ -109,7 +114,7 @@ impl ProcessorTrait for PHPProcessor {
         if connect_ip_and_port_result.is_err() {
             // Cannot determine how to connect to the PHP handler, so we cannot handle
             error(format!("PHP Processor: Cannot determine how to connect to PHP handler for processor ID: {}", self.id));
-            return Err(());
+            return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::Connection)));
         }
         let connect_ip_and_port = connect_ip_and_port_result.unwrap();
 
@@ -120,12 +125,11 @@ impl ProcessorTrait for PHPProcessor {
             let semaphore_option = external_system_handler.get_connection_semaphore(&self.php_cgi_handler_id);
             if semaphore_option.is_none() {
                 error(format!("PHP Processor: Cannot find connection semaphore for PHP-CGI handler ID: {}", self.php_cgi_handler_id));
-                return Err(());
+                return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::Internal)));
             }
             let connection_semaphore = semaphore_option.unwrap();
             grux_request.set_connection_semaphore(connection_semaphore);
         }
-
 
         // So now we have everything we need to handle the request, so we pass it to the FastCGI handler
         trace(format!("Serving PHP request via FastCGI at {} and full file path: {}", &connect_ip_and_port, &file_path));
@@ -141,14 +145,16 @@ impl ProcessorTrait for PHPProcessor {
             Ok(response) => {
                 if response.is_err() {
                     error("PHP Request processing via FastCGI failed".to_string());
+                    return Err(GruxError::new_with_kind_only(GruxErrorKind::FastCgi(response.err().unwrap())));
                 } else {
                     trace("PHP Request completed successfully".to_string());
                 }
-                return response;
+
+                return Ok(response.unwrap());
             }
             Err(_) => {
-                error("PHP Request timed out".to_string());
-                return Ok(empty_response_with_status(hyper::StatusCode::GATEWAY_TIMEOUT));
+                debug(format!("PHP Request timed out - Timeout: {} seconds - Request: {:?}", self.request_timeout, grux_request));
+                return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::Timeout)));
             }
         }
     }

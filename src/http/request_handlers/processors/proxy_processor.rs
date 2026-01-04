@@ -1,26 +1,27 @@
+use std::time::Duration;
+
 use crate::{
     configuration::site::Site,
     core::running_state_manager,
+    error::{
+        grux_error::GruxError,
+        grux_error_enums::{GruxErrorKind, ProxyProcessorError},
+    },
     http::{
-        http_util::empty_response_with_status,
-        request_handlers::{
-            processor_trait::ProcessorTrait,
-            processors::{load_balancer::round_robin::RoundRobin},
-        },
-        requests::grux_request::GruxRequest,
+        request_handlers::{processor_trait::ProcessorTrait, processors::load_balancer::round_robin::RoundRobin},
+        request_response::{grux_request::GruxRequest, grux_response::GruxResponse},
     },
     logging::syslog::{error, trace},
 };
 use http::HeaderValue;
-use http_body_util::BodyExt;
-use http_body_util::combinators::BoxBody;
 use hyper::Response;
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
+use tokio::time::timeout;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProxyProcessorUrlRewrite {
+pub struct ProxyProcessorRewrite {
     pub from: String,
     pub to: String,
     pub is_case_insensitive: bool,
@@ -31,11 +32,11 @@ pub struct ProxyProcessor {
     pub id: String,         // Unique identifier for the processor
     pub proxy_type: String, // e.g., "http", for further extension
     // HTTP Proxy specific settings
-    pub upstream_servers: Vec<String>,               // List of upstream servers e.g., ["http://server1:8080", "https://server2:8080"]
-    pub load_balancing_strategy: String,             // e.g., "round_robin" only for now
-    pub timeout_seconds: u16,                        // Timeout for upstream requests, in seconds
-    pub health_check_path: String,                   // Path to use for health checks
-    pub url_rewrites: Vec<ProxyProcessorUrlRewrite>, // URL rewrite rules - Rewrites on entire URL
+    pub upstream_servers: Vec<String>,            // List of upstream servers e.g., ["http://server1:8080", "https://server2:8080"]
+    pub load_balancing_strategy: String,          // e.g., "round_robin" only for now
+    pub timeout_seconds: u16,                     // Timeout for upstream requests, in seconds
+    pub health_check_path: String,                // Path to use for health checks
+    pub url_rewrites: Vec<ProxyProcessorRewrite>, // URL rewrite rules - Rewrites on entire URL
     // Host header handling
     pub preserve_host_header: bool, // Whether to preserve the Host header to match the original request, normally not recommended for upstream servers
     pub forced_host_header: String, // If set, this host header will be used instead of the original request's Host header, disregarding preserve_host_header - normally not recommended for normal use
@@ -162,7 +163,7 @@ impl ProcessorTrait for ProxyProcessor {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, grux_request: &mut GruxRequest, _site: &Site) -> Result<Response<BoxBody<hyper::body::Bytes, hyper::Error>>, ()> {
+    async fn handle_request(&self, grux_request: &mut GruxRequest, _site: &Site) -> Result<GruxResponse, GruxError> {
         trace(format!("ProxyProcessor handling request - {:?}", &self));
 
         // We determine which upstream server to use based on the load balancing strategy.
@@ -179,7 +180,8 @@ impl ProcessorTrait for ProxyProcessor {
                     rr
                 }
                 _ => {
-                    return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
+                    error(format!("Unsupported load balancing strategy: {}", self.load_balancing_strategy));
+                    return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
                 }
             };
 
@@ -192,7 +194,8 @@ impl ProcessorTrait for ProxyProcessor {
             lb.read().unwrap().get_next_server()
         };
         if server_to_handle_request.is_none() {
-            return Ok(empty_response_with_status(hyper::StatusCode::BAD_GATEWAY));
+            error(format!("Could not find a upstream server to handle request for proxy processor with id: {}", self.id));
+            return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable)));
         }
         let server_to_handle_request = server_to_handle_request.unwrap();
 
@@ -207,8 +210,11 @@ impl ProcessorTrait for ProxyProcessor {
         let upstream_uri: hyper::Uri = match rewritten_url.parse() {
             Ok(uri) => uri,
             Err(e) => {
-                error(format!("Failed to parse upstream URL '{}': {}", rewritten_url, e));
-                return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
+                error(format!(
+                    "Could not parse a rewritten URL '{}' for proxy processor with id: {} with error: {:?}",
+                    rewritten_url, self.id, e
+                ));
+                return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
             }
         };
 
@@ -226,8 +232,8 @@ impl ProcessorTrait for ProxyProcessor {
         let mut proxy_request = match grux_request.get_streaming_http_request() {
             Ok(req) => req,
             Err(_) => {
-                error("Failed to get HTTP request from GruxRequest");
-                return Ok(empty_response_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR));
+                error(format!("Failed to get streaming HTTP request for request: {:?}", grux_request));
+                return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
             }
         };
 
@@ -250,8 +256,9 @@ impl ProcessorTrait for ProxyProcessor {
 
         trace(format!("Forwarding request to upstream server: {:?}", proxy_request));
 
-        match client.request(proxy_request).await {
-            Ok(mut resp) => {
+        let timeout_duration = Duration::from_secs(self.timeout_seconds as u64);
+        match timeout(timeout_duration, client.request(proxy_request)).await {
+            Ok(Ok(mut resp)) => {
                 // Check if this is a protocol upgrade
                 let mut is_websocket_upgrade = false;
                 if resp.status() == hyper::StatusCode::SWITCHING_PROTOCOLS {
@@ -290,11 +297,18 @@ impl ProcessorTrait for ProxyProcessor {
                 // In the response, we make sure to update/clean the headers as needed
                 Self::clean_hop_by_hop_headers_in_response(&mut resp, is_websocket_upgrade);
 
-                return Ok(resp.map(|body| body.boxed()));
+                // Wrap response in GruxResponse
+                let grux_response = GruxResponse::from_hyper(resp);
+
+                return Ok(grux_response);
             }
-            Err(e) => {
-                error(format!("Failed to send request to upstream server: {:?} (can be certificate error, if using TLS)", e));
-                return Ok(empty_response_with_status(hyper::StatusCode::BAD_GATEWAY));
+            Ok(Err(e)) => {
+                error(format!("Failed to send request to upstream server: {:?}", e));
+                return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed)));
+            }
+            Err(_) => {
+                error(format!("Request to upstream server '{}' timed out after {} seconds", server_to_handle_request, self.timeout_seconds));
+                return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout)));
             }
         }
     }
