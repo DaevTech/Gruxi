@@ -181,9 +181,6 @@ impl RequestHandler {
                 GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(_)) => {
                     return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
                 }
-                GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
-                }
                 GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(_)) => {
                     return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16())); // We dont want to expose that it was blocked due to security
                 }
@@ -202,9 +199,6 @@ impl RequestHandler {
                 // PHP errors that we want to convey directly
                 GruxErrorKind::PHPProcessor(PHPProcessorError::PathError(_)) => {
                     return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
-                }
-                GruxErrorKind::PHPProcessor(PHPProcessorError::FileNotFound) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
                 }
                 GruxErrorKind::PHPProcessor(PHPProcessorError::Timeout) => {
                     return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::GATEWAY_TIMEOUT.as_u16()));

@@ -123,6 +123,8 @@ fn get_init_sql() -> Vec<String> {
         load_balancing_strategy TEXT NOT NULL DEFAULT '',
         timeout_seconds INTEGER NOT NULL DEFAULT 30,
         health_check_path TEXT NOT NULL DEFAULT '',
+        health_check_interval_seconds INTEGER NOT NULL DEFAULT 60,
+        health_check_timeout_seconds INTEGER NOT NULL DEFAULT 5,
         url_rewrites TEXT NOT NULL DEFAULT '',
         preserve_host_header BOOLEAN NOT NULL DEFAULT 0,
         forced_host_header TEXT NOT NULL DEFAULT '',

@@ -1,11 +1,16 @@
 use std::collections::HashMap;
 
-use crate::http::request_handlers::processors::{php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor};
+use crate::http::request_handlers::processors::{
+    load_balancer::load_balancer::LoadBalancerRegistry, php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor,
+};
 
 pub struct ProcessorManager {
+    // Processors by their IDs
     pub static_file_processors: HashMap<String, StaticFileProcessor>,
     pub php_processors: HashMap<String, PHPProcessor>,
     pub proxy_processors: HashMap<String, ProxyProcessor>,
+    // Helpers for processors
+    pub load_balancer_registry: LoadBalancerRegistry,
 }
 
 impl ProcessorManager {
@@ -17,6 +22,7 @@ impl ProcessorManager {
             static_file_processors: HashMap::new(),
             php_processors: HashMap::new(),
             proxy_processors: HashMap::new(),
+            load_balancer_registry: LoadBalancerRegistry::new(),
         };
 
         // Insert the static file processors from config
@@ -33,6 +39,12 @@ impl ProcessorManager {
         config.proxy_processors.iter().for_each(|p| {
             processor_manager.proxy_processors.insert(p.id.clone(), p.clone());
         });
+
+        // Create load balancers for proxy processors
+        for proxy_processor in processor_manager.proxy_processors.values() {
+            let lb = proxy_processor.get_load_balancer_service();
+            processor_manager.load_balancer_registry.create(proxy_processor.id.clone(), lb).await;
+        }
 
         processor_manager
     }

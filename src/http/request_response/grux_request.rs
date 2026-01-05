@@ -1,6 +1,7 @@
 use http::HeaderValue;
 use http::request::Parts;
 use http_body_util::BodyExt;
+use http_body_util::combinators::BoxBody;
 use hyper::HeaderMap;
 use hyper::Request;
 use hyper::body::Body;
@@ -208,10 +209,10 @@ impl GruxRequest {
         }
     }
 
-    pub fn get_streaming_http_request(&mut self) -> Result<Request<hyper::body::Incoming>, ()> {
+    pub fn get_streaming_http_request(&mut self) -> Result<Request<BoxBody<Bytes, hyper::Error>>, ()> {
         match mem::replace(&mut self.body, GruxBody::Buffered(Bytes::new())) {
             GruxBody::Streaming(incoming_body) => {
-                let request = Request::from_parts(self.parts.clone(), incoming_body);
+                let request = Request::from_parts(self.parts.clone(), incoming_body.boxed());
                 Ok(request)
             }
             other => {

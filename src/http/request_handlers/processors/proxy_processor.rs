@@ -8,7 +8,10 @@ use crate::{
         grux_error_enums::{GruxErrorKind, ProxyProcessorError},
     },
     http::{
-        request_handlers::{processor_trait::ProcessorTrait, processors::load_balancer::round_robin::RoundRobin},
+        request_handlers::{
+            processor_trait::ProcessorTrait,
+            processors::load_balancer::{load_balancer::LoadBalancerImpl, round_robin::RoundRobin},
+        },
         request_response::{grux_request::GruxRequest, grux_response::GruxResponse},
     },
     logging::syslog::{error, trace},
@@ -32,10 +35,14 @@ pub struct ProxyProcessor {
     pub id: String,         // Unique identifier for the processor
     pub proxy_type: String, // e.g., "http", for further extension
     // HTTP Proxy specific settings
-    pub upstream_servers: Vec<String>,            // List of upstream servers e.g., ["http://server1:8080", "https://server2:8080"]
-    pub load_balancing_strategy: String,          // e.g., "round_robin" only for now
-    pub timeout_seconds: u16,                     // Timeout for upstream requests, in seconds
-    pub health_check_path: String,                // Path to use for health checks
+    pub upstream_servers: Vec<String>,   // List of upstream servers e.g., ["http://server1:8080", "https://server2:8080"]
+    pub load_balancing_strategy: String, // e.g., "round_robin" only for now
+    pub timeout_seconds: u16,            // Timeout for upstream requests, in seconds
+    // Health check settings
+    pub health_check_path: String,          // Path to use for health checks, if empty, we dont do health checks
+    pub health_check_interval_seconds: u32, // Interval between health checks, in seconds
+    pub health_check_timeout_seconds: u32,  // Timeout for health check requests, in seconds
+    // Url rewrite rules
     pub url_rewrites: Vec<ProxyProcessorRewrite>, // URL rewrite rules - Rewrites on entire URL
     // Host header handling
     pub preserve_host_header: bool, // Whether to preserve the Host header to match the original request, normally not recommended for upstream servers
@@ -53,6 +60,8 @@ impl ProxyProcessor {
             load_balancing_strategy: "round_robin".to_string(),
             timeout_seconds: 30,
             health_check_path: "/health".to_string(),
+            health_check_interval_seconds: 60,
+            health_check_timeout_seconds: 5,
             url_rewrites: Vec::new(),
             preserve_host_header: false,
             forced_host_header: "".to_string(),
@@ -109,6 +118,21 @@ impl ProxyProcessor {
             response.headers_mut().remove(header);
         }
     }
+
+    pub fn get_load_balancer_service(&self) -> impl LoadBalancerImpl {
+        match self.load_balancing_strategy.as_str() {
+            "round_robin" => RoundRobin::new(
+                self.upstream_servers.clone(),
+                self.health_check_path.clone(),
+                self.health_check_timeout_seconds as u64,
+                self.health_check_interval_seconds as u64,
+            ),
+            _ => {
+                error(format!("Unsupported load balancing strategy: {}", self.load_balancing_strategy));
+                panic!("Unsupported load balancing strategy: '{}' - Defined in proxy processor: {}", self.load_balancing_strategy, self.id);
+            }
+        }
+    }
 }
 
 impl ProcessorTrait for ProxyProcessor {
@@ -127,6 +151,9 @@ impl ProcessorTrait for ProxyProcessor {
             rewrite.from = rewrite.from.trim().to_string();
             rewrite.to = rewrite.to.trim().to_string();
         }
+
+        // Forced host header trim
+        self.forced_host_header = self.forced_host_header.trim().to_string();
     }
 
     fn validate(&self) -> Result<(), Vec<String>> {
@@ -146,6 +173,14 @@ impl ProcessorTrait for ProxyProcessor {
             if !server.starts_with("http://") && !server.starts_with("https://") {
                 errors.push(format!("Upstream server '{}' is not a valid upstream URL. It must start with 'http://' or 'https://'.", server));
             }
+            if server.ends_with("/") {
+                errors.push(format!("Upstream server '{}' should not end with a trailing slash '/'.", server));
+            }
+
+            // Try to parse the URL
+            if let Err(_) = server.parse::<hyper::Uri>() {
+                errors.push(format!("Upstream server '{}' is not a valid URL.", server));
+            }
         }
 
         if self.load_balancing_strategy != "round_robin" {
@@ -156,8 +191,18 @@ impl ProcessorTrait for ProxyProcessor {
             errors.push("Timeout seconds must be greater than zero.".to_string());
         }
 
-        if !self.health_check_path.is_empty() && !self.health_check_path.starts_with('/') {
-            errors.push("Health check path must start with '/'.".to_string());
+        if !self.health_check_path.is_empty() {
+            if !self.health_check_path.starts_with('/') {
+                errors.push("Health check path must start with '/', such as '/health' or '/healthcheck/'.".to_string());
+            }
+
+            if self.health_check_interval_seconds < 1 {
+                errors.push("Health check interval seconds must be greater than zero.".to_string());
+            }
+
+            if self.health_check_timeout_seconds < 1 {
+                errors.push("Health check timeout seconds must be greater than zero.".to_string());
+            }
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
@@ -170,29 +215,10 @@ impl ProcessorTrait for ProxyProcessor {
         let running_state_manager = running_state_manager::get_running_state_manager().await;
         let running_state = running_state_manager.get_running_state();
         let running_state_read_lock = running_state.read().await;
-        let load_balancer = running_state_read_lock.get_proxy_processor_load_balancer();
+        let processor_manager = running_state_read_lock.get_processor_manager();
 
-        if !load_balancer.check_load_balancer_exists(&self.id) {
-            // Create load balancer instance
-            let lb_instance = match self.load_balancing_strategy.as_str() {
-                "round_robin" => {
-                    let rr = RoundRobin::new(self.upstream_servers.clone());
-                    rr
-                }
-                _ => {
-                    error(format!("Unsupported load balancing strategy: {}", self.load_balancing_strategy));
-                    return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
-                }
-            };
+        let server_to_handle_request = processor_manager.load_balancer_registry.get_next_server(self.id.as_str()).await;
 
-            // Register the load balancer
-            load_balancer.create_load_balancer(&self.id, lb_instance);
-        }
-
-        let server_to_handle_request = {
-            let lb = load_balancer.get_load_balancer(&self.id).unwrap();
-            lb.read().unwrap().get_next_server()
-        };
         if server_to_handle_request.is_none() {
             error(format!("Could not find a upstream server to handle request for proxy processor with id: {}", self.id));
             return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable)));

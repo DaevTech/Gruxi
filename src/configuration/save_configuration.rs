@@ -128,13 +128,15 @@ fn save_proxy_processor(connection: &Connection, processor: &ProxyProcessor) -> 
 
     connection
         .execute(format!(
-            "INSERT INTO proxy_processors (id, proxy_type, upstream_servers, load_balancing_strategy, timeout_seconds, health_check_path, url_rewrites, preserve_host_header, forced_host_header, verify_tls_certificates) VALUES ('{}', '{}', '{}', '{}', {}, '{}', '{}', {}, '{}', {})",
+            "INSERT INTO proxy_processors (id, proxy_type, upstream_servers, load_balancing_strategy, timeout_seconds, health_check_path, health_check_interval_seconds, health_check_timeout_seconds, url_rewrites, preserve_host_header, forced_host_header, verify_tls_certificates) VALUES ('{}', '{}', '{}', '{}', {}, '{}', {}, {}, '{}', {}, '{}', {})",
             processor.id,
             processor.proxy_type.replace("'", "''"),
             processor.upstream_servers.join(",").replace("'", "''"),
             processor.load_balancing_strategy.replace("'", "''"),
             processor.timeout_seconds,
             processor.health_check_path.replace("'", "''"),
+            processor.health_check_interval_seconds,
+            processor.health_check_timeout_seconds,
             url_rewrites_json.replace("'", "''"),
             if processor.preserve_host_header { 1 } else { 0 },
             processor.forced_host_header.replace("'", "''"),

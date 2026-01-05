@@ -1,52 +1,67 @@
-use std::{collections::HashMap, sync::atomic::{AtomicI32, Ordering}};
-use crate::http::request_handlers::processors::load_balancer::load_balancer::LoadBalancerTrait;
+use crate::http::request_handlers::processors::load_balancer::load_balancer::LoadBalancerImpl;
 
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+/// Simple round-robin load balancer
 pub struct RoundRobin {
-    pub servers: Vec<String>,
-    pub current_index: AtomicI32,
-    pub health_state: HashMap<String, bool>,
+    servers: Vec<String>,
+    current_index: usize,
+    health_state: HashMap<String, Arc<AtomicBool>>,
+    health_url_path: String,
+    health_timeout_secs: u64,
+    health_check_interval_secs: u64,
 }
 
 impl RoundRobin {
-    pub fn new(servers: Vec<String>) -> Self {
-        // We assume all servers are healthy by default
-        let health_state = servers.iter().map(|s| (s.clone(), true)).collect();
+    pub fn new(servers: Vec<String>, health_url_path: String, health_timeout_secs: u64, health_check_interval_secs: u64) -> Self {
+        // All servers are healthy at start
+        let health_state = servers.iter().map(|s| (s.clone(), Arc::new(AtomicBool::new(true)))).collect();
 
         Self {
             servers,
-            current_index: AtomicI32::new(0),
+            current_index: 0,
             health_state,
+            health_url_path,
+            health_timeout_secs,
+            health_check_interval_secs,
         }
     }
 }
 
-impl LoadBalancerTrait for RoundRobin {
-    fn get_next_server(&self) -> Option<String> {
-        let total_servers = self.servers.len();
-        if total_servers == 0 {
+impl LoadBalancerImpl for RoundRobin {
+    fn get_next_server(&mut self) -> Option<String> {
+        let total = self.servers.len();
+        if total == 0 {
             return None;
         }
 
-        for _ in 0..total_servers {
-            let server = &self.servers[self.current_index.load(Ordering::Relaxed) as usize];
-            self.current_index.store((self.current_index.load(Ordering::Relaxed) + 1) % total_servers as i32, Ordering::Relaxed);
+        for _ in 0..total {
+            let server = &self.servers[self.current_index];
+            self.current_index = (self.current_index + 1) % total;
 
-            // If the server is healthy, return it, otherwise continue to the next
-            if *self.health_state.get(server).unwrap_or(&true) {
+            if self.health_state.get(server).unwrap().load(Ordering::SeqCst) {
                 return Some(server.clone());
             }
         }
 
-        // If none of the servers are healthy, return None
         None
     }
 
     fn check_health(&mut self) {
-        // Placeholder for health check logic
         for server in &self.servers {
-            // Here you would implement actual health check logic
-            // For now, we assume all servers are healthy
-            self.health_state.insert(server.clone(), true);
+            let server_uri = server.clone() + &self.health_url_path;
+            let healthy_state = self.health_state.get(server).unwrap().clone();
+            self.check_uri_health(&server_uri, healthy_state, self.health_timeout_secs);
         }
+    }
+
+    fn get_health_check_interval_secs(&self) -> u64 {
+        self.health_check_interval_secs
     }
 }

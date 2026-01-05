@@ -45,12 +45,52 @@ impl PHPProcessor {
 
 impl ProcessorTrait for PHPProcessor {
     fn sanitize(&mut self) {
-        // TODO
+        // Trim strings
+        self.id = self.id.trim().to_string();
+        self.served_by_type = self.served_by_type.trim().to_string();
+        self.php_cgi_handler_id = self.php_cgi_handler_id.trim().to_string();
+        self.fastcgi_ip_and_port = self.fastcgi_ip_and_port.trim().to_string();
+        self.local_web_root = self.local_web_root.trim().to_string();
+        self.fastcgi_web_root = self.fastcgi_web_root.trim().to_string();
     }
 
     fn validate(&self) -> Result<(), Vec<String>> {
-        let errors = Vec::new();
-        // TODO
+        let mut errors = Vec::new();
+
+        // Id should be a uuid
+        if Uuid::parse_str(&self.id).is_err() {
+            errors.push(format!("PHP Processor: Invalid ID, must be a valid UUID: {}", self.id));
+        }
+
+        // served_by_type should be either "win-php-cgi" or "php-fpm"
+        if self.served_by_type != "win-php-cgi" && self.served_by_type != "php-fpm" {
+            errors.push(format!("PHP Processor: Invalid served_by_type, must be either 'win-php-cgi' or 'php-fpm': {}", self.served_by_type));
+        }
+
+        // PHP-CGI handler ID must be set if served_by_type is "win-php-cgi"
+        if self.served_by_type == "win-php-cgi" && self.php_cgi_handler_id.trim().is_empty() {
+            errors.push("PHP Processor: PHP CGI handler must be set when served by PHP CGI on Windows.".to_string());
+        }
+
+        // fastcgi_ip_and_port must be set if served_by_type is "php-fpm"
+        if self.served_by_type == "php-fpm" && self.fastcgi_ip_and_port.trim().is_empty() {
+            errors.push("PHP Processor: FastCGI IP and port must be set when served by PHP-FPM.".to_string());
+        }
+
+        // Request time must be greater than 0
+        if self.request_timeout < 1 {
+            errors.push("PHP Processor: Request timeout must be greater than 0.".to_string());
+        }
+
+        // Local web root must be set
+        if self.local_web_root.is_empty() {
+            errors.push("PHP Processor: Local web root must be set.".to_string());
+        }
+
+        // FastCGI web root must be set
+        if self.served_by_type == "php-fpm" && self.fastcgi_web_root.is_empty() {
+            errors.push("PHP Processor: FastCGI web root must be set to web root served by PHP-FPM.".to_string());
+        }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
