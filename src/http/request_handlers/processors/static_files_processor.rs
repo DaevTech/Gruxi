@@ -1,15 +1,18 @@
 use crate::{
     configuration::site::Site,
-    error::{grux_error::GruxError, grux_error_enums::{GruxErrorKind, StaticFileProcessorError}},
+    error::{
+        grux_error::GruxError,
+        grux_error_enums::{GruxErrorKind, StaticFileProcessorError},
+    },
     file::file_util::{check_path_secure, get_full_file_path},
     http::{
-        http_util::{full, resolve_web_root_and_path_and_get_file},
+        http_util::{resolve_web_root_and_path_and_get_file},
         request_handlers::processor_trait::ProcessorTrait,
         request_response::{grux_request::GruxRequest, grux_response::GruxResponse},
     },
     logging::syslog::{error, trace},
 };
-use hyper::{Response, header::HeaderValue};
+use hyper::{body::Bytes, header::HeaderValue};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -151,7 +154,9 @@ impl ProcessorTrait for StaticFileProcessor {
         if !check_path_secure(&web_root, &file_path).await {
             trace(format!("File path is not secure: {}", file_path));
             // We should probably not reveal that the file is blocked, so we return a 404
-            return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(file_path))));
+            return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(
+                file_path,
+            ))));
         }
 
         // Get configuration, as we need to check for gzip support
@@ -169,14 +174,17 @@ impl ProcessorTrait for StaticFileProcessor {
             file_data.gzip_content
         };
 
-        let mut response = Response::new(full(body_content));
-        response.headers_mut().insert("Content-Type", HeaderValue::from_str(&file_data.mime_type).unwrap());
-        if is_gzipped {
-            response.headers_mut().insert("Content-Encoding", HeaderValue::from_str("gzip").unwrap());
-        }
-        *response.status_mut() = hyper::StatusCode::OK;
+        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), Bytes::from(body_content));
 
-        Ok(GruxResponse::from_hyper_bytes(response).await)
+        // Set content type
+        response.headers_mut().insert(hyper::header::CONTENT_TYPE, HeaderValue::from_str(&file_data.mime_type).unwrap());
+
+        // Set content encoding if gzipped
+        if is_gzipped {
+            response.headers_mut().insert(hyper::header::CONTENT_ENCODING, HeaderValue::from_str("gzip").unwrap());
+        }
+
+        Ok(response)
     }
 
     fn get_type(&self) -> String {

@@ -124,6 +124,10 @@ impl GruxResponse {
 
     pub fn set_body(&mut self, body: GruxBody) {
         self.body = body;
+        let length = match &self.body {
+            GruxBody::Buffered(bytes) => bytes.len() as u64,
+            GruxBody::Streaming(_) => 0,
+        };
+        self.calculated_data.insert("body_size_hint".to_string(), length.to_string());
     }
-
 }

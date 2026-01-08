@@ -187,7 +187,6 @@ pub async fn handle_request(mut grux_request: GruxRequest, binding: Binding, shu
             response.get_body_size()
         );
 
-        let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
         let access_log_buffer_rwlock = running_state.get_access_log_buffer();
         let access_log_buffer = access_log_buffer_rwlock.read().await;
         access_log_buffer.add_log(site.id.to_string(), log_entry);
