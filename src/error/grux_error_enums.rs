@@ -6,7 +6,7 @@ pub enum GruxErrorKind {
     HttpRequestValidation(u16), // HTTP status code for request validation errors
     FastCgi(FastCgiError),
     Internal(&'static str),
-    AdminApi(AdminApiError),
+    AdminApi(AdminApiError)
 }
 
 #[derive(Debug)]

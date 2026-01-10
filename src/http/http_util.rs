@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::Bytes;
 
 use crate::core::running_state_manager::get_running_state_manager;
-use crate::file::file_cache::CachedFile;
+use crate::file::file_reader_structs::FileEntry;
 use crate::file::file_util::get_full_file_path;
 use crate::http::request_response::grux_response::GruxResponse;
 use crate::logging::syslog::trace;
@@ -69,16 +71,15 @@ pub fn clean_url_path(path: &str) -> String {
 }
 
 // Combine the web root and path, and resolve to a full path
-pub async fn resolve_web_root_and_path_and_get_file(web_root: &str, path: &str) -> Result<CachedFile, std::io::Error> {
+pub async fn resolve_web_root_and_path_and_get_file(web_root: &str, path: &str) -> Result<Arc<FileEntry>, std::io::Error> {
     let path_cleaned = clean_url_path(&path);
     let mut file_path = format!("{}/{}", web_root, path_cleaned);
     trace(format!("Resolved file path for resolving: {}", file_path));
     file_path = get_full_file_path(&file_path)?;
 
     let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
-    let file_cache_rwlock = running_state.get_file_cache();
-    let file_cache = file_cache_rwlock.read().await;
-    let file_data = file_cache.get_file(&file_path).unwrap();
+    let file_reader_cache = running_state.get_file_reader_cache();
+    let file_data = file_reader_cache.get_file(&file_path).await.unwrap();
     Ok(file_data)
 }
 

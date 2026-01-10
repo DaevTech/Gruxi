@@ -206,6 +206,13 @@ impl GruxRequest {
                     Err(_) => Bytes::new(),
                 }
             }
+            GruxBody::StreamingBoxed(boxed_body) => {
+                let body = boxed_body.collect().await;
+                match body {
+                    Ok(bytes) => bytes.to_bytes(),
+                    Err(_) => Bytes::new(),
+                }
+            }
         }
     }
 

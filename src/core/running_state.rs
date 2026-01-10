@@ -1,19 +1,17 @@
 use crate::{
-    external_connections::external_system_handler::ExternalSystemHandler,
-    http::{
+    external_connections::external_system_handler::ExternalSystemHandler, file::file_reader_structs::FileReaderCache, http::{
         client::http_client::HttpClient,
         request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager},
-    },
-    logging::syslog::debug,
+    }, logging::syslog::debug
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::{file::file_cache::FileCache, logging::access_logging::AccessLogBuffer};
+use crate::{logging::access_logging::AccessLogBuffer};
 
 pub struct RunningState {
     pub access_log_buffer: Arc<RwLock<AccessLogBuffer>>,
-    pub file_cache: Arc<RwLock<FileCache>>,
+    pub file_reader_cache: FileReaderCache,
     pub request_handler_manager: RequestHandlerManager,
     pub processor_manager: ProcessorManager,
     pub external_system_handler: ExternalSystemHandler,
@@ -30,9 +28,9 @@ impl RunningState {
         let external_system_handler = ExternalSystemHandler::new().await;
         debug("External system handler initialized");
 
-        // Start file cache
-        let file_cache = FileCache::new().await;
-        debug("File cache initialized");
+        // Start file read cache
+        let file_reader_cache = FileReaderCache::new().await;
+        debug("File reader cache initialized");
 
         // Start request handler manager
         let request_handler_manager = RequestHandlerManager::new().await;
@@ -48,7 +46,7 @@ impl RunningState {
 
         RunningState {
             access_log_buffer: Arc::new(RwLock::new(access_log_buffer)),
-            file_cache: Arc::new(RwLock::new(file_cache)),
+            file_reader_cache: file_reader_cache,
             request_handler_manager: request_handler_manager,
             processor_manager: processor_manager,
             external_system_handler: external_system_handler,
@@ -60,8 +58,8 @@ impl RunningState {
         self.access_log_buffer.clone()
     }
 
-    pub fn get_file_cache(&self) -> Arc<RwLock<FileCache>> {
-        self.file_cache.clone()
+    pub fn get_file_reader_cache(&self) -> &FileReaderCache {
+        &self.file_reader_cache
     }
 
     pub fn get_request_handler_manager(&self) -> &RequestHandlerManager {

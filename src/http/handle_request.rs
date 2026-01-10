@@ -134,11 +134,10 @@ pub async fn handle_request(mut grux_request: GruxRequest, binding: Binding, shu
         "".to_string()
     };
 
-    let file_cache_rwlock = running_state.get_file_cache();
-    let file_cache = file_cache_rwlock.read().await;
+    let file_reader_cache = running_state.get_file_reader_cache();
 
     // Only gzip if not already gzipped and if we should compress based on config and sizes
-    if content_encoding_header.to_lowercase() != "gzip" && file_cache.should_compress(content_type_header, content_length) {
+    if content_encoding_header.to_lowercase() != "gzip" && file_reader_cache.should_compress(&content_type_header, content_length) {
         let accepted_encodings = grux_request.get_accepted_encodings();
         let compression = Compression::new();
         compression.compress_response(&mut response, accepted_encodings, content_encoding_header).await;

@@ -67,10 +67,10 @@ impl MonitoringState {
                 let running_state_manager = get_running_state_manager().await;
                 let running_state = running_state_manager.get_running_state();
                 let unlocked_running_state = running_state.read().await;
-                let file_cache_rwlock = unlocked_running_state.get_file_cache();
-                let file_cache = file_cache_rwlock.read().await;
+                let file_reader_cache = unlocked_running_state.get_file_reader_cache();
 
-                monitoring_state.file_cache_current_items.store(file_cache.get_current_item_count(), Ordering::SeqCst);
+                monitoring_state.file_cache_current_items.store(file_reader_cache.get_current_item_count() as usize, Ordering::SeqCst);
+
                 // Clone the configuration values we need, then drop the guard
                 let (file_cache_enabled, file_cache_max_items) = {
                     let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();

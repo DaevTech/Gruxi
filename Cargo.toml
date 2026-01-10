@@ -33,6 +33,7 @@ hyper-rustls = { version = "0.27.7", features = ["http1", "http2", "native-tokio
 rustls = "0.23.35"
 rustls-native-certs = "0.8.3"
 webpki-roots = "1.0.4"
+dashmap = "6.1.0"
 
 [lib]
 name = "grux"

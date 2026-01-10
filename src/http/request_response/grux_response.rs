@@ -1,3 +1,5 @@
+use crate::http::request_response::grux_body::GruxBody;
+use crate::http::request_response::body_error::{BodyError, box_err};
 use http::response::Parts;
 use http_body_util::BodyExt;
 use http_body_util::Full;
@@ -5,8 +7,6 @@ use http_body_util::combinators::BoxBody;
 use hyper::Response;
 use hyper::body::{Body, Bytes};
 use std::collections::HashMap;
-
-use crate::http::request_response::grux_body::GruxBody;
 
 // Wrapper around hyper responses
 #[derive(Debug)]
@@ -34,9 +34,15 @@ impl GruxResponse {
         Self { parts, body, calculated_data }
     }
 
-    pub fn new_with_bytes(status_code: u16, body_bytes: Bytes) -> Self {
+    pub fn new_with_bytes<T: Into<Bytes>>(status_code: u16, body_bytes: T) -> Self {
         let mut response = GruxResponse::new_empty_with_status(status_code);
-        response.body = GruxBody::Buffered(body_bytes);
+        response.body = GruxBody::Buffered(body_bytes.into());
+        response
+    }
+
+    pub fn new_with_body(status_code: u16, body: BoxBody<hyper::body::Bytes, BodyError>) -> Self {
+        let mut response = GruxResponse::new_empty_with_status(status_code);
+        response.body = GruxBody::StreamingBoxed(body);
         response
     }
 
@@ -108,14 +114,24 @@ impl GruxResponse {
                     Err(_) => Bytes::new(),
                 }
             }
+            GruxBody::StreamingBoxed(boxed_body) => {
+                let body = boxed_body.collect().await;
+                match body {
+                    Ok(bytes) => bytes.to_bytes(),
+                    Err(_) => Bytes::new(),
+                }
+            }
         }
     }
 
     // Convert GruxResponse back into a hyper Response
-    pub fn into_hyper(self) -> Response<BoxBody<Bytes, hyper::Error>> {
-        let body = match self.body {
-            GruxBody::Buffered(bytes) => BoxBody::new(Full::new(bytes).map_err(|never| match never {})),
-            GruxBody::Streaming(incoming) => BoxBody::new(incoming),
+    pub fn into_hyper(self) -> Response<BoxBody<Bytes, BodyError>> {
+        let body: BoxBody<Bytes, BodyError> = match self.body {
+            GruxBody::Buffered(bytes) => BoxBody::new(
+                Full::new(bytes).map_err(|never| -> BodyError { match never {} }),
+            ),
+            GruxBody::Streaming(incoming) => BoxBody::new(incoming.map_err(box_err)),
+            GruxBody::StreamingBoxed(boxed_body) => boxed_body,
         };
 
         let response = Response::from_parts(self.parts, body);
@@ -127,6 +143,7 @@ impl GruxResponse {
         let length = match &self.body {
             GruxBody::Buffered(bytes) => bytes.len() as u64,
             GruxBody::Streaming(_) => 0,
+            GruxBody::StreamingBoxed(_) => 0,
         };
         self.calculated_data.insert("body_size_hint".to_string(), length.to_string());
     }

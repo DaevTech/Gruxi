@@ -111,10 +111,10 @@ impl ProcessorTrait for PHPProcessor {
             return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
         }
         let mut file_data = file_data_result.unwrap();
-        let mut file_path = file_data.file_path.clone();
+        let mut file_path = file_data.meta.file_path.clone();
 
         // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
-        if !file_data.exists {
+        if !file_data.meta.exists {
             trace(format!("File does not exist: {}", file_path));
             if site.get_rewrite_functions_hashmap().contains_key("OnlyWebRootIndexForSubdirs") {
                 trace(format!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path));
@@ -127,14 +127,14 @@ impl ProcessorTrait for PHPProcessor {
                     return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
                 }
                 file_data = file_data_result.unwrap();
-                file_path = file_data.file_path.clone();
+                file_path = file_data.meta.file_path.clone();
             } else {
                 return Err(GruxError::new_with_kind_only(GruxErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
             }
         }
 
         let mut uri_is_a_dir_with_index_file_inside = false;
-        if file_data.is_directory {
+        if file_data.meta.is_directory {
             // If it's a directory, we will try to check if there is an index.php file inside
             trace(format!("File is a directory: {}", file_path));
 
@@ -144,12 +144,12 @@ impl ProcessorTrait for PHPProcessor {
                 return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
             }
             file_data = file_data_result.unwrap();
-            if file_data.exists == false {
+            if file_data.meta.exists == false {
                 trace(format!("Index files in dir does not exist: {}", file_path));
                 return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
             }
 
-            file_path = file_data.file_path.clone();
+            file_path = file_data.meta.file_path.clone();
             trace(format!("Found index file: {}", file_path));
             uri_is_a_dir_with_index_file_inside = true;
         }

@@ -12,7 +12,7 @@ use crate::{
     },
     logging::syslog::{error, trace},
 };
-use hyper::{body::Bytes, header::HeaderValue};
+use hyper::{header::HeaderValue};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -89,10 +89,10 @@ impl ProcessorTrait for StaticFileProcessor {
             return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
         }
         let mut file_data = file_data_result.unwrap();
-        let mut file_path = file_data.file_path.clone();
+        let mut file_path = file_data.meta.file_path.clone();
 
         // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
-        if !file_data.exists {
+        if !file_data.meta.exists {
             trace(format!("File does not exist: {}", file_path));
             if site.get_rewrite_functions_hashmap().contains_key("OnlyWebRootIndexForSubdirs") {
                 trace(format!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path));
@@ -109,7 +109,7 @@ impl ProcessorTrait for StaticFileProcessor {
                     return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
                 }
                 file_data = file_data_result.unwrap();
-                file_path = file_data.file_path.clone();
+                file_path = file_data.meta.file_path.clone();
             } else {
                 trace(format!(
                     "File does not exist and no rewrite function is applied: {}, so we cannot handle with static file processor",
@@ -119,7 +119,7 @@ impl ProcessorTrait for StaticFileProcessor {
             }
         }
 
-        if file_data.is_directory {
+        if file_data.meta.is_directory {
             // If it's a directory, we will try to return the index file
             trace(format!("File is a directory: {}", file_path));
 
@@ -133,12 +133,12 @@ impl ProcessorTrait for StaticFileProcessor {
                     continue;
                 }
                 file_data = file_data_result.unwrap();
-                if file_data.exists == false {
+                if file_data.meta.exists == false {
                     trace(format!("Index files in dir does not exist: {}", file_path));
                     continue;
                 }
 
-                file_path = file_data.file_path.clone();
+                file_path = file_data.meta.file_path.clone();
                 trace(format!("Found index file: {}", file_path));
                 found_index = true;
                 break;
@@ -159,28 +159,16 @@ impl ProcessorTrait for StaticFileProcessor {
             ))));
         }
 
-        // Get configuration, as we need to check for gzip support
-        let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration().await;
-        let gzip_enabled = &config.core.gzip.is_enabled;
-        let gzip_compressable_mime_types = &config.core.gzip.compressible_content_types;
+        // Get a stream of the file content, based on the accept-encoding header
+        let (stream, compression) = file_data.get_content_stream(grux_request).await;
 
-        // Gzip body or raw content
-        let mut is_gzipped = false;
-        let body_content = if file_data.gzip_content.is_empty() || !gzip_enabled || !gzip_compressable_mime_types.contains(&file_data.mime_type) {
-            file_data.content
-        } else {
-            is_gzipped = true;
-            file_data.gzip_content
-        };
-
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), Bytes::from(body_content));
+        let mut response = GruxResponse::new_with_body(hyper::StatusCode::OK.as_u16(), stream);
 
         // Set content type
-        response.headers_mut().insert(hyper::header::CONTENT_TYPE, HeaderValue::from_str(&file_data.mime_type).unwrap());
+        response.headers_mut().insert(hyper::header::CONTENT_TYPE, HeaderValue::from_str(&file_data.meta.mime_type).unwrap());
 
         // Set content encoding if gzipped
-        if is_gzipped {
+        if compression == "gzip" {
             response.headers_mut().insert(hyper::header::CONTENT_ENCODING, HeaderValue::from_str("gzip").unwrap());
         }
 
