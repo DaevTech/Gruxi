@@ -43,10 +43,10 @@ pub fn save_configuration(config: &mut Configuration, force: bool) -> Result<boo
     connection.execute("BEGIN TRANSACTION").map_err(|e| vec![format!("Failed to begin transaction: {}", e)])?;
 
     // Save the schema version, clear it first
-    connection.execute("DELETE FROM grux WHERE grux_key = 'schema_version'").map_err(|e| vec![format!("Failed to clear existing schema version: {}", e)])?;
+    connection.execute("DELETE FROM gruxi WHERE gruxi_key = 'schema_version'").map_err(|e| vec![format!("Failed to clear existing schema version: {}", e)])?;
     connection
         .execute(format!(
-            "INSERT INTO grux (grux_key, grux_value) VALUES ('schema_version', '{}')",
+            "INSERT INTO gruxi (gruxi_key, gruxi_value) VALUES ('schema_version', '{}')",
             config.version
         ))
         .map_err(|e| vec![format!("Failed to save schema version: {}", e)])?;

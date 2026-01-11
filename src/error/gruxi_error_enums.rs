@@ -1,5 +1,5 @@
 #[derive(Debug)]
-pub enum GruxErrorKind {
+pub enum GruxiErrorKind {
     ProxyProcessor(ProxyProcessorError),
     StaticFileProcessor(StaticFileProcessorError),
     PHPProcessor(PHPProcessorError),

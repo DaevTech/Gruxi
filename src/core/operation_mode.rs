@@ -23,7 +23,7 @@ pub fn load_operation_mode() -> OperationMode {
     if opmode.is_empty() {
         let connection = get_database_connection().expect("Failed to get database connection");
         let mut stmt = connection
-            .prepare("SELECT grux_value FROM grux WHERE grux_key = 'operation_mode'")
+            .prepare("SELECT gruxi_value FROM gruxi WHERE gruxi_key = 'operation_mode'")
             .expect("Failed to prepare operation_mode query");
 
         let mode_str: Option<String> = match stmt.next().expect("Failed to execute operation_mode query") {
@@ -89,7 +89,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
 
             // Check if operation_mode exists
             let mut stmt = connection
-                .prepare("SELECT grux_value FROM grux WHERE grux_key = 'operation_mode'")
+                .prepare("SELECT gruxi_value FROM gruxi WHERE gruxi_key = 'operation_mode'")
                 .expect("Failed to prepare select query");
 
             let existing_id: Option<i64> = match stmt.next().expect("Failed to execute select query") {
@@ -102,7 +102,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
             if let Some(_) = existing_id {
                 // Update existing record
                 let mut update_stmt = connection
-                    .prepare("UPDATE grux SET grux_value = ? WHERE grux_key = ?")
+                    .prepare("UPDATE gruxi SET gruxi_value = ? WHERE gruxi_key = ?")
                     .expect("Failed to prepare update query");
                 update_stmt.bind((1, new_mode.as_str())).expect("Failed to bind new_mode");
                 update_stmt.bind((2, "operation_mode")).expect("Failed to bind operation_mode key");
@@ -110,7 +110,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
             } else {
                 // Insert new record
                 let mut insert_stmt = connection
-                    .prepare("INSERT INTO grux (grux_key, grux_value) VALUES ('operation_mode', ?)")
+                    .prepare("INSERT INTO gruxi (gruxi_key, gruxi_value) VALUES ('operation_mode', ?)")
                     .expect("Failed to prepare insert query");
                 insert_stmt.bind((1, new_mode.as_str())).expect("Failed to bind new_mode");
                 insert_stmt.next().expect("Failed to execute insert query");

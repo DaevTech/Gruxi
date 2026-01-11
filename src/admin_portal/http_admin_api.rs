@@ -6,11 +6,11 @@ use crate::core::admin_user::{LoginRequest, authenticate_user, create_session, i
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
 use crate::core::triggers::get_trigger_handler;
-use crate::error::grux_error::GruxError;
-use crate::error::grux_error_enums::{AdminApiError, GruxErrorKind};
+use crate::error::gruxi_error::GruxiError;
+use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
 use crate::http::http_util::{clean_url_path};
-use crate::http::request_response::grux_request::GruxRequest;
-use crate::http::request_response::grux_response::GruxResponse;
+use crate::http::request_response::gruxi_request::GruxiRequest;
+use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::logging::syslog::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -18,60 +18,60 @@ use std::fs;
 use std::path::Path;
 use tokio_util::bytes;
 
-pub async fn handle_api_routes(grux_request: &mut GruxRequest, site: &Site) -> Result<GruxResponse, GruxError> {
-    let path = grux_request.get_path();
+pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
+    let path = gruxi_request.get_path();
     let path_cleaned = clean_url_path(&path);
-    let method = grux_request.get_http_method();
+    let method = gruxi_request.get_http_method();
 
     trace(format!("Handling request for admin portal with path: {}", path_cleaned));
 
     // We only want to handle a few paths in the admin portal
     let response_result = if path_cleaned == "login" && method == "POST" {
-        handle_login_request(grux_request, site).await
+        handle_login_request(gruxi_request, site).await
     } else if path_cleaned == "logout" && method == "POST" {
-        handle_logout_request(grux_request, site).await
+        handle_logout_request(gruxi_request, site).await
     } else if path_cleaned == "config" && method == "GET" {
-        admin_get_configuration_endpoint(grux_request, site).await
+        admin_get_configuration_endpoint(gruxi_request, site).await
     } else if path_cleaned == "config" && method == "POST" {
-        admin_post_configuration_endpoint(grux_request, site).await
+        admin_post_configuration_endpoint(gruxi_request, site).await
     } else if path_cleaned == "monitoring" && method == "GET" {
-        admin_monitoring_endpoint(grux_request, site).await
+        admin_monitoring_endpoint(gruxi_request, site).await
     } else if path_cleaned == "healthcheck" && method == "GET" {
-        admin_healthcheck_endpoint(grux_request, site).await
+        admin_healthcheck_endpoint(gruxi_request, site).await
     } else if (path_cleaned == "logs" || path_cleaned.starts_with("logs/")) && method == "GET" {
-        admin_logs_endpoint(grux_request, site).await
+        admin_logs_endpoint(gruxi_request, site).await
     } else if (path_cleaned == "configuration/reload") && method == "POST" {
-        admin_post_configuration_reload(grux_request, site).await
+        admin_post_configuration_reload(gruxi_request, site).await
     } else if path_cleaned == "operation-mode" && method == "GET" {
-        admin_get_operation_mode_endpoint(grux_request, site).await
+        admin_get_operation_mode_endpoint(gruxi_request, site).await
     } else if path_cleaned == "operation-mode" && method == "POST" {
-        admin_post_operation_mode_endpoint(grux_request, site).await
+        admin_post_operation_mode_endpoint(gruxi_request, site).await
     } else {
         // If we reach here, no matching admin API route was found
         trace(format!("No matching admin API route found for path: {}", path_cleaned));
-        Err(GruxError::new_with_kind_only(GruxErrorKind::AdminApi(AdminApiError::NoRouteMatched)))
+        Err(GruxiError::new_with_kind_only(GruxiErrorKind::AdminApi(AdminApiError::NoRouteMatched)))
     };
 
     response_result
 }
 
-pub async fn handle_login_request(grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
+pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check if this is a POST request
-    if grux_request.get_http_method() != "POST" {
-        trace(format!("Login request attempted with invalid method: {}", grux_request.get_http_method()));
-        let response = GruxResponse::new_empty_with_status(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16());
+    if gruxi_request.get_http_method() != "POST" {
+        trace(format!("Login request attempted with invalid method: {}", gruxi_request.get_http_method()));
+        let response = GruxiResponse::new_empty_with_status(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16());
         return Ok(response);
     }
 
     // Read the request body
-    let body_bytes = grux_request.get_body_bytes().await;
+    let body_bytes = gruxi_request.get_body_bytes().await;
 
     // Parse JSON body
     let login_request: LoginRequest = match serde_json::from_slice(&body_bytes) {
         Ok(req) => req,
         Err(e) => {
             error(format!("Failed to parse login request: {}", e));
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid JSON format for login"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid JSON format for login"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -84,13 +84,13 @@ pub async fn handle_login_request(grux_request: &mut GruxRequest, _admin_site: &
         Ok(Some(user)) => user,
         Ok(None) => {
             info(format!("Failed login attempt for username: {}", login_request.username));
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid username or password"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid username or password"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
         Err(e) => {
             error(format!("Database error during authentication: {}", e));
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -102,7 +102,7 @@ pub async fn handle_login_request(grux_request: &mut GruxRequest, _admin_site: &
         Err(e) => {
             error(format!("Failed to create session: {}", e));
             let return_message = r#"{"error": "Failed to create session"}"#;
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(return_message));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(return_message));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -119,21 +119,21 @@ pub async fn handle_login_request(grux_request: &mut GruxRequest, _admin_site: &
         "expires_at": session.expires_at.to_rfc3339()
     });
 
-    let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
     response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
     return Ok(response);
 }
 
-pub async fn handle_logout_request(grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
+pub async fn handle_logout_request(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check if this is a POST request
-    if grux_request.get_http_method() != "POST" {
-        trace(format!("Logout request with invalid method: {}", grux_request.get_http_method()));
-        let response = GruxResponse::new_empty_with_status(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16());
+    if gruxi_request.get_http_method() != "POST" {
+        trace(format!("Logout request with invalid method: {}", gruxi_request.get_http_method()));
+        let response = GruxiResponse::new_empty_with_status(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16());
         return Ok(response);
     }
 
     // Get the session token from Authorization header or request body
-    let token = get_session_token_from_request(&grux_request).await;
+    let token = get_session_token_from_request(&gruxi_request).await;
 
     if let Some(token) = token {
         match invalidate_session(&token) {
@@ -143,39 +143,39 @@ pub async fn handle_logout_request(grux_request: &mut GruxRequest, _admin_site: 
                     "success": true,
                     "message": "Logout successful"
                 });
-                let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
+                let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
                 response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
                 Ok(response)
             }
             Ok(false) => {
-                let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::NOT_FOUND.as_u16(), bytes::Bytes::from(r#"{"error": "Session not found"}"#));
+                let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::NOT_FOUND.as_u16(), bytes::Bytes::from(r#"{"error": "Session not found"}"#));
                 response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
                 Ok(response)
             }
             Err(e) => {
                 error(format!("Failed to logout session: {}", e));
-                let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
+                let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
                 response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
                 Ok(response)
             }
         }
     } else {
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "No session token provided"}"#));
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "No session token provided"}"#));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         Ok(response)
     }
 }
 
-pub async fn admin_get_configuration_endpoint(grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
+pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
-    match require_authentication(&grux_request).await {
+    match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with getting configuration
             debug("User authenticated, retrieving configuration".to_string());
         }
         Ok(None) => {
             // This shouldn't happen as require_authentication returns error for None
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -192,7 +192,7 @@ pub async fn admin_get_configuration_endpoint(grux_request: &mut GruxRequest, _a
         Ok(json) => json,
         Err(e) => {
             error(format!("Failed to serialize configuration: {}", e));
-            let mut response = GruxResponse::new_with_bytes(
+            let mut response = GruxiResponse::new_with_bytes(
                 hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
                 bytes::Bytes::from(r#"{"error": "Failed to serialize configuration"}"#),
             );
@@ -201,21 +201,21 @@ pub async fn admin_get_configuration_endpoint(grux_request: &mut GruxRequest, _a
         }
     };
 
-    let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(json_config));
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(json_config));
     response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
     return Ok(response);
 }
 
-pub async fn admin_post_configuration_reload(grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
+pub async fn admin_post_configuration_reload(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
-    match require_authentication(&grux_request).await {
+    match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with reloading configuration
             debug("User authenticated, reloading configuration".to_string());
         }
         Ok(None) => {
             // This shouldn't happen as require_authentication returns error for None
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -237,26 +237,26 @@ pub async fn admin_post_configuration_reload(grux_request: &mut GruxRequest, _ad
         "message": "Configuration reload initiated. Server is restarting..."
     });
 
-    let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
     response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
     return Ok(response);
 }
 
-pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
+pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check if this is a POST request
-    if grux_request.get_http_method() != "POST" {
-        trace(format!("Request with invalid method: {}", grux_request.get_http_method()));
-        let response = GruxResponse::new_empty_with_status(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16());
+    if gruxi_request.get_http_method() != "POST" {
+        trace(format!("Request with invalid method: {}", gruxi_request.get_http_method()));
+        let response = GruxiResponse::new_empty_with_status(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16());
         return Ok(response);
     }
 
     // Check authentication first
-    match require_authentication(&grux_request).await {
+    match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated for configuration update".to_string());
         }
         Ok(None) => {
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -266,12 +266,12 @@ pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _
     }
 
     // Read the request body
-    if grux_request.get_body_size() == 0 {
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Empty request body"}"#));
+    if gruxi_request.get_body_size() == 0 {
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Empty request body"}"#));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(response);
     }
-    let body_bytes = grux_request.get_body_bytes().await;
+    let body_bytes = gruxi_request.get_body_bytes().await;
 
     // Parse JSON body into Configuration struct
     let mut configuration: Configuration = match serde_json::from_slice(&body_bytes) {
@@ -283,7 +283,7 @@ pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _
                 "details": e.to_string()
             });
 
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -303,7 +303,7 @@ pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _
                 Err(e) => {
                     error(format!("Failed to serialize updated configuration: {}", e));
 
-                    let mut response = GruxResponse::new_with_bytes(
+                    let mut response = GruxiResponse::new_with_bytes(
                         hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
                         bytes::Bytes::from(r#"{"error": "Configuration saved but failed to serialize response"}"#),
                     );
@@ -318,7 +318,7 @@ pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _
                 "configuration": config_json
             });
 
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -330,7 +330,7 @@ pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _
                 Ok(json) => json,
                 Err(e) => {
                     error(format!("Failed to serialize configuration: {}", e));
-                    let mut response = GruxResponse::new_with_bytes(
+                    let mut response = GruxiResponse::new_with_bytes(
                         hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
                         bytes::Bytes::from(r#"{"error": "Failed to serialize configuration response"}"#),
                     );
@@ -345,7 +345,7 @@ pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _
                 "configuration": config_json
             });
 
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -355,7 +355,7 @@ pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _
                 "errors": validation_errors
             });
 
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -363,9 +363,9 @@ pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _
 }
 
 // Helper function to extract session token from request
-async fn get_session_token_from_request(grux_request: &GruxRequest) -> Option<String> {
+async fn get_session_token_from_request(gruxi_request: &GruxiRequest) -> Option<String> {
     // First, check for Authorization header (Bearer token)
-    if let Some(auth_header) = grux_request.get_headers().get("Authorization") {
+    if let Some(auth_header) = gruxi_request.get_headers().get("Authorization") {
         if let Ok(auth_str) = auth_header.to_str() {
             if auth_str.starts_with("Bearer ") {
                 return Some(auth_str[7..].to_string());
@@ -382,40 +382,40 @@ pub fn verify_session(token: &str) -> Result<Option<crate::core::admin_user::Ses
 }
 
 // Middleware-like function to check if request is authenticated
-pub async fn require_authentication(grux_request: &GruxRequest) -> Result<Option<crate::core::admin_user::Session>, GruxResponse> {
-    let token = get_session_token_from_request(grux_request).await;
+pub async fn require_authentication(gruxi_request: &GruxiRequest) -> Result<Option<crate::core::admin_user::Session>, GruxiResponse> {
+    let token = get_session_token_from_request(gruxi_request).await;
 
     if let Some(token) = token {
         match verify_session(&token) {
             Ok(Some(session)) => Ok(Some(session)),
             Ok(None) => {
-                let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid or expired session"}"#));
+                let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid or expired session"}"#));
                 response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
                 Err(response)
             }
             Err(e) => {
                 error(format!("Failed to verify session: {}", e));
-                let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
+                let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
                 response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
                 Err(response)
             }
         }
     } else {
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         Err(response)
     }
 }
 
 // Admin monitoring endpoint - returns monitoring data as JSON
-pub async fn admin_monitoring_endpoint(grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
+pub async fn admin_monitoring_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
-    match require_authentication(&grux_request).await {
+    match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated, retrieving monitoring data".to_string());
         }
         Ok(None) => {
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -427,27 +427,27 @@ pub async fn admin_monitoring_endpoint(grux_request: &mut GruxRequest, _admin_si
     // Get monitoring data
     let monitoring_data = get_monitoring_state().await.get_json().await;
 
-    let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(monitoring_data.to_string()));
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(monitoring_data.to_string()));
     response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
     return Ok(response);
 }
 
 // Admin healthcheck endpoint - returns simple status without authentication
-pub async fn admin_healthcheck_endpoint(_grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
-    let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from("The server is healthy"));
+pub async fn admin_healthcheck_endpoint(_gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from("The server is healthy"));
     response.headers_mut().insert("Content-Type", "text/plain".parse().unwrap());
     return Ok(response);
 }
 
 // Admin logs endpoint - lists available log files or returns specific log content
-pub async fn admin_logs_endpoint(grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
+pub async fn admin_logs_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
-    match require_authentication(&grux_request).await {
+    match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated, retrieving logs".to_string());
         }
         Ok(None) => {
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -456,7 +456,7 @@ pub async fn admin_logs_endpoint(grux_request: &mut GruxRequest, _admin_site: &S
         }
     }
 
-    let path = grux_request.get_path();
+    let path = gruxi_request.get_path();
     let path_parts: Vec<&str> = path.split('/').collect();
 
     // Parse the request path: /logs or /logs/{filename}
@@ -468,14 +468,14 @@ pub async fn admin_logs_endpoint(grux_request: &mut GruxRequest, _admin_site: &S
         let filename = path_parts[2];
         get_log_file_content(filename).await
     } else {
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid logs endpoint path"}"#));
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid logs endpoint path"}"#));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(response);
     }
 }
 
 // Helper function to list all .log files in the logs directory
-async fn list_log_files() -> Result<GruxResponse, GruxError> {
+async fn list_log_files() -> Result<GruxiResponse, GruxiError> {
     let logs_dir = Path::new("logs");
 
     match fs::read_dir(logs_dir) {
@@ -509,7 +509,7 @@ async fn list_log_files() -> Result<GruxResponse, GruxError> {
                 "files": log_files
             });
 
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -520,7 +520,7 @@ async fn list_log_files() -> Result<GruxResponse, GruxError> {
                 "details": e.to_string()
             });
 
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(error_response.to_string()));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(error_response.to_string()));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -528,17 +528,17 @@ async fn list_log_files() -> Result<GruxResponse, GruxError> {
 }
 
 // Helper function to get log file content with 1MB limit
-async fn get_log_file_content(filename: &str) -> Result<GruxResponse, GruxError> {
+async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiError> {
     // Validate filename to prevent directory traversal
     if filename.contains("..") || filename.contains("/") || filename.contains("\\") {
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid filename"}"#));
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid filename"}"#));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(response);
     }
 
     // Ensure filename ends with .log
     if !filename.ends_with(".log") {
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Only .log files are allowed"}"#));
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Only .log files are allowed"}"#));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(response);
     }
@@ -546,7 +546,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxResponse, GruxError>
     let log_path = Path::new("logs").join(filename);
 
     if !log_path.exists() {
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::NOT_FOUND.as_u16(), bytes::Bytes::from(r#"{"error": "Log file not found"}"#));
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::NOT_FOUND.as_u16(), bytes::Bytes::from(r#"{"error": "Log file not found"}"#));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(response);
     }
@@ -593,7 +593,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxResponse, GruxError>
                         }
                     });
 
-                    let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
+                    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
                     response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
                     return Ok(response);
                 }
@@ -604,7 +604,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxResponse, GruxError>
                         "details": e.to_string()
                     });
 
-                    let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(error_response.to_string()));
+                    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(error_response.to_string()));
                     response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
                     return Ok(response);
                 }
@@ -617,7 +617,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxResponse, GruxError>
                 "details": e.to_string()
             });
 
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(error_response.to_string()));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(error_response.to_string()));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -636,14 +636,14 @@ struct OperationModeRequest {
 }
 
 // Admin operation mode GET endpoint - returns current operation mode
-pub async fn admin_get_operation_mode_endpoint(grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
+pub async fn admin_get_operation_mode_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
-    match require_authentication(&grux_request).await {
+    match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated, retrieving operation mode".to_string());
         }
         Ok(None) => {
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -661,32 +661,32 @@ pub async fn admin_get_operation_mode_endpoint(grux_request: &mut GruxRequest, _
         Ok(json) => json,
         Err(e) => {
             error(format!("Failed to serialize operation mode response: {}", e));
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Failed to serialize response"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Failed to serialize response"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
     };
 
-    let response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(json_response));
+    let response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(json_response));
     return Ok(response);
 }
 
 // Admin operation mode POST endpoint - changes operation mode
-pub async fn admin_post_operation_mode_endpoint(grux_request: &mut GruxRequest, _admin_site: &Site) -> Result<GruxResponse, GruxError> {
+pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check if this is a POST request
-    if grux_request.get_http_method() != "POST" {
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16(), bytes::Bytes::from(r#"{"error": "Method not allowed"}"#));
+    if gruxi_request.get_http_method() != "POST" {
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16(), bytes::Bytes::from(r#"{"error": "Method not allowed"}"#));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(response);
     }
 
     // Check authentication first
-    match require_authentication(&grux_request).await {
+    match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
             debug("User authenticated for operation mode update".to_string());
         }
         Ok(None) => {
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -696,12 +696,12 @@ pub async fn admin_post_operation_mode_endpoint(grux_request: &mut GruxRequest, 
     }
 
     // Read the request body
-    if grux_request.get_body_size() == 0 {
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Empty request body"}"#));
+    if gruxi_request.get_body_size() == 0 {
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Empty request body"}"#));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(response);
     }
-    let body_bytes = grux_request.get_body_bytes().await;
+    let body_bytes = gruxi_request.get_body_bytes().await;
 
     // Parse JSON body
     let mode_request: OperationModeRequest = match serde_json::from_slice(&body_bytes) {
@@ -713,7 +713,7 @@ pub async fn admin_post_operation_mode_endpoint(grux_request: &mut GruxRequest, 
                 "details": e.to_string()
             });
 
-            let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
             response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
             return Ok(response);
         }
@@ -726,7 +726,7 @@ pub async fn admin_post_operation_mode_endpoint(grux_request: &mut GruxRequest, 
             "details": format!("Mode '{}' is not recognized as a valid operation mode", mode_request.mode)
         });
 
-        let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
         response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
         return Ok(response);
     }
@@ -746,7 +746,7 @@ pub async fn admin_post_operation_mode_endpoint(grux_request: &mut GruxRequest, 
         "mode": mode_request.mode
     });
 
-    let mut response = GruxResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
     response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
     return Ok(response);
 }

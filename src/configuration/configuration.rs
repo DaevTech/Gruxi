@@ -335,7 +335,7 @@ impl Configuration {
         let mut request2_php_processor = PHPProcessor::new();
         request2_php_processor.served_by_type = "win-php-cgi".to_string();
         request2_php_processor.php_cgi_handler_id = php1_cgi_id.clone();
-        request2_php_processor.local_web_root = "D:/dev/grux-website".to_string();
+        request2_php_processor.local_web_root = "D:/dev/gruxi-website".to_string();
 
         let request_handler2 = RequestHandler {
             id: Uuid::new_v4().to_string(),
@@ -347,7 +347,7 @@ impl Configuration {
         };
 
         // Request handler for the static files
-        let request3_static_processor = StaticFileProcessor::new("D:/dev/grux-website".to_string(), vec!["".to_string()]);
+        let request3_static_processor = StaticFileProcessor::new("D:/dev/gruxi-website".to_string(), vec!["".to_string()]);
         let request_handler3 = RequestHandler {
             id: Uuid::new_v4().to_string(),
             is_enabled: true,
@@ -357,9 +357,9 @@ impl Configuration {
             url_match: vec!["*".to_string()],
         };
 
-        let grux_site = Site {
+        let gruxi_site = Site {
             id: 3,
-            hostnames: vec!["gruxsite".to_string()],
+            hostnames: vec!["gruxisite".to_string()],
             is_default: false,
             is_enabled: true,
             tls_cert_path: "".to_string(),
@@ -372,7 +372,7 @@ impl Configuration {
             access_log_enabled: false,
             access_log_file: "".to_string(),
         };
-        configuration.sites.push(grux_site);
+        configuration.sites.push(gruxi_site);
         configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 3 });
         configuration.request_handlers.push(request_handler2);
         configuration.request_handlers.push(request_handler3);
@@ -398,9 +398,9 @@ impl Configuration {
             url_match: vec!["*".to_string()],
         };
 
-        let grux_proxy = Site {
+        let gruxi_proxy = Site {
             id: 4,
-            hostnames: vec!["gruxproxy".to_string()],
+            hostnames: vec!["gruxiproxy".to_string()],
             is_default: false,
             is_enabled: true,
             tls_cert_path: "".to_string(),
@@ -413,7 +413,7 @@ impl Configuration {
             access_log_enabled: false,
             access_log_file: "".to_string(),
         };
-        configuration.sites.push(grux_proxy);
+        configuration.sites.push(gruxi_proxy);
         configuration.binding_sites.push(BindingSiteRelationship { binding_id: 2, site_id: 4 });
         configuration.request_handlers.push(request_handler4);
         configuration.proxy_processors.push(request4_proxy_processor);

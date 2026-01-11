@@ -6,7 +6,7 @@ use hyper::body::Bytes;
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::file::file_reader_structs::FileEntry;
 use crate::file::file_util::get_full_file_path;
-use crate::http::request_response::grux_response::GruxResponse;
+use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::logging::syslog::trace;
 
 pub fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
@@ -83,13 +83,13 @@ pub async fn resolve_web_root_and_path_and_get_file(web_root: &str, path: &str) 
     Ok(file_data)
 }
 
-pub fn empty_response_with_status(status: hyper::StatusCode) -> GruxResponse {
-    let mut resp = GruxResponse::new_empty_with_status(status.as_u16());
+pub fn empty_response_with_status(status: hyper::StatusCode) -> GruxiResponse {
+    let mut resp = GruxiResponse::new_empty_with_status(status.as_u16());
     add_standard_headers_to_response(&mut resp);
     resp
 }
 
-pub fn add_standard_headers_to_response(resp: &mut GruxResponse) {
+pub fn add_standard_headers_to_response(resp: &mut GruxiResponse) {
     // Set our standard headers, if not already set
     for (key, value) in get_standard_headers() {
         if resp.headers().contains_key(key) {
@@ -99,7 +99,7 @@ pub fn add_standard_headers_to_response(resp: &mut GruxResponse) {
     }
 
     // Always set server header
-    resp.headers_mut().insert("Server", "Grux".parse().unwrap());
+    resp.headers_mut().insert("Server", "Gruxi".parse().unwrap());
 
     // Make sure we always a content type header, also when empty, then set octet-stream
     if !resp.headers().contains_key("Content-Type") || resp.headers().get("Content-Type").unwrap().to_str().unwrap().is_empty() {

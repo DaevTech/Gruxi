@@ -66,7 +66,7 @@ const updateStats = async () => {
     }
 
     try {
-        const token = localStorage.getItem('grux_session_token');
+        const token = localStorage.getItem('gruxi_session_token');
         if (!token) {
             console.error('No session token available');
             stats.serverStatus = 'Running';
@@ -180,7 +180,7 @@ onMounted(() => {
                             </defs>
                             <path d="M176 64H80l-32 64 32 64h96v-64h-48" stroke="url(#a)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" /></svg
                     ></span>
-                    <span v-if="!sidebarCollapsed" class="logo-text">Grux admin</span>
+                    <span v-if="!sidebarCollapsed" class="logo-text">Gruxi admin</span>
                 </div>
             </div>
 

@@ -4,15 +4,15 @@ use crate::{
     configuration::site::Site,
     core::running_state_manager,
     error::{
-        grux_error::GruxError,
-        grux_error_enums::{GruxErrorKind, ProxyProcessorError},
+        gruxi_error::GruxiError,
+        gruxi_error_enums::{GruxiErrorKind, ProxyProcessorError},
     },
     http::{
         request_handlers::{
             processor_trait::ProcessorTrait,
             processors::load_balancer::{load_balancer::LoadBalancerImpl, round_robin::RoundRobin},
         },
-        request_response::{grux_request::GruxRequest, grux_response::GruxResponse},
+        request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
     logging::syslog::{error, trace},
 };
@@ -218,7 +218,7 @@ impl ProcessorTrait for ProxyProcessor {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, grux_request: &mut GruxRequest, _site: &Site) -> Result<GruxResponse, GruxError> {
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, _site: &Site) -> Result<GruxiResponse, GruxiError> {
         trace(format!("ProxyProcessor handling request - {:?}", &self));
 
         // We determine which upstream server to use based on the load balancing strategy.
@@ -231,12 +231,12 @@ impl ProcessorTrait for ProxyProcessor {
 
         if server_to_handle_request.is_none() {
             error(format!("Could not find a upstream server to handle request for proxy processor with id: {}", self.id));
-            return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable)));
+            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable)));
         }
         let server_to_handle_request = server_to_handle_request.unwrap();
 
         // Rewrite the request URL to point to the upstream server
-        let original_uri = grux_request.get_uri();
+        let original_uri = gruxi_request.get_uri();
         let new_uri = format!("{}{}", server_to_handle_request, original_uri);
 
         // Apply any URL rewrites
@@ -250,7 +250,7 @@ impl ProcessorTrait for ProxyProcessor {
                     "Could not parse a rewritten URL '{}' for proxy processor with id: {} with error: {:?}",
                     rewritten_url, self.id, e
                 ));
-                return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
             }
         };
 
@@ -258,18 +258,18 @@ impl ProcessorTrait for ProxyProcessor {
         let client = running_state_read_lock.get_http_client().get_client(self.verify_tls_certificates);
 
         // Get the client-side upgrade on the request side
-        let client_upgrade = grux_request.take_upgrade();
+        let client_upgrade = gruxi_request.take_upgrade();
 
         // Clean any hop by hop headers from the request and add forwarded headers
-        grux_request.clean_hop_by_hop_headers();
-        grux_request.add_forwarded_headers();
+        gruxi_request.clean_hop_by_hop_headers();
+        gruxi_request.add_forwarded_headers();
 
         // Get the original request to extract headers and body
-        let mut proxy_request = match grux_request.get_streaming_http_request() {
+        let mut proxy_request = match gruxi_request.get_streaming_http_request() {
             Ok(req) => req,
             Err(_) => {
-                error(format!("Failed to get streaming HTTP request for request: {:?}", grux_request));
-                return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
+                error(format!("Failed to get streaming HTTP request for request: {:?}", gruxi_request));
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
             }
         };
 
@@ -333,18 +333,18 @@ impl ProcessorTrait for ProxyProcessor {
                 // In the response, we make sure to update/clean the headers as needed
                 Self::clean_hop_by_hop_headers_in_response(&mut resp, is_websocket_upgrade);
 
-                // Wrap response in GruxResponse
-                let grux_response = GruxResponse::from_hyper(resp);
+                // Wrap response in GruxiResponse
+                let gruxi_response = GruxiResponse::from_hyper(resp);
 
-                return Ok(grux_response);
+                return Ok(gruxi_response);
             }
             Ok(Err(e)) => {
                 error(format!("Failed to send request to upstream server: {:?}", e));
-                return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed)));
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed)));
             }
             Err(_) => {
                 error(format!("Request to upstream server '{}' timed out after {} seconds", server_to_handle_request, self.timeout_seconds));
-                return Err(GruxError::new_with_kind_only(GruxErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout)));
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout)));
             }
         }
     }

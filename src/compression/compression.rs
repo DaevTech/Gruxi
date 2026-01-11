@@ -1,5 +1,5 @@
-use crate::http::request_response::grux_body::GruxBody::Buffered;
-use crate::http::request_response::grux_response::GruxResponse;
+use crate::http::request_response::gruxi_body::GruxiBody::Buffered;
+use crate::http::request_response::gruxi_response::GruxiResponse;
 use flate2::write::GzEncoder;
 use hyper::body::Bytes;
 use std::io::Write;
@@ -11,7 +11,7 @@ impl Compression {
         Compression {}
     }
 
-    pub async fn compress_response(&self, response: &mut GruxResponse, accepted_encodings: Vec<String>, content_encoding_header: String) {
+    pub async fn compress_response(&self, response: &mut GruxiResponse, accepted_encodings: Vec<String>, content_encoding_header: String) {
         // We need to make sure that it is not already compressed
         if content_encoding_header.to_lowercase() == "gzip" {
             return;

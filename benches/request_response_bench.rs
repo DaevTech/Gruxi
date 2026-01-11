@@ -2,7 +2,7 @@
 mod bench {
 
     use criterion::{Criterion, criterion_group, criterion_main};
-    use grux::logging::syslog::*;
+    use gruxi::logging::syslog::*;
     use hyper::body::Body;
     use hyper::client::Client;
     use hyper::client::connect::HttpConnector;
@@ -55,7 +55,7 @@ mod bench {
             access_log_file: "".to_string(),
         };
 
-        let binding = grux::configuration::binding::Binding {
+        let binding = gruxi::configuration::binding::Binding {
             id: 1,
             ip: "0.0.0.0".to_string(),
             port: 8080,
@@ -66,7 +66,7 @@ mod bench {
 
         // Start the http server
         rt.block_on(async {
-            grux::http::http_server::start_server_binding(binding).await;
+            gruxi::http::http_server::start_server_binding(binding).await;
         });
 
         c.bench_function("syslog_error", |b| {

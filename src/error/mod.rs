@@ -1,2 +1,2 @@
-pub mod grux_error;
-pub mod grux_error_enums;
+pub mod gruxi_error;
+pub mod gruxi_error_enums;

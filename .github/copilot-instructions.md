@@ -1,16 +1,16 @@
-# Copilot Instructions for the Grux Codebase
+# Copilot Instructions for the Gruxi Codebase
 
 ## Overview
-Grux is a Rust-based, async web server and admin platform with modular request handling, configuration, and database management. It is designed for extensibility (e.g., PHP-CGI support), secure admin endpoints, and efficient static file serving. The project uses SQLite for configuration and user/session data, and supports TLS via Rustls.
+Gruxi is a Rust-based, async web server and admin platform with modular request handling, configuration, and database management. It is designed for extensibility (e.g., PHP-CGI support), secure admin endpoints, and efficient static file serving. The project uses SQLite for configuration and user/session data, and supports TLS via Rustls.
 
 ## Architecture
-- **Entrypoint:** `src/main.rs` initializes logging, loads configuration from SQLite (`db/grux.db`), sets up the database, external request handlers, and launches the HTTP server.
+- **Entrypoint:** `src/main.rs` initializes logging, loads configuration from SQLite (`db/gruxi.db`), sets up the database, external request handlers, and launches the HTTP server.
 - **Configuration:** Managed via `src/configuration/` module:
   - `src/configuration/load_configuration.rs` — Loads config from SQLite
   - `src/configuration/save_configuration.rs` — Persists config to SQLite
   - `src/configuration/configuration.rs` — Main configuration struct
   - `src/configuration/core.rs`, `binding.rs`, `site.rs`, `request_handler.rs`, etc. — Configuration sub-structures
-  - Config is loaded from the `grux_config` table in SQLite. If missing, a default is generated and persisted.
+  - Config is loaded from the `gruxi_config` table in SQLite. If missing, a default is generated and persisted.
 - **HTTP Server:** `src/http/http_server.rs` starts async servers (using `tokio`/`hyper`) for each configured binding. Admin endpoints are always served over TLS via `src/http/http_tls.rs`.
 - **Request Handling:**
   - `src/http/handle_request.rs` routes requests to static file serving, admin endpoints, or external handlers (e.g., PHP).
@@ -54,10 +54,10 @@ Grux is a Rust-based, async web server and admin platform with modular request h
 - `src/main.rs` — Entrypoint, startup logic
 - `src/lib.rs` — Library root
 - `src/http/http_server.rs` — Server startup, binding logic
-- `src/grux_log.rs` — Logging initialization
+- `src/gruxi_log.rs` — Logging initialization
 - `src/file/file_cache.rs` — Static file cache implementation
 - `src/file/file_util.rs` — File system utilities
-- `src/grux_port_manager.rs` — Port allocation management
+- `src/gruxi_port_manager.rs` — Port allocation management
 
 ### Configuration (`src/configuration/`)
 - `configuration.rs` — Main configuration struct
@@ -121,7 +121,7 @@ Grux is a Rust-based, async web server and admin platform with modular request h
 - To change admin portal behavior, update `src/admin_portal/http_admin_api.rs` and the UI in `www-admin-src/src/`.
 - To adjust file cache, modify config in DB and logic in `src/file/file_cache.rs`.
 - To add new configuration options, update structs in `src/configuration/` and corresponding admin UI components.
-- To modify logging behavior, update `src/logging/` modules and configuration in `src/grux_log.rs`.
+- To modify logging behavior, update `src/logging/` modules and configuration in `src/gruxi_log.rs`.
 
 ---
 For questions or unclear conventions, ask for clarification or check the relevant module's code.

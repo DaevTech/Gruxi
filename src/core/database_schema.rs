@@ -35,15 +35,15 @@ pub fn initialize_database() -> Result<(), String> {
 //
 fn get_init_sql() -> Vec<String> {
     vec![
-        // Grux key/value table, to store global grux settings that is not normally changed and managed outside of the normal configuration
-        "CREATE TABLE IF NOT EXISTS grux (
+        // Gruxi key/value table, to store global gruxi settings that is not normally changed and managed outside of the normal configuration
+        "CREATE TABLE IF NOT EXISTS gruxi (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        grux_key TEXT NOT NULL,
-        grux_value TEXT NOT NULL
+        gruxi_key TEXT NOT NULL,
+        gruxi_value TEXT NOT NULL
     );"
         .to_string(),
         // Insert the 0 schema version if not present, so that we will load defaults, which is typically at first load
-        "INSERT INTO grux (grux_key, grux_value) SELECT 'schema_version', '0' WHERE NOT EXISTS (SELECT 1 FROM grux WHERE grux_key = 'schema_version');".to_string(),
+        "INSERT INTO gruxi (gruxi_key, gruxi_value) SELECT 'schema_version', '0' WHERE NOT EXISTS (SELECT 1 FROM gruxi WHERE gruxi_key = 'schema_version');".to_string(),
         // Server settings configuration
         "CREATE TABLE IF NOT EXISTS server_settings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

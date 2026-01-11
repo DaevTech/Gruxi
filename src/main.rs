@@ -1,27 +1,27 @@
-use grux::configuration::cached_configuration::get_cached_configuration;
-use grux::core::command_line_args::{check_for_command_line_actions, get_command_line_args};
-use grux::core::database_schema;
-use grux::core::operation_mode::get_operation_mode;
-use grux::core::running_state_manager::get_running_state_manager;
-use grux::core::triggers::get_trigger_handler;
-use grux::logging::syslog::{error, info};
-use grux::{admin_portal::init::initialize_admin_site, core::background_tasks::start_background_tasks};
+use gruxi::configuration::cached_configuration::get_cached_configuration;
+use gruxi::core::command_line_args::{check_for_command_line_actions, get_command_line_args};
+use gruxi::core::database_schema;
+use gruxi::core::operation_mode::get_operation_mode;
+use gruxi::core::running_state_manager::get_running_state_manager;
+use gruxi::core::triggers::get_trigger_handler;
+use gruxi::logging::syslog::{error, info};
+use gruxi::{admin_portal::init::initialize_admin_site, core::background_tasks::start_background_tasks};
 use tokio::select;
 
 #[tokio::main]
 async fn main() {
     let logo = r#"
-  ________
- /  _____/______ __ _____  ___
-/   \  __\_  __ \  |  \  \/  /
-\    \_\  \  | \/  |  />    <
- \______  /__|  |____//__/\_ \
-        \/   WEBSERVER      \/
+  ________                   .__
+ /  _____/______ __ _____  __|__|
+/   \  __\_  __ \  |  \  \/  /  |
+\    \_\  \  | \/  |  />    <|  |
+ \______  /__|  |____//__/\_ \__|
+        \/     WEBSERVER    \/
 "#;
     println!("{}", logo);
 
     // Start the basics, logging etc.
-    start_grux_basics();
+    start_gruxi_basics();
 
     // Start the running state manager thread, which also listens for configuration changes
     tokio::spawn(async {
@@ -32,7 +32,7 @@ async fn main() {
         let running_state_manager = get_running_state_manager().await;
 
         // Start the main http server
-        grux::http::http_server::initialize_server().await;
+        gruxi::http::http_server::initialize_server().await;
 
         let triggers = get_trigger_handler();
 
@@ -48,7 +48,7 @@ async fn main() {
                     info("Reloading running state due to configuration change");
                     running_state_manager.set_new_running_state().await;
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    grux::http::http_server::initialize_server().await;
+                    gruxi::http::http_server::initialize_server().await;
                 }
                 _ = shutdown_token.cancelled() => {
                     break;
@@ -64,7 +64,7 @@ async fn main() {
     std::process::exit(0);
 }
 
-fn start_grux_basics() {
+fn start_gruxi_basics() {
     // Load commandline args
     get_command_line_args();
     check_for_command_line_actions();
@@ -79,11 +79,11 @@ fn start_grux_basics() {
     let operation_mode = get_operation_mode();
 
     let version = env!("CARGO_PKG_VERSION");
-    info(format!("Starting Grux {}", version));
+    info(format!("Starting Gruxi {}", version));
     info(format!("Operation mode: {:?}", operation_mode));
 
     // Load the configuration early to catch any errors
-    match grux::configuration::load_configuration::init() {
+    match gruxi::configuration::load_configuration::init() {
         Ok(_) => {
             // Load the cached configuration, so it is ready to go
             get_cached_configuration();

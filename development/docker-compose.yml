@@ -1,5 +1,5 @@
 services:
-  grux:
+  gruxi:
     image: rust:alpine
     ports:
       - "80:80"     # HTTP
@@ -12,9 +12,9 @@ services:
     depends_on:
       - php-fpm
     extra_hosts:
-      - "gruxtest=127.0.0.1"
+      - "gruxitest=127.0.0.1"
     networks:
-      - grux-network
+      - gruxi-network
     command: >
       sh -c "apk add musl-dev && cd /app && cargo run -- -o DEV"
 
@@ -27,8 +27,8 @@ services:
       - "9000:9000"
     restart: unless-stopped
     networks:
-      - grux-network
+      - gruxi-network
 
 networks:
-  grux-network:
+  gruxi-network:
     driver: bridge

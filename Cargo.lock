@@ -627,7 +627,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "grux"
+name = "gruxi"
 version = "0.1.5"
 dependencies = [
  "bcrypt",

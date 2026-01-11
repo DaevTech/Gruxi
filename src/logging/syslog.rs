@@ -53,7 +53,7 @@ impl fmt::Display for LogType {
 impl SysLog {
     pub fn new(log_level: LogType, stdout_log_level: LogType) -> Self {
         let mut sys_log = SysLog {
-            buffered_log: BufferedLog::new("syslog".to_string(), "./logs/grux.log".to_string()),
+            buffered_log: BufferedLog::new("syslog".to_string(), "./logs/gruxi.log".to_string()),
             log_level: log_level.clone(),
             error_enabled: false,
             info_enabled: false,

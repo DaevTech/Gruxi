@@ -8,26 +8,26 @@ use tokio_rustls::{TlsConnector, client::TlsStream};
 use rustls::{ClientConfig, ServerName, client::{ServerCertVerifier, ServerCertVerified}, Certificate, Error as TlsError};
 
 #[allow(dead_code)]
-/// HTTP/2 Compliance Test Suite for Grux Web Server
+/// HTTP/2 Compliance Test Suite for Gruxi Web Server
 ///
-/// This comprehensive test suite validates Grux's compliance with HTTP/2 specifications
+/// This comprehensive test suite validates Gruxi's compliance with HTTP/2 specifications
 /// as defined in RFC 7540 (Hypertext Transfer Protocol Version 2).
 ///
 /// ============================================================================
-/// IMPORTANT: These tests validate the ACTUAL running Grux server, not a mock!
+/// IMPORTANT: These tests validate the ACTUAL running Gruxi server, not a mock!
 /// ============================================================================
 ///
 /// SETUP INSTRUCTIONS:
-/// 1. Start Grux server: `cargo run` (in separate terminal)
+/// 1. Start Gruxi server: `cargo run` (in separate terminal)
 /// 2. Ensure server is running on 127.0.0.1:443 (HTTPS for HTTP/2 with TLS)
 /// 3. Ensure proper TLS certificates are configured
-/// 4. Run tests: `cargo test --test test_grux_http2_compliance`
+/// 4. Run tests: `cargo test --test test_gruxi_http2_compliance`
 ///
 /// IMPORTANT: These tests now use TLS connections with ALPN for HTTP/2
 /// The tests will accept self-signed certificates for testing purposes.
 ///
 /// WHAT THESE TESTS VERIFY:
-/// These tests send real HTTP/2 requests to the running Grux server and verify:
+/// These tests send real HTTP/2 requests to the running Gruxi server and verify:
 ///
 /// ✓ Connection Establishment: Connection preface, SETTINGS exchange, protocol negotiation
 /// ✓ Frame Format: All HTTP/2 frame types and their proper structure
@@ -41,19 +41,19 @@ use rustls::{ClientConfig, ServerName, client::{ServerCertVerifier, ServerCertVe
 ///
 /// WHY THIS APPROACH:
 /// Unlike mock-based tests, these integration tests provide real confidence
-/// that Grux correctly implements HTTP/2 by testing the actual server
+/// that Gruxi correctly implements HTTP/2 by testing the actual server
 /// behavior against real HTTP/2 requests and validating real responses.
 ///
 /// TROUBLESHOOTING:
-/// - If tests fail with "connection refused": Start Grux server first
-/// - If tests timeout: Check that Grux is listening on port 443 with TLS enabled
+/// - If tests fail with "connection refused": Start Gruxi server first
+/// - If tests timeout: Check that Gruxi is listening on port 443 with TLS enabled
 /// - If TLS errors: Ensure proper certificates are configured for HTTPS
-/// - If ALPN errors: Verify HTTP/2 support is enabled in Grux with ALPN negotiation
-/// - If protocol errors: Verify HTTP/2 support is enabled in Grux
+/// - If ALPN errors: Verify HTTP/2 support is enabled in Gruxi with ALPN negotiation
+/// - If protocol errors: Verify HTTP/2 support is enabled in Gruxi
 
 // Test server configuration
-const GRUX_HTTPS_HOST: &str = "127.0.0.1";
-const GRUX_HTTPS_PORT: u16 = 443;
+const GRUXI_HTTPS_HOST: &str = "127.0.0.1";
+const GRUXI_HTTPS_PORT: u16 = 443;
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 // HTTP/2 Constants from RFC 7540
@@ -360,13 +360,13 @@ impl Http2Connection {
 
 /// Get HTTP server address for HTTP/2 testing
 fn get_http2_server_addr() -> SocketAddr {
-    SocketAddr::new(GRUX_HTTPS_HOST.parse().unwrap(), GRUX_HTTPS_PORT)
+    SocketAddr::new(GRUXI_HTTPS_HOST.parse().unwrap(), GRUXI_HTTPS_PORT)
 }
 
 /// Get server address for HTTP/2 testing (now using HTTPS port 443)
 /// Note: This function now returns HTTPS port for HTTP/2 compliance testing
 fn get_http_upgrade_server_addr() -> SocketAddr {
-    SocketAddr::new(GRUX_HTTPS_HOST.parse().unwrap(), GRUX_HTTPS_PORT)
+    SocketAddr::new(GRUXI_HTTPS_HOST.parse().unwrap(), GRUXI_HTTPS_PORT)
 }
 
 // ============================================================================

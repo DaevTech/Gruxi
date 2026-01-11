@@ -4,18 +4,18 @@ use std::fmt::Debug;
 
 use crate::http::request_response::body_error::BodyError;
 
-pub enum GruxBody {
+pub enum GruxiBody {
     Buffered(Bytes),
     Streaming(hyper::body::Incoming),
     StreamingBoxed(BoxBody<Bytes, BodyError>),
 }
 
-impl Debug for GruxBody {
+impl Debug for GruxiBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GruxBody::Buffered(bytes) => write!(f, "GruxBody::Buffered(len={})", bytes.len()),
-            GruxBody::Streaming(_) => write!(f, "GruxBody::Streaming(...)"),
-            GruxBody::StreamingBoxed(_) => write!(f, "GruxBody::StreamingBoxed(...)"),
+            GruxiBody::Buffered(bytes) => write!(f, "GruxiBody::Buffered(len={})", bytes.len()),
+            GruxiBody::Streaming(_) => write!(f, "GruxiBody::Streaming(...)"),
+            GruxiBody::StreamingBoxed(_) => write!(f, "GruxiBody::StreamingBoxed(...)"),
         }
     }
 }

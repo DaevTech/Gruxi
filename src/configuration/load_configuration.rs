@@ -36,7 +36,7 @@ pub fn init() -> Result<Configuration, Vec<String>> {
             // Update schema version to value of constant CURRENT_CONFIGURATION_VERSION
             let current_version = CURRENT_DB_SCHEMA_VERSION;
             connection
-                .execute(&format!("UPDATE grux SET grux_value = {} WHERE grux_key = 'schema_version'", current_version))
+                .execute(&format!("UPDATE gruxi SET gruxi_value = {} WHERE gruxi_key = 'schema_version'", current_version))
                 .map_err(|e| vec![format!("Failed to update schema version: {}", e)])?;
 
             configuration
@@ -56,7 +56,7 @@ fn get_schema_version() -> i32 {
     }
     let connection = connection_result.unwrap();
 
-    let statement_result = connection.prepare("SELECT grux_value FROM grux WHERE grux_key = 'schema_version' LIMIT 1");
+    let statement_result = connection.prepare("SELECT gruxi_value FROM gruxi WHERE gruxi_key = 'schema_version' LIMIT 1");
     if let Err(_) = statement_result {
         return 0;
     }

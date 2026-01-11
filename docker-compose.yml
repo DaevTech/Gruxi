@@ -1,6 +1,6 @@
 services:
-  grux:
-    image: ghcr.io/daevtech/grux:latest
+  gruxi:
+    image: ghcr.io/daevtech/gruxi:latest
     ports:
       - "80:80"     # HTTP
       - "443:443"   # HTTPS
@@ -15,7 +15,7 @@ services:
     depends_on:
       - php-fpm
     networks:
-      - grux-network
+      - gruxi-network
 
   # PHP-FPM service for handling PHP requests
   php-fpm:
@@ -26,8 +26,8 @@ services:
       - "9000:9000"
     restart: unless-stopped
     networks:
-      - grux-network
+      - gruxi-network
 
 networks:
-  grux-network:
+  gruxi-network:
     driver: bridge

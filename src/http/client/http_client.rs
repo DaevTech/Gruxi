@@ -12,13 +12,13 @@ use crate::http::request_handlers::processors::proxy_helpers::no_verifier::NoVer
 use crate::tls::tls_config::tls_config;
 
 pub struct HttpClient {
-    client_with_tls_verify: Client<HttpsConnector<HttpConnector>, GruxRequestBody>,
-    client_without_tls_verify: Client<HttpsConnector<HttpConnector>, GruxRequestBody>
+    client_with_tls_verify: Client<HttpsConnector<HttpConnector>, GruxiRequestBody>,
+    client_without_tls_verify: Client<HttpsConnector<HttpConnector>, GruxiRequestBody>
 }
 
-// Request body type used by Grux's outbound HTTP client.
+// Request body type used by Gruxi's outbound HTTP client.
 // Note: responses are still Response<hyper::body::Incoming>.
-type GruxRequestBody = BoxBody<Bytes, hyper::Error>;
+type GruxiRequestBody = BoxBody<Bytes, hyper::Error>;
 
 impl HttpClient {
     pub fn new() -> Self {
@@ -31,7 +31,7 @@ impl HttpClient {
             .enable_http2()
             .build();
 
-        let client_with_tls_verify: Client<_, GruxRequestBody> = Client::builder(TokioExecutor::new()).build(https_with_verify);
+        let client_with_tls_verify: Client<_, GruxiRequestBody> = Client::builder(TokioExecutor::new()).build(https_with_verify);
 
         // Client without TLS certificate verification, for streaming bodies
         let mut tls_config_with_no_verify = tls_config();
@@ -44,7 +44,7 @@ impl HttpClient {
             .enable_http2()
             .build();
 
-        let client_without_tls_verify: Client<_, GruxRequestBody> = Client::builder(TokioExecutor::new()).build(https_without_verify);
+        let client_without_tls_verify: Client<_, GruxiRequestBody> = Client::builder(TokioExecutor::new()).build(https_without_verify);
 
         Self {
             client_with_tls_verify,
@@ -52,7 +52,7 @@ impl HttpClient {
         }
     }
 
-    pub fn get_client(&self, verify_tls: bool) -> Client<HttpsConnector<HttpConnector>, GruxRequestBody> {
+    pub fn get_client(&self, verify_tls: bool) -> Client<HttpsConnector<HttpConnector>, GruxiRequestBody> {
         if verify_tls {
             self.client_with_tls_verify.clone()
         } else {

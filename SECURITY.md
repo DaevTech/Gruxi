@@ -2,8 +2,8 @@
 
 ## Reporting a Vulnerability
 
-If you found a security issue with Grux web server, then you should disclose it to us as quickly as possible.
-Please send a email to <contact@grux.eu> and tell us about the issue.
+If you found a security issue with Gruxi web server, then you should disclose it to us as quickly as possible.
+Please send a email to <contact@gruxi.org> and tell us about the issue.
 Ideally you send these information along with the email:
 
 - Short description of issue

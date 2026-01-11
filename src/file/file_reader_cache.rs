@@ -8,7 +8,7 @@ use crate::{
     configuration::cached_configuration::get_cached_configuration,
     core::triggers::get_trigger_handler,
     file::file_reader_structs::*,
-    http::request_response::{body_error::{BodyError, box_err}, grux_request::GruxRequest},
+    http::request_response::{body_error::{BodyError, box_err}, gruxi_request::GruxiRequest},
     logging::syslog::{debug, trace, warn},
 };
 
@@ -281,8 +281,8 @@ impl FileReaderCache {
 }
 
 impl FileEntry {
-    pub async fn get_content_stream(&self, grux_request: &GruxRequest) -> (BoxBody<Bytes, BodyError>, String) {
-        let accept_encoding_headers = grux_request.get_accepted_encodings();
+    pub async fn get_content_stream(&self, gruxi_request: &GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
+        let accept_encoding_headers = gruxi_request.get_accepted_encodings();
 
         if self.content.raw.is_none() && self.content.gzip.is_none() {
             trace("No cached file data content is present, so we return a stream from the filesystem instead".to_string());

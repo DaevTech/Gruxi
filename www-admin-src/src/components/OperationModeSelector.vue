@@ -23,7 +23,7 @@ const modes = [
 // Fetch current operation mode
 const fetchOperationMode = async () => {
   try {
-    const token = localStorage.getItem('grux_session_token')
+    const token = localStorage.getItem('gruxi_session_token')
     if (!token) {
       console.error('No session token available')
       return
@@ -61,7 +61,7 @@ const changeOperationMode = async (event) => {
   errorMessage.value = ''
 
   try {
-    const token = localStorage.getItem('grux_session_token')
+    const token = localStorage.getItem('gruxi_session_token')
     if (!token) {
       errorMessage.value = 'Not authenticated'
       isChanging.value = false

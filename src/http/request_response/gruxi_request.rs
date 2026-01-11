@@ -11,14 +11,14 @@ use std::mem;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-use crate::http::request_response::grux_body::GruxBody;
+use crate::http::request_response::gruxi_body::GruxiBody;
 
-// Wrapper around hyper Request to add calculated data and serve as a request in Grux
+// Wrapper around hyper Request to add calculated data and serve as a request in Gruxi
 #[derive(Debug)]
-pub struct GruxRequest {
+pub struct GruxiRequest {
     // Parts of the original request
     parts: Parts,
-    body: GruxBody,
+    body: GruxiBody,
     // Calculated data cache, such as remote_ip, hostname etc
     pub calculated_data: HashMap<String, String>,
     // Optional connection semaphore for limiting concurrent requests
@@ -27,7 +27,7 @@ pub struct GruxRequest {
     upgrade_future: Option<hyper::upgrade::OnUpgrade>,
 }
 
-impl GruxRequest {
+impl GruxiRequest {
     // Created new buffered request from hyper Request<Bytes>
     pub fn new(hyper_request: Request<Bytes>) -> Self {
         let (mut parts, body) = hyper_request.into_parts();
@@ -41,7 +41,7 @@ impl GruxRequest {
 
         Self {
             parts,
-            body: GruxBody::Buffered(body),
+            body: GruxiBody::Buffered(body),
             calculated_data,
             connection_semaphore: None,
             upgrade_future,
@@ -53,7 +53,7 @@ impl GruxRequest {
         let body_size_hint = hyper_request.body().size_hint().upper().unwrap_or(0);
 
         let (mut parts, body) = hyper_request.into_parts();
-        let body = GruxBody::Streaming(body);
+        let body = GruxiBody::Streaming(body);
 
         // Check if this request has the Upgrade header - if so, we need to extract the upgrade extensions
         let upgrade_future = parts.extensions.remove::<hyper::upgrade::OnUpgrade>();
@@ -198,15 +198,15 @@ impl GruxRequest {
     // Returns the full body bytes. Beware this consumes the internal body bytes
     pub async fn get_body_bytes(&mut self) -> Bytes {
         match &mut self.body {
-            GruxBody::Buffered(bytes) => bytes.clone(),
-            GruxBody::Streaming(incoming_body) => {
+            GruxiBody::Buffered(bytes) => bytes.clone(),
+            GruxiBody::Streaming(incoming_body) => {
                 let body = incoming_body.collect().await;
                 match body {
                     Ok(bytes) => bytes.to_bytes(),
                     Err(_) => Bytes::new(),
                 }
             }
-            GruxBody::StreamingBoxed(boxed_body) => {
+            GruxiBody::StreamingBoxed(boxed_body) => {
                 let body = boxed_body.collect().await;
                 match body {
                     Ok(bytes) => bytes.to_bytes(),
@@ -217,8 +217,8 @@ impl GruxRequest {
     }
 
     pub fn get_streaming_http_request(&mut self) -> Result<Request<BoxBody<Bytes, hyper::Error>>, ()> {
-        match mem::replace(&mut self.body, GruxBody::Buffered(Bytes::new())) {
-            GruxBody::Streaming(incoming_body) => {
+        match mem::replace(&mut self.body, GruxiBody::Buffered(Bytes::new())) {
+            GruxiBody::Streaming(incoming_body) => {
                 let request = Request::from_parts(self.parts.clone(), incoming_body.boxed());
                 Ok(request)
             }

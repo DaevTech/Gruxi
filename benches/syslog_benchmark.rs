@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 mod bench {
     use criterion::{Criterion, criterion_group, criterion_main};
-    use grux::logging::syslog::*;
+    use gruxi::logging::syslog::*;
     use std::fs::File;
     use tokio::runtime::Runtime;
 

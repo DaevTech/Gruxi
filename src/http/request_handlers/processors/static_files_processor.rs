@@ -1,14 +1,14 @@
 use crate::{
     configuration::site::Site,
     error::{
-        grux_error::GruxError,
-        grux_error_enums::{GruxErrorKind, StaticFileProcessorError},
+        gruxi_error::GruxiError,
+        gruxi_error_enums::{GruxiErrorKind, StaticFileProcessorError},
     },
     file::file_util::{check_path_secure, get_full_file_path},
     http::{
         http_util::{resolve_web_root_and_path_and_get_file},
         request_handlers::processor_trait::ProcessorTrait,
-        request_response::{grux_request::GruxRequest, grux_response::GruxResponse},
+        request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
     logging::syslog::{error, trace},
 };
@@ -71,22 +71,22 @@ impl ProcessorTrait for StaticFileProcessor {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, grux_request: &mut GruxRequest, site: &Site) -> Result<GruxResponse, GruxError> {
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
         // First, check if there is a specific file requested
         let web_root_result = get_full_file_path(&self.web_root);
         if let Err(e) = web_root_result {
             error(format!("Failed to get full web root path: {} for site: {:?}", e, site));
-            return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
+            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
         }
         let web_root = web_root_result.unwrap();
-        let mut path = grux_request.get_path().clone();
+        let mut path = gruxi_request.get_path().clone();
 
         // Get the cached file, if it exists
         let file_data_result = resolve_web_root_and_path_and_get_file(&web_root, &path).await;
         if let Err(e) = file_data_result {
             // If we fail to get the file, return cant/wont handle
             error(format!("We could not get data on the file: {}, so we cannot handle with static file processor", e));
-            return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
+            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
         }
         let mut file_data = file_data_result.unwrap();
         let mut file_path = file_data.meta.file_path.clone();
@@ -106,7 +106,7 @@ impl ProcessorTrait for StaticFileProcessor {
                         "File does not exist, even after rewrite function is applied: {}, so we cannot handle with static file processor",
                         file_path
                     ));
-                    return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
+                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
                 }
                 file_data = file_data_result.unwrap();
                 file_path = file_data.meta.file_path.clone();
@@ -115,7 +115,7 @@ impl ProcessorTrait for StaticFileProcessor {
                     "File does not exist and no rewrite function is applied: {}, so we cannot handle with static file processor",
                     file_path
                 ));
-                return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         }
 
@@ -146,7 +146,7 @@ impl ProcessorTrait for StaticFileProcessor {
 
             if !found_index {
                 trace(format!("Did not find index file: {}", file_path));
-                return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         }
 
@@ -154,15 +154,15 @@ impl ProcessorTrait for StaticFileProcessor {
         if !check_path_secure(&web_root, &file_path).await {
             trace(format!("File path is not secure: {}", file_path));
             // We should probably not reveal that the file is blocked, so we return a 404
-            return Err(GruxError::new_with_kind_only(GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(
+            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(
                 file_path,
             ))));
         }
 
         // Get a stream of the file content, based on the accept-encoding header
-        let (stream, compression) = file_data.get_content_stream(grux_request).await;
+        let (stream, compression) = file_data.get_content_stream(gruxi_request).await;
 
-        let mut response = GruxResponse::new_with_body(hyper::StatusCode::OK.as_u16(), stream);
+        let mut response = GruxiResponse::new_with_body(hyper::StatusCode::OK.as_u16(), stream);
 
         // Set content type
         response.headers_mut().insert(hyper::header::CONTENT_TYPE, HeaderValue::from_str(&file_data.meta.mime_type).unwrap());

@@ -4,7 +4,7 @@ use clap::{Arg, ArgMatches, Command};
 
 pub fn load_command_line_args() -> ArgMatches {
     // Parse command line args
-    Command::new("Grux")
+    Command::new("Gruxi")
         .version(env!("CARGO_PKG_VERSION"))
         .allow_external_subcommands(true)
         .arg(

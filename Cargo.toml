@@ -1,5 +1,5 @@
 [package]
-name = "grux"
+name = "gruxi"
 version = "0.1.5"
 edition = "2024"
 
@@ -36,7 +36,7 @@ webpki-roots = "1.0.4"
 dashmap = "6.1.0"
 
 [lib]
-name = "grux"
+name = "gruxi"
 path = "src/lib.rs"
 
 [dev-dependencies]

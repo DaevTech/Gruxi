@@ -4,10 +4,10 @@ use uuid::Uuid;
 use crate::{
     configuration::site::Site,
     core::running_state_manager::get_running_state_manager,
-    error::{grux_error::GruxError, grux_error_enums::*},
+    error::{gruxi_error::GruxiError, gruxi_error_enums::*},
     http::{
         request_handlers::processor_trait::ProcessorTrait,
-        request_response::{grux_request::GruxRequest, grux_response::GruxResponse},
+        request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
     logging::syslog::trace,
 };
@@ -117,7 +117,7 @@ impl RequestHandler {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    pub async fn handle_request(&self, grux_request: &mut GruxRequest, site: &Site) -> Result<GruxResponse, GruxError> {
+    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
         let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
         let processor_manager = running_state.get_processor_manager();
 
@@ -127,10 +127,10 @@ impl RequestHandler {
                 trace(format!("Handling request with static file processor id '{}'", &self.processor_id));
                 let pm_option = processor_manager.get_static_file_processor_by_id(&self.processor_id);
                 match pm_option {
-                    Some(p) => p.handle_request(grux_request, &site).await,
+                    Some(p) => p.handle_request(gruxi_request, &site).await,
                     None => {
-                        return Err(GruxError::new(
-                            GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::Internal),
+                        return Err(GruxiError::new(
+                            GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::Internal),
                             format!("Static files processor with id '{}' not found for request handler '{}'", &self.processor_id, &self.name),
                         ));
                     }
@@ -140,10 +140,10 @@ impl RequestHandler {
                 trace(format!("Handling request with PHP processor id '{}'", &self.processor_id));
                 let pm_option = processor_manager.get_php_processor_by_id(&self.processor_id);
                 match pm_option {
-                    Some(p) => p.handle_request(grux_request, &site).await,
+                    Some(p) => p.handle_request(gruxi_request, &site).await,
                     None => {
-                        return Err(GruxError::new(
-                            GruxErrorKind::PHPProcessor(PHPProcessorError::Internal),
+                        return Err(GruxiError::new(
+                            GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal),
                             format!("PHP processor with id '{}' not found for request handler '{}'", &self.processor_id, &self.name),
                         ));
                     }
@@ -153,18 +153,18 @@ impl RequestHandler {
                 trace(format!("Handling request with proxy processor id '{}'", &self.processor_id));
                 let pm_option = processor_manager.get_proxy_processor_by_id(&self.processor_id);
                 match pm_option {
-                    Some(p) => p.handle_request(grux_request, &site).await,
+                    Some(p) => p.handle_request(gruxi_request, &site).await,
                     None => {
-                        return Err(GruxError::new(
-                            GruxErrorKind::ProxyProcessor(ProxyProcessorError::Internal),
+                        return Err(GruxiError::new(
+                            GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal),
                             format!("Proxy processor with id '{}' not found for request handler '{}'", &self.processor_id, &self.name),
                         ));
                     }
                 }
             }
             _ => {
-                return Err(GruxError::new(
-                    GruxErrorKind::Internal("Unknown processor type"),
+                return Err(GruxiError::new(
+                    GruxiErrorKind::Internal("Unknown processor type"),
                     format!("Request handler with unknown type '{}' not found for request handler with id '{}'", &self.processor_type, &self.id),
                 ));
             }
@@ -176,33 +176,33 @@ impl RequestHandler {
             let err = response_result.as_ref().err().unwrap();
             match err.kind {
                 // Static file errors that we want to convey directly
-                GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(_)) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
+                GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(_)) => {
+                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
                 }
-                GruxErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(_)) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16())); // We dont want to expose that it was blocked due to security
+                GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(_)) => {
+                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16())); // We dont want to expose that it was blocked due to security
                 }
 
                 // Proxy errors that we want to convey directly
-                GruxErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
+                GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable) => {
+                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
                 }
-                GruxErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::GATEWAY_TIMEOUT.as_u16()));
+                GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout) => {
+                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::GATEWAY_TIMEOUT.as_u16()));
                 }
-                GruxErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
+                GruxiErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed) => {
+                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
                 }
 
                 // PHP errors that we want to convey directly
-                GruxErrorKind::PHPProcessor(PHPProcessorError::PathError(_)) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
+                GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(_)) => {
+                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
                 }
-                GruxErrorKind::PHPProcessor(PHPProcessorError::Timeout) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::GATEWAY_TIMEOUT.as_u16()));
+                GruxiErrorKind::PHPProcessor(PHPProcessorError::Timeout) => {
+                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::GATEWAY_TIMEOUT.as_u16()));
                 }
-                GruxErrorKind::PHPProcessor(PHPProcessorError::Connection) => {
-                    return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
+                GruxiErrorKind::PHPProcessor(PHPProcessorError::Connection) => {
+                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
                 }
 
                 // Other errors we have logged, but will continue to the next handler

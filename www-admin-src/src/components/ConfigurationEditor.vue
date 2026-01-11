@@ -899,7 +899,7 @@ onMounted(() => {
                                     <label>
                                         <input v-model="binding.is_admin" type="checkbox" />
                                         Admin portal
-                                        <span class="help-icon" data-tooltip="Whether this binding is for the Grux Admin portal, serving the API for admin requests. This should ONLY be enable on the binding which serves the admin interface.">?</span>
+                                        <span class="help-icon" data-tooltip="Whether this binding is for the Gruxi Admin portal, serving the API for admin requests. This should ONLY be enable on the binding which serves the admin interface.">?</span>
                                     </label>
                                 </div>
                             </div>
@@ -992,7 +992,7 @@ onMounted(() => {
                                 <div class="form-field">
                                     <label>
                                         Access Log File
-                                        <span class="help-icon" data-tooltip="Path to the access log file. If relative to grux base directory, use it like this './logs/mylog.log'. You can also have a full absolute path like '/var/logs/mylog.log' or 'C:/logs/mylog.log'.">?</span>
+                                        <span class="help-icon" data-tooltip="Path to the access log file. If relative to gruxi base directory, use it like this './logs/mylog.log'. You can also have a full absolute path like '/var/logs/mylog.log' or 'C:/logs/mylog.log'.">?</span>
                                     </label>
                                     <input v-model="site.access_log_file" type="text" placeholder="Path to log file" />
                                 </div>
@@ -1041,7 +1041,7 @@ onMounted(() => {
                                             <div class="form-field">
                                                 <label>Rewrite Functions - Pre-defined request rewrites</label>
                                                 <div class="doc-link">
-                                                    <a href="https://grux.eu/docs/#rewrite-functions" target="_blank">Documentation on rewrite functions</a>
+                                                    <a href="https://gruxi.eu/docs/#rewrite-functions" target="_blank">Documentation on rewrite functions</a>
                                                 </div>
                                                 <div class="list-items">
                                                     <div v-for="(func, funcIndex) in site.rewrite_functions" :key="funcIndex" class="list-item">
@@ -1167,7 +1167,7 @@ onMounted(() => {
                                                             <input v-model="processor.static_config.web_root" type="text" placeholder="./www-default" />
 
                                                             <div class="list-field compact">
-                                                                <label>Index Files <span class="help-icon" data-tooltip="If a users requests a directory, Grux looks after these files to be served, such as 'index.html'.">?</span></label>
+                                                                <label>Index Files <span class="help-icon" data-tooltip="If a users requests a directory, Gruxi looks after these files to be served, such as 'index.html'.">?</span></label>
                                                                 <div class="list-items">
                                                                     <div v-for="(file, fileIndex) in processor.static_config.web_root_index_file_list" :key="fileIndex" class="list-item">
                                                                         <input v-model="processor.static_config.web_root_index_file_list[fileIndex]" type="text" placeholder="index.html" />
@@ -1183,7 +1183,7 @@ onMounted(() => {
 
                                                     <div v-else-if="processor.handler.processor_type === 'php'" class="form-field">
                                                         <div v-if="processor.php_config" class="processor-type-config">
-                                                            <label>Served By <span class="help-icon" data-tooltip="Select the PHP handler type used to serve PHP files. The Windows PHP-CGI option is mostly on Windows platforms and refers to a managed instance of PHP-CGI controlled by Grux. On Linux systems, PHP-FPM (FastCGI Process Manager) should be used.">?</span></label>
+                                                            <label>Served By <span class="help-icon" data-tooltip="Select the PHP handler type used to serve PHP files. The Windows PHP-CGI option is mostly on Windows platforms and refers to a managed instance of PHP-CGI controlled by Gruxi. On Linux systems, PHP-FPM (FastCGI Process Manager) should be used.">?</span></label>
                                                             <select v-model="processor.php_config.served_by_type">
                                                                 <option value="php-fpm">PHP-FPM (FastCGI)</option>
                                                                 <option value="win-php-cgi">Windows PHP-CGI (managed)</option>
@@ -1193,7 +1193,7 @@ onMounted(() => {
                                                                 <div class="half-width">
                                                                     <label>
                                                                         Local Web Root
-                                                                        <span class="help-icon" data-tooltip="Local web root Grux uses to resolve PHP files (Used by the local managed PHP-CGI mode as the web root).">?</span>
+                                                                        <span class="help-icon" data-tooltip="Local web root Gruxi uses to resolve PHP files (Used by the local managed PHP-CGI mode as the web root).">?</span>
                                                                     </label>
                                                                     <input v-model="processor.php_config.local_web_root" type="text" placeholder="./www-default" />
                                                                 </div>
@@ -1349,14 +1349,14 @@ onMounted(() => {
                                             <div class="form-field">
                                                 <label
                                                     >Certificate Path
-                                                    <span class="help-icon" data-tooltip="Path to the TLS certificate file. You can specify an absolute path or a path relative to the Grux server base directory. Such as './certs/mycert.pem' or '/etc/ssl/certs/mycert.pem'.">?</span>
+                                                    <span class="help-icon" data-tooltip="Path to the TLS certificate file. You can specify an absolute path or a path relative to the Gruxi server base directory. Such as './certs/mycert.pem' or '/etc/ssl/certs/mycert.pem'.">?</span>
                                                 </label>
                                                 <input v-model="site.tls_cert_path" type="text" placeholder="Path to certificate file" />
                                             </div>
                                             <div class="form-field">
                                                 <label
                                                     >Private Key Path
-                                                    <span class="help-icon" data-tooltip="Path to the TLS private key file. You can specify an absolute path or a path relative to the Grux server base directory. Such as './certs/mykey.pem' or '/etc/ssl/private/mykey.pem'.">?</span>
+                                                    <span class="help-icon" data-tooltip="Path to the TLS private key file. You can specify an absolute path or a path relative to the Gruxi server base directory. Such as './certs/mykey.pem' or '/etc/ssl/private/mykey.pem'.">?</span>
                                                 </label>
                                                 <input v-model="site.tls_key_path" type="text" placeholder="Path to private key file" />
                                             </div>
@@ -1418,7 +1418,7 @@ onMounted(() => {
                                 <div class="form-field">
                                     <label>
                                         Executable Path
-                                        <span class="help-icon" data-tooltip="Full path to php-cgi.exe. This must exist on the server running Grux.">?</span>
+                                        <span class="help-icon" data-tooltip="Full path to php-cgi.exe. This must exist on the server running Gruxi.">?</span>
                                     </label>
                                     <input v-model="handler.executable" type="text" placeholder="C:/path/to/php-cgi.exe" />
                                 </div>

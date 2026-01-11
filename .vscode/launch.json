@@ -5,13 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug executable 'grux'",
+            "name": "Debug executable 'gruxi'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
                 "args": [
                     "run",
-                    "--bin=grux"
+                    "--bin=gruxi"
                 ]
             },
             "args": ["-o","DEV"]

@@ -1,8 +1,8 @@
 use crate::configuration::binding::Binding;
 use crate::http::handle_request::handle_request;
 use crate::http::http_tls::build_tls_acceptor;
-use crate::http::request_response::grux_request::GruxRequest;
-use crate::http::request_response::grux_response::GruxResponse;
+use crate::http::request_response::gruxi_request::GruxiRequest;
+use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::logging::syslog::{debug, error, info, trace, warn};
 use hyper::Request;
 use hyper::body::Incoming;
@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::select;
 
-// Starting all the Grux magic
+// Starting all the Gruxi magic
 pub async fn initialize_server() {
     // Get configuration from the current configuration
     let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
@@ -37,7 +37,7 @@ pub async fn initialize_server() {
             warn(format!("Admin binding requested without TLS on {}:{}. This is not recommended.", binding.ip, binding.port));
         }
 
-        info(format!("Starting Grux server on {}", addr));
+        info(format!("Starting server on {}", addr));
 
         // Start listening on the specified address - spawn each binding as a separate task
         let binding_clone = binding.clone();
@@ -179,13 +179,13 @@ where
         let stop_services_token = stop_services_token.clone();
 
         async move {
-            let mut grux_req = GruxRequest::from_hyper(req);
-            grux_req.add_calculated_data("remote_ip", &remote_ip);
-            let grux_response_result = handle_request(grux_req, binding, shutdown_token, stop_services_token).await;
-            let response = match grux_response_result {
+            let mut gruxi_req = GruxiRequest::from_hyper(req);
+            gruxi_req.add_calculated_data("remote_ip", &remote_ip);
+            let gruxi_response_result = handle_request(gruxi_req, binding, shutdown_token, stop_services_token).await;
+            let response = match gruxi_response_result {
                 Err(err) => {
                     error(format!("Error handling request from {}: {:?}", &remote_ip, err));
-                    let response = GruxResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16());
+                    let response = GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16());
                     response
                 }
                 Ok(response) => response,
@@ -193,7 +193,7 @@ where
 
             debug(format!("Responding with: {:?}", response));
 
-            // Convert grux_response to hyper response
+            // Convert gruxi_response to hyper response
             Ok::<_, std::convert::Infallible>(response.into_hyper())
         }
     });

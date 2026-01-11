@@ -11,7 +11,7 @@ services:
       WORDPRESS_DB_PASSWORD: examplepass
       WORDPRESS_DB_NAME: exampledb
     volumes:
-      - D:/dev/test-sites/grux-wp-site1:/var/www/html
+      - D:/dev/test-sites/gruxi-wp-site1:/var/www/html
 
   db:
     image: mysql:8.0

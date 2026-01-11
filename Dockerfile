@@ -1,5 +1,5 @@
 # Use the latest official Rust image based on Alpine Linux
-FROM rust:alpine AS grux-builder
+FROM rust:alpine AS gruxi-builder
 
 # Install required system dependencies for building
 RUN apk add --no-cache \
@@ -10,7 +10,7 @@ RUN apk add --no-cache \
     ca-certificates
 
 # Set the working directory inside the container
-WORKDIR /usr/src/grux
+WORKDIR /usr/src/gruxi
 
 # Copy the Cargo.toml and Cargo.lock files first for better caching
 COPY Cargo.toml Cargo.lock ./
@@ -42,14 +42,14 @@ RUN apk add --no-cache \
     ca-certificates
 
 # Create a non-root user for running the application
-RUN addgroup -g 1000 grux && \
-    adduser -D -s /bin/sh -u 1000 -G grux grux
+RUN addgroup -g 1000 gruxi && \
+    adduser -D -s /bin/sh -u 1000 -G gruxi gruxi
 
 # Set the working directory
 WORKDIR /app
 
 # Copy the compiled binary from the builder stage
-COPY --from=grux-builder /usr/src/grux/target/release/grux /app/grux
+COPY --from=gruxi-builder /usr/src/gruxi/target/release/gruxi /app/gruxi
 
 # Copy the built admin portal from the admin-portal stage
 COPY --from=admin-portal /www-admin /app/www-admin/
@@ -57,17 +57,17 @@ COPY --from=admin-portal /www-admin /app/www-admin/
 # Create necessary directories and set ownership
 RUN mkdir -p /app/logs /app/certs /app/www-default /app/db && \
     chmod 755 /app/certs && \
-    chown -R grux:grux /app
+    chown -R gruxi:gruxi /app
 
 # Copy project files and directories (these will be mounted in development)
 # But we'll create the structure for when running standalone
 COPY  www-default/ /app/www-default/
 
 # Switch to the non-root user
-USER grux
+USER gruxi
 
 # Expose the required ports
 EXPOSE 80 443 8000
 
 # Command to run the application
-CMD ["./grux"]
+CMD ["./gruxi"]

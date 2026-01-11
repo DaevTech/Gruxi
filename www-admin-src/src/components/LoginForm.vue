@@ -66,9 +66,9 @@ const handleKeydown = (event) => {
 <template>
   <div class="login-container">
     <div class="login-card">
-      <!-- Grux Logo/Title -->
+      <!-- Gruxi Logo/Title -->
       <div class="login-header">
-        <h1>Grux Admin</h1>
+        <h1>Gruxi Admin</h1>
         <p>Web Server Administration</p>
       </div>
 

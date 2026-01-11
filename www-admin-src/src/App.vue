@@ -13,8 +13,8 @@ const user = reactive({
 
 // Check for existing session on app load
 onMounted(async () => {
-  const savedToken = localStorage.getItem('grux_session_token')
-  const savedUsername = localStorage.getItem('grux_username')
+  const savedToken = localStorage.getItem('gruxi_session_token')
+  const savedUsername = localStorage.getItem('gruxi_username')
 
   if (savedToken && savedUsername) {
     // Verify the token is still valid by making a test request
@@ -33,13 +33,13 @@ onMounted(async () => {
         isAuthenticated.value = true
       } else {
         // Token is invalid, clear it
-        localStorage.removeItem('grux_session_token')
-        localStorage.removeItem('grux_username')
+        localStorage.removeItem('gruxi_session_token')
+        localStorage.removeItem('gruxi_username')
       }
     } catch (error) {
       console.error('Error verifying session:', error)
-      localStorage.removeItem('grux_session_token')
-      localStorage.removeItem('grux_username')
+      localStorage.removeItem('gruxi_session_token')
+      localStorage.removeItem('gruxi_username')
     }
   }
 
@@ -53,8 +53,8 @@ const handleLoginSuccess = (loginData) => {
   isAuthenticated.value = true
 
   // Save to localStorage
-  localStorage.setItem('grux_session_token', loginData.session_token)
-  localStorage.setItem('grux_username', loginData.username)
+  localStorage.setItem('gruxi_session_token', loginData.session_token)
+  localStorage.setItem('gruxi_username', loginData.username)
 }
 
 // Handle logout
@@ -76,8 +76,8 @@ const handleLogout = async () => {
     isAuthenticated.value = false
 
     // Clear localStorage
-    localStorage.removeItem('grux_session_token')
-    localStorage.removeItem('grux_username')
+    localStorage.removeItem('gruxi_session_token')
+    localStorage.removeItem('gruxi_username')
   }
 }
 </script>
@@ -87,7 +87,7 @@ const handleLogout = async () => {
     <!-- Loading state -->
     <div v-if="isLoading" class="loading-container">
       <div class="loading-spinner"></div>
-      <p>Loading Grux Admin...</p>
+      <p>Loading Gruxi Admin...</p>
     </div>
 
     <!-- Login form when not authenticated -->

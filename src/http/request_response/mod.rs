@@ -1,4 +1,4 @@
-pub mod grux_body;
-pub mod grux_request;
-pub mod grux_response;
+pub mod gruxi_body;
+pub mod gruxi_request;
+pub mod gruxi_response;
 pub mod body_error;

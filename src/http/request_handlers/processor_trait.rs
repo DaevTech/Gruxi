@@ -1,6 +1,6 @@
 use crate::{
     configuration::site::Site,
-    error::grux_error::GruxError, http::request_response::{grux_request::GruxRequest, grux_response::GruxResponse},
+    error::gruxi_error::GruxiError, http::request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
 };
 
 // Trait that processors must implement
@@ -19,5 +19,5 @@ pub trait ProcessorTrait {
     fn get_default_pretty_name(&self) -> String;
 
     // Handle an incoming request (details would depend on the actual implementation)
-    async fn handle_request(&self, grux_request: &mut GruxRequest, site: &Site) -> Result<GruxResponse, GruxError>;
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError>;
 }

@@ -3,8 +3,8 @@ use tokio::sync::RwLock;
 
 use crate::{
     configuration::{request_handler::RequestHandler, site::Site},
-    error::grux_error::GruxError,
-    http::request_response::{grux_request::GruxRequest, grux_response::GruxResponse},
+    error::gruxi_error::GruxiError,
+    http::request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     logging::syslog::trace,
 };
 
@@ -34,7 +34,7 @@ impl RequestHandlerManager {
         new_request_handlers
     }
 
-    pub async fn handle_request(&self, grux_request: &mut GruxRequest, site: &Site) -> Result<GruxResponse, GruxError> {
+    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
         let request_handler_read_lock = self.request_handlers.read().await;
 
         for request_handler_id in site.request_handlers.iter() {
@@ -45,9 +45,9 @@ impl RequestHandlerManager {
                 }
 
                 // Check that it matches
-                if handler.matches_url(&grux_request.get_path_and_query()) {
+                if handler.matches_url(&gruxi_request.get_path_and_query()) {
                     // We call the handle request. If we get an error, we continue to the next one
-                    let response_result = handler.handle_request(grux_request, site).await;
+                    let response_result = handler.handle_request(gruxi_request, site).await;
                     if response_result.is_err() {
                         // Some of the errors are not critical, so we just log and continue
                         continue;
@@ -57,7 +57,7 @@ impl RequestHandlerManager {
             }
         }
 
-        trace(format!("No request handler found for request path '{}'", &grux_request.get_path_and_query()));
-        Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()))
+        trace(format!("No request handler found for request path '{}'", &gruxi_request.get_path_and_query()));
+        Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()))
     }
 }

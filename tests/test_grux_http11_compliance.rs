@@ -4,23 +4,23 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
-/// HTTP/1.1 Compliance Test Suite for Grux Web Server
+/// HTTP/1.1 Compliance Test Suite for Gruxi Web Server
 ///
-/// This comprehensive test suite validates Grux's compliance with HTTP/1.1 specifications
+/// This comprehensive test suite validates Gruxi's compliance with HTTP/1.1 specifications
 /// as defined in RFC 7230 (Message Syntax and Routing) and RFC 7231 (Semantics and Content).
 ///
 /// ============================================================================
-/// IMPORTANT: These tests validate the ACTUAL running Grux server, not a mock!
+/// IMPORTANT: These tests validate the ACTUAL running Gruxi server, not a mock!
 /// ============================================================================
 ///
 /// SETUP INSTRUCTIONS:
-/// 1. Start Grux server: `cargo run` (in separate terminal)
+/// 1. Start Gruxi server: `cargo run` (in separate terminal)
 /// 2. Ensure server is running on 127.0.0.1:80
 /// 3. Ensure www-default/ directory has content (index.html, etc.)
-/// 4. Run tests: `cargo test --test test_grux_http11_compliance`
+/// 4. Run tests: `cargo test --test test_gruxi_http11_compliance`
 ///
 /// WHAT THESE TESTS VERIFY:
-/// These tests send real HTTP requests to the running Grux server and verify:
+/// These tests send real HTTP requests to the running Gruxi server and verify:
 ///
 /// ✓ HTTP Methods: GET, HEAD, OPTIONS, POST compliance with RFC standards
 /// ✓ Status Codes: Proper 200, 404, 400, 405, 501 responses
@@ -32,22 +32,22 @@ use tokio::time::{Duration, timeout};
 ///
 /// WHY THIS APPROACH:
 /// Unlike mock-based tests, these integration tests provide real confidence
-/// that Grux correctly implements HTTP/1.1 by testing the actual server
+/// that Gruxi correctly implements HTTP/1.1 by testing the actual server
 /// behavior against real HTTP requests and validating real responses.
 ///
 /// TROUBLESHOOTING:
-/// - If tests fail with "connection refused": Start Grux server first
-/// - If tests timeout: Check that Grux is listening on port 80
+/// - If tests fail with "connection refused": Start Gruxi server first
+/// - If tests timeout: Check that Gruxi is listening on port 80
 /// - If 404 errors: Ensure www-default/index.html exists
 
 // Test server configuration
-const GRUX_HTTP_HOST: &str = "127.0.0.1";
-const GRUX_HTTP_PORT: u16 = 80;
+const GRUXI_HTTP_HOST: &str = "127.0.0.1";
+const GRUXI_HTTP_PORT: u16 = 80;
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Get the HTTP server address for testing
 fn get_http_server_addr() -> SocketAddr {
-    SocketAddr::new(GRUX_HTTP_HOST.parse().unwrap(), GRUX_HTTP_PORT)
+    SocketAddr::new(GRUXI_HTTP_HOST.parse().unwrap(), GRUXI_HTTP_PORT)
 }
 
 /// Send raw HTTP request and get raw response
@@ -658,7 +658,7 @@ async fn test_empty_request_handling() {
 }
 
 // ============================================================================
-// 9. TLS AND SECURITY COMPLIANCE (GRUX-SPECIFIC)
+// 9. TLS AND SECURITY COMPLIANCE (GRUXI-SPECIFIC)
 // ============================================================================
 
 // Note: TLS tests would require proper certificate setup

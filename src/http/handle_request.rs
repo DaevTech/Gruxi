@@ -4,57 +4,57 @@ use crate::configuration::binding::Binding;
 use crate::configuration::site::Site;
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::running_state_manager::get_running_state_manager;
-use crate::error::grux_error::GruxError;
-use crate::error::grux_error_enums::{AdminApiError, GruxErrorKind};
+use crate::error::gruxi_error::GruxiError;
+use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
 use crate::http::http_util::*;
-use crate::http::request_response::grux_request::GruxRequest;
-use crate::http::request_response::grux_response::GruxResponse;
+use crate::http::request_response::gruxi_request::GruxiRequest;
+use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::logging::syslog::{debug, trace};
 use chrono::Local;
 use hyper::header::HeaderValue;
 use tokio_util::sync::CancellationToken;
 
 // Entry point to handle request, as we need to do post-processing, like access logging etc
-pub async fn handle_request(mut grux_request: GruxRequest, binding: Binding, shutdown_token: CancellationToken, stop_services_token: CancellationToken) -> Result<GruxResponse, GruxError> {
+pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding, shutdown_token: CancellationToken, stop_services_token: CancellationToken) -> Result<GruxiResponse, GruxiError> {
     // Count the request in monitoring
     get_monitoring_state().await.increment_requests_served();
 
     // Log the request details
     debug(format!(
         "Received request: method={}, path={}, query={}, body_size={}, headers={:?}",
-        grux_request.get_http_method(),
-        grux_request.get_path(),
-        grux_request.get_query(),
-        grux_request.get_body_size(),
-        grux_request.get_headers()
+        gruxi_request.get_http_method(),
+        gruxi_request.get_path(),
+        gruxi_request.get_query(),
+        gruxi_request.get_body_size(),
+        gruxi_request.get_headers()
     ));
 
     // Figure out which site we are serving
     let sites = binding.get_sites();
-    let hostname = grux_request.get_hostname();
+    let hostname = gruxi_request.get_hostname();
     let site = find_best_match_site(&sites, &hostname);
     if let None = site {
-        return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
     }
 
     let site = site.unwrap();
     trace(format!("Matched site with request: {:?}", &site));
 
     // Validate the request pre-body extraction, so if any body is sent, we dont waste time processing it
-    if let Err(grux_error) = validate_request(&mut grux_request).await {
-        debug(format!("Request validation failed: {:?}", grux_error));
-        let status_code = match &grux_error.kind {
-            GruxErrorKind::HttpRequestValidation(code) => *code,
+    if let Err(gruxi_error) = validate_request(&mut gruxi_request).await {
+        debug(format!("Request validation failed: {:?}", gruxi_error));
+        let status_code = match &gruxi_error.kind {
+            GruxiErrorKind::HttpRequestValidation(code) => *code,
             _ => 500, // Default for other errors
         };
-        let response = GruxResponse::new_empty_with_status(status_code);
+        let response = GruxiResponse::new_empty_with_status(status_code);
         return Ok(response);
     }
 
     // Handle special case for OPTIONS * request, which is stupid but valid
-    if grux_request.get_http_method() == "OPTIONS" && grux_request.get_path() == "*" {
+    if gruxi_request.get_http_method() == "OPTIONS" && gruxi_request.get_path() == "*" {
         // Special case for OPTIONS * request
-        let mut resp = GruxResponse::new_empty_with_status(hyper::StatusCode::OK.as_u16());
+        let mut resp = GruxiResponse::new_empty_with_status(hyper::StatusCode::OK.as_u16());
         resp.headers_mut()
             .insert("Allow", HeaderValue::from_static("GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT, PATCH"));
         add_standard_headers_to_response(&mut resp);
@@ -62,7 +62,7 @@ pub async fn handle_request(mut grux_request: GruxRequest, binding: Binding, shu
     }
 
     // Handle EXPECT: 100-continue header
-    if let Some(expect_header) = grux_request.get_headers().get("expect") {
+    if let Some(expect_header) = gruxi_request.get_headers().get("expect") {
         if expect_header.to_str().unwrap_or("").eq_ignore_ascii_case("100-continue") {
             // Send 100 Continue response
             let mut resp = empty_response_with_status(hyper::StatusCode::CONTINUE);
@@ -73,12 +73,12 @@ pub async fn handle_request(mut grux_request: GruxRequest, binding: Binding, shu
 
     // Check if the request is for the admin portal - handle these first
     let admin_response = if binding.is_admin {
-        match handle_api_routes(&mut grux_request, site).await {
+        match handle_api_routes(&mut gruxi_request, site).await {
             Ok(response) => Some(response),
             Err(e) => {
                 // If the error is NoRouteMatched, we continue to normal processing
                 match e.kind {
-                    GruxErrorKind::AdminApi(AdminApiError::NoRouteMatched) => {
+                    GruxiErrorKind::AdminApi(AdminApiError::NoRouteMatched) => {
                         trace("No matching admin API route found, continuing to normal request handling".to_string());
                     }
                     _ => {
@@ -100,15 +100,15 @@ pub async fn handle_request(mut grux_request: GruxRequest, binding: Binding, shu
     } else {
         // If no handler wants it, we return 404
         if site.request_handlers.is_empty() {
-            return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+            return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
         }
 
         // Now we let the request handler manager process the request in the order defined by the site's request_handlers list.
         let request_handler_manager = running_state.get_request_handler_manager();
-        let response_result = request_handler_manager.handle_request(&mut grux_request, &site).await;
+        let response_result = request_handler_manager.handle_request(&mut gruxi_request, &site).await;
         if response_result.is_err() {
-            trace(format!("No request handler matched for URL path: {}", &grux_request.get_path_and_query()));
-            return Ok(GruxResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+            trace(format!("No request handler matched for URL path: {}", &gruxi_request.get_path_and_query()));
+            return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
         }
         response_result.unwrap()
     };
@@ -138,7 +138,7 @@ pub async fn handle_request(mut grux_request: GruxRequest, binding: Binding, shu
 
     // Only gzip if not already gzipped and if we should compress based on config and sizes
     if content_encoding_header.to_lowercase() != "gzip" && file_reader_cache.should_compress(&content_type_header, content_length) {
-        let accepted_encodings = grux_request.get_accepted_encodings();
+        let accepted_encodings = gruxi_request.get_accepted_encodings();
         let compression = Compression::new();
         compression.compress_response(&mut response, accepted_encodings, content_encoding_header).await;
     }
@@ -147,7 +147,7 @@ pub async fn handle_request(mut grux_request: GruxRequest, binding: Binding, shu
     let mut additional_headers: Vec<(&str, &str)> = vec![];
 
     // If method is OPTIONS, we add the Allow header if not already present
-    if grux_request.get_http_method() == "OPTIONS" {
+    if gruxi_request.get_http_method() == "OPTIONS" {
         if !response.headers().iter().any(|(k, _)| k.as_str().to_lowercase() == "allow") {
             additional_headers.push(("Allow", "GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT, PATCH"));
         }
@@ -177,11 +177,11 @@ pub async fn handle_request(mut grux_request: GruxRequest, binding: Binding, shu
         let clf_date = now.format("%d/%b/%Y:%H:%M:%S %z").to_string();
         let log_entry = format!(
             "{} - - [{}] \"{} {} {}\" {} {}",
-            grux_request.get_remote_ip(),
+            gruxi_request.get_remote_ip(),
             clf_date,
-            grux_request.get_http_method(),
-            grux_request.get_path_and_query(),
-            grux_request.get_http_version(),
+            gruxi_request.get_http_method(),
+            gruxi_request.get_path_and_query(),
+            gruxi_request.get_http_version(),
             response.get_status(),
             response.get_body_size()
         );
@@ -217,32 +217,32 @@ fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &'a str) -> O
     site
 }
 
-async fn validate_request(grux_request: &mut GruxRequest) -> Result<(), GruxError> {
+async fn validate_request(gruxi_request: &mut GruxiRequest) -> Result<(), GruxiError> {
     // Here we can add any request validation logic if needed
     let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
     let configuration = cached_configuration.get_configuration().await;
 
     // Validation for HTTP/1.1 only
-    if grux_request.get_http_version() == "HTTP/1.1" {
+    if gruxi_request.get_http_version() == "HTTP/1.1" {
         // [HTTP1.1] Requires a Host header
-        if !grux_request.get_headers().contains_key("Host") {
-            return Err(GruxError::new(
-                GruxErrorKind::HttpRequestValidation(hyper::StatusCode::BAD_REQUEST.as_u16()),
-                format!("Failed to get streaming HTTP request for request: {:?}", grux_request),
+        if !gruxi_request.get_headers().contains_key("Host") {
+            return Err(GruxiError::new(
+                GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::BAD_REQUEST.as_u16()),
+                format!("Failed to get streaming HTTP request for request: {:?}", gruxi_request),
             ));
         }
 
         // [HTTP1.1] If there is multiple host headers, we return a 400 error
-        if grux_request.get_headers().get_all("Host").iter().count() > 1 {
-            return Err(GruxError::new(
-                GruxErrorKind::HttpRequestValidation(hyper::StatusCode::BAD_REQUEST.as_u16()),
-                format!("Multiple Host headers for request: {:?}", grux_request),
+        if gruxi_request.get_headers().get_all("Host").iter().count() > 1 {
+            return Err(GruxiError::new(
+                GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::BAD_REQUEST.as_u16()),
+                format!("Multiple Host headers for request: {:?}", gruxi_request),
             ));
         }
     }
 
     // [HTTP1.1 and later] Basic validation: check for valid method
-    let http_method = grux_request.get_http_method();
+    let http_method = gruxi_request.get_http_method();
     if http_method != "GET"
         && http_method != "POST"
         && http_method != "HEAD"
@@ -254,9 +254,9 @@ async fn validate_request(grux_request: &mut GruxRequest) -> Result<(), GruxErro
         && http_method != "PATCH"
     {
         // Return a error for unsupported method
-        return Err(GruxError::new(
-            GruxErrorKind::HttpRequestValidation(hyper::StatusCode::NOT_IMPLEMENTED.as_u16()),
-            format!("Unsupported HTTP method for request: {:?}", grux_request),
+        return Err(GruxiError::new(
+            GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::NOT_IMPLEMENTED.as_u16()),
+            format!("Unsupported HTTP method for request: {:?}", gruxi_request),
         ));
     }
 
@@ -264,13 +264,13 @@ async fn validate_request(grux_request: &mut GruxRequest) -> Result<(), GruxErro
     let max_body_size = configuration.core.server_settings.max_body_size;
     if max_body_size > 0 && (http_method == "POST" || http_method == "PUT") {
         // Check Content-Length header if present
-        if let Some(content_length_header) = grux_request.get_headers().get("Content-Length") {
+        if let Some(content_length_header) = gruxi_request.get_headers().get("Content-Length") {
             if let Ok(content_length_str) = content_length_header.to_str() {
                 if let Ok(content_length) = content_length_str.parse::<usize>() {
                     if content_length > max_body_size {
-                        return Err(GruxError::new(
-                            GruxErrorKind::HttpRequestValidation(hyper::StatusCode::PAYLOAD_TOO_LARGE.as_u16()),
-                            format!("Payload too large for request, based on content-length header: {:?}", grux_request),
+                        return Err(GruxiError::new(
+                            GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::PAYLOAD_TOO_LARGE.as_u16()),
+                            format!("Payload too large for request, based on content-length header: {:?}", gruxi_request),
                         ));
                     }
                 }
@@ -278,10 +278,10 @@ async fn validate_request(grux_request: &mut GruxRequest) -> Result<(), GruxErro
         }
 
         // Also check the expected body size
-        if grux_request.get_body_size() > max_body_size.try_into().unwrap_or(0) {
-            return Err(GruxError::new(
-                GruxErrorKind::HttpRequestValidation(hyper::StatusCode::PAYLOAD_TOO_LARGE.as_u16()),
-                format!("Payload too large for request, based on actual body size: {:?}", grux_request),
+        if gruxi_request.get_body_size() > max_body_size.try_into().unwrap_or(0) {
+            return Err(GruxiError::new(
+                GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::PAYLOAD_TOO_LARGE.as_u16()),
+                format!("Payload too large for request, based on actual body size: {:?}", gruxi_request),
             ));
         }
     }
