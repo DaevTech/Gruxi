@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Configuration {
-    pub version: String,
+    pub version: i32,
     pub bindings: Vec<Binding>,
     pub sites: Vec<Site>,
     pub binding_sites: Vec<BindingSiteRelationship>,
@@ -29,12 +29,12 @@ pub struct Configuration {
     pub php_cgi_handlers: Vec<PhpCgi>,
 }
 
-pub static CURRENT_CONFIGURATION_VERSION: i32 = 1;
+pub static CURRENT_CONFIGURATION_VERSION: i32 = 2;
 
 impl Configuration {
     pub fn new() -> Self {
         Configuration {
-            version: CURRENT_CONFIGURATION_VERSION.to_string(),
+            version: CURRENT_CONFIGURATION_VERSION,
             bindings: vec![],
             sites: vec![],
             binding_sites: vec![],
@@ -131,6 +131,11 @@ impl Configuration {
     // Validates the entire configuration
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
+
+        // Check that the version is the current version
+        if self.version != CURRENT_CONFIGURATION_VERSION {
+            errors.push(format!("Configuration version '{}' does not match current version '{}'", self.version, CURRENT_CONFIGURATION_VERSION));
+        }
 
         // Validate sites
         for (site_idx, site) in self.sites.iter().enumerate() {
@@ -332,7 +337,6 @@ impl Configuration {
         request2_php_processor.php_cgi_handler_id = php1_cgi_id.clone();
         request2_php_processor.local_web_root = "D:/dev/grux-website".to_string();
 
-
         let request_handler2 = RequestHandler {
             id: Uuid::new_v4().to_string(),
             is_enabled: true,
@@ -378,13 +382,11 @@ impl Configuration {
         // Request handler for the static files
         let mut request4_proxy_processor = ProxyProcessor::new();
         request4_proxy_processor.upstream_servers = vec!["http://192.168.0.186:5000".to_string()];
-        request4_proxy_processor.url_rewrites = vec![
-            ProxyProcessorRewrite {
-                from: "/test".to_string(),
-                to: "/tests1".to_string(),
-                is_case_insensitive: true,
-            }
-        ];
+        request4_proxy_processor.url_rewrites = vec![ProxyProcessorRewrite {
+            from: "/test".to_string(),
+            to: "/tests1".to_string(),
+            is_case_insensitive: true,
+        }];
         request4_proxy_processor.verify_tls_certificates = false;
 
         let request_handler4 = RequestHandler {

@@ -17,7 +17,7 @@ use sqlite::State;
 
 /// Save a new configuration to the database
 /// Returns Ok(true) if changes were saved, Ok(false) if no changes were needed
-pub fn save_configuration(config: &mut Configuration) -> Result<bool, Vec<String>> {
+pub fn save_configuration(config: &mut Configuration, force: bool) -> Result<bool, Vec<String>> {
     // First, we sanitize the configuration
     config.sanitize();
 
@@ -32,7 +32,7 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, Vec<String
     let current_config_json = serde_json::to_string(&current_config).map_err(|e| vec![format!("Failed to serialize current configuration: {}", e)])?;
 
     // If configurations are identical, no need to save
-    if new_config_json == current_config_json {
+    if !force && new_config_json == current_config_json {
         return Ok(false); // No changes were made
     }
 
@@ -41,6 +41,15 @@ pub fn save_configuration(config: &mut Configuration) -> Result<bool, Vec<String
 
     // Begin transaction for atomicity
     connection.execute("BEGIN TRANSACTION").map_err(|e| vec![format!("Failed to begin transaction: {}", e)])?;
+
+    // Save the schema version, clear it first
+    connection.execute("DELETE FROM grux WHERE grux_key = 'schema_version'").map_err(|e| vec![format!("Failed to clear existing schema version: {}", e)])?;
+    connection
+        .execute(format!(
+            "INSERT INTO grux (grux_key, grux_value) VALUES ('schema_version', '{}')",
+            config.version
+        ))
+        .map_err(|e| vec![format!("Failed to save schema version: {}", e)])?;
 
     // Save core configuration (file cache, gzip, server settings)
     save_core_config(&connection, &config.core).map_err(|e| vec![format!("Failed to save core configuration: {}", e)])?;

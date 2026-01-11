@@ -113,7 +113,7 @@ pub fn add_standard_headers_to_response(resp: &mut GruxResponse) {
 
 pub fn get_list_of_hop_by_hop_headers(is_websocket_upgrade: bool) -> Vec<String> {
     // Remove hop-by-hop headers as per RFC 2616 Section 13.5.1
-    let mut hop_by_hop_headers = vec!["Keep-Alive".to_string(), "Proxy-Authenticate".to_string(), "Proxy-Authorization".to_string(), "TE".to_string(), "Trailers".to_string(), "Transfer-Encoding".to_string()];
+    let mut hop_by_hop_headers = vec!["Keep-Alive".to_string(), "Proxy-Authenticate".to_string(), "Proxy-Authorization".to_string(), "TE".to_string(), "Trailers".to_string(), "Transfer-Encoding".to_string(), "Content-Length".to_string()];
 
     if !is_websocket_upgrade {
         // Also remove Connection and Upgrade headers if not a websocket upgrade

@@ -41,7 +41,7 @@ pub fn import_configuration_from_file(path: &PathBuf) -> Result<(), String> {
     handle_relationship_binding_sites(&configuration.binding_sites, &mut configuration.bindings, &configuration.sites);
 
     // Save configuration to database
-    crate::configuration::save_configuration::save_configuration(&mut configuration).map_err(|e| format!("Failed to save imported configuration to database: {:?}", e))?;
+    crate::configuration::save_configuration::save_configuration(&mut configuration, false).map_err(|e| format!("Failed to save imported configuration to database: {:?}", e))?;
 
     println!("Configuration successfully imported from {}", path.display());
 

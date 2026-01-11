@@ -293,7 +293,7 @@ pub async fn admin_post_configuration_endpoint(grux_request: &mut GruxRequest, _
     handle_relationship_binding_sites(&configuration.binding_sites, &mut configuration.bindings, &mut configuration.sites);
 
     // Save the configuration
-    match save_configuration(&mut configuration) {
+    match save_configuration(&mut configuration, false) {
         Ok(true) => {
             info("Configuration updated successfully".to_string());
 

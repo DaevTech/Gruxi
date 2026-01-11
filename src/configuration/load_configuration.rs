@@ -1,5 +1,5 @@
 use crate::configuration::binding_site_relation::BindingSiteRelationship;
-use crate::configuration::configuration::CURRENT_CONFIGURATION_VERSION;
+use crate::core::database_schema::CURRENT_DB_SCHEMA_VERSION;
 use crate::external_connections::managed_system::php_cgi;
 use crate::http::request_handlers::processors::php_processor;
 use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorRewrite};
@@ -18,19 +18,7 @@ pub fn init() -> Result<Configuration, Vec<String>> {
     let connection = get_database_connection().map_err(|e| vec![format!("Failed to get database connection: {}", e)])?;
 
     // Check if we need to load the default configuration
-    let schema_version = {
-        let mut statement = connection
-            .prepare("SELECT grux_value FROM grux WHERE grux_key = 'schema_version' LIMIT 1")
-            .map_err(|e| vec![format!("Failed to prepare schema version query: {}", e)])?;
-
-        match statement.next().map_err(|e| vec![format!("Failed to execute schema version query: {}", e)])? {
-            State::Row => {
-                let version_str: String = statement.read(0).map_err(|e| vec![format!("Failed to read schema version: {}", e)])?;
-                version_str.parse::<i64>().map_err(|e| vec![format!("Failed to parse schema version: {}", e)])?
-            }
-            State::Done => 0, // No version found, assume 0
-        }
-    };
+    let schema_version = get_schema_version();
 
     let configuration = {
         if schema_version == 0 {
@@ -43,11 +31,12 @@ pub fn init() -> Result<Configuration, Vec<String>> {
             // Process the binding-site relationships
             handle_relationship_binding_sites(&configuration.binding_sites, &mut configuration.bindings, &mut configuration.sites);
 
-            save_configuration(&mut configuration)?;
+            save_configuration(&mut configuration, true)?;
 
-            // Update schema version to 1
+            // Update schema version to value of constant CURRENT_CONFIGURATION_VERSION
+            let current_version = CURRENT_DB_SCHEMA_VERSION;
             connection
-                .execute("UPDATE grux SET grux_value = '1' WHERE grux_key = 'schema_version'")
+                .execute(&format!("UPDATE grux SET grux_value = {} WHERE grux_key = 'schema_version'", current_version))
                 .map_err(|e| vec![format!("Failed to update schema version: {}", e)])?;
 
             configuration
@@ -60,8 +49,33 @@ pub fn init() -> Result<Configuration, Vec<String>> {
     Ok(configuration)
 }
 
+fn get_schema_version() -> i32 {
+    let connection_result = get_database_connection();
+    if let Err(_) = connection_result {
+        return 0;
+    }
+    let connection = connection_result.unwrap();
+
+    let statement_result = connection.prepare("SELECT grux_value FROM grux WHERE grux_key = 'schema_version' LIMIT 1");
+    if let Err(_) = statement_result {
+        return 0;
+    }
+    let mut statement = statement_result.unwrap();
+
+    match statement.next().unwrap() {
+        State::Row => {
+            let version: i64 = statement.read(0).unwrap_or(0);
+            version as i32
+        }
+        State::Done => 0, // No version found, assume 0
+    }
+}
+
 // Load the configuration from the normalized database tables - Returns the data from db as fresh
 pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
+
+    let schema_version = get_schema_version();
+
     let connection = get_database_connection()?;
 
     // Basic sites and bindings
@@ -86,7 +100,7 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
 
     // Do a sanitize, in case there are any invalid entries in the database
     let mut configuration = Configuration {
-        version: CURRENT_CONFIGURATION_VERSION.to_string(),
+        version: schema_version,
         bindings,
         sites,
         binding_sites,
