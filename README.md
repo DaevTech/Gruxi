@@ -1,4 +1,4 @@
-<img width="200" src="https://github.com/briansjensen/gruxi/blob/0c198a580b6d473bfbef642301e069507429be26/assets/logo.svg">
+<img width="200" src="https://github.com/DaevTech/Gruxi/blob/0c198a580b6d473bfbef642301e069507429be26/assets/logo.svg">
 
 #  Gruxi - High performance web server
 
