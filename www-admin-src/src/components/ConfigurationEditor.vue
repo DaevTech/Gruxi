@@ -376,7 +376,7 @@ const addBinding = () => {
     if (!config.value.bindings) {
         config.value.bindings = [];
     }
-    const newId = Math.max(0, ...config.value.bindings.map((b) => b.id)) + 1;
+    const newId = crypto.randomUUID();
     config.value.bindings.push({
         id: newId,
         ip: '0.0.0.0',
@@ -404,7 +404,7 @@ const addSite = () => {
     if (!config.value.sites) {
         config.value.sites = [];
     }
-    const newId = Math.max(0, ...config.value.sites.map((s) => s.id)) + 1;
+    const newId = crypto.randomUUID();
 
     config.value.sites.push({
         id: newId,
@@ -623,7 +623,7 @@ const addProcessorToSite = (siteIndex, processorType) => {
         newProcessor = {
             id: processorId,
             web_root: './www-default',
-            web_root_index_file_list: ['index.html', 'index.htm'],
+            web_root_index_file_list: ['index.html'],
         };
         config.value.static_file_processors.push(newProcessor);
     } else if (processorType === 'php') {
