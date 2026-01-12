@@ -139,9 +139,9 @@ Log in to admin portal with "admin" as username and password written in the serv
 After your changes is done, make sure it builds and tests are running.
 Submit a PR and wait for approval. We appreciate any contribution and improvements.
 
-## Licensing with commercial support or sponsoring
+## Licensing with support or sponsoring
 
-Gruxi is free to use for everybody (and always will be), but if you need support in a commercial context or want to sponsor the project, let us know and we will figure out a solution. Contact us on <contact@gruxi.org>.
+Gruxi is free to use for everybody, but does not provide direct support. If you need support for private or commercial context or want to sponsor the project, let us know and we will figure out a solution. Contact us on <contact@gruxi.org>.
 
 ## Authors
 

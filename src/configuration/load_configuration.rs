@@ -137,7 +137,7 @@ fn load_proxy_processors(connection: &Connection) -> Result<Vec<ProxyProcessor>,
         let verify_tls_certificates_int: i64 = statement.read(11).map_err(|e| format!("Failed to read verify_tls_certificates: {}", e))?;
 
         // Upstream servers is stored as comma separated
-        let upstream_servers = parse_comma_separated_list(&upstream_servers_str);
+        let upstream_servers = parse_comma_separated_list(&upstream_servers_str, true);
 
         // Url rewrites is stored as JSON array
         let url_rewrites: Vec<ProxyProcessorRewrite> = serde_json::from_str(&url_rewrites_str).map_err(|e| format!("Failed to parse url_rewrites JSON: {}", e))?;
@@ -263,13 +263,13 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
                 core.gzip.is_enabled = value.parse::<bool>().map_err(|e| format!("Failed to parse gzip_is_enabled: {}", e))?;
             }
             "gzip_compressible_content_types" => {
-                core.gzip.compressible_content_types = parse_comma_separated_list(&value);
+                core.gzip.compressible_content_types = parse_comma_separated_list(&value, true);
             }
             "max_body_size" => {
                 core.server_settings.max_body_size = value.parse::<usize>().map_err(|e| format!("Failed to parse max_body_size: {}", e))?;
             }
             "blocked_file_patterns" => {
-                core.server_settings.blocked_file_patterns = parse_comma_separated_list(&value);
+                core.server_settings.blocked_file_patterns = parse_comma_separated_list(&value, true);
             }
             _ => continue,
         }
@@ -313,7 +313,7 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
 
         // Hostnames is comma separated
         let hostnames_str: String = statement.read(3).map_err(|e| format!("Failed to read hostnames: {}", e))?;
-        let hostnames = parse_comma_separated_list(&hostnames_str);
+        let hostnames = parse_comma_separated_list(&hostnames_str, true);
 
         let tls_cert_path: String = statement.read(4).ok().unwrap_or_default();
         let tls_cert_content: String = statement.read(5).ok().unwrap_or_default();
@@ -322,11 +322,11 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
 
         // Request handlers is comma separated
         let request_handlers_str: String = statement.read(8).map_err(|e| format!("Failed to read request_handlers: {}", e))?;
-        let request_handlers: Vec<String> = parse_comma_separated_list(&request_handlers_str);
+        let request_handlers: Vec<String> = parse_comma_separated_list(&request_handlers_str, false);
 
         // Rewrite functions is comma separated
         let rewrite_functions_str: String = statement.read(9).map_err(|e| format!("Failed to read rewrite_functions: {}", e))?;
-        let rewrite_functions: Vec<String> = parse_comma_separated_list(&rewrite_functions_str);
+        let rewrite_functions: Vec<String> = parse_comma_separated_list(&rewrite_functions_str, false);
 
         // Access log
         let access_log_enabled: i64 = statement.read(10).map_err(|e| format!("Failed to read access_log_enabled: {}", e))?;
@@ -392,7 +392,7 @@ fn load_request_handlers(connection: &Connection) -> Result<Vec<RequestHandler>,
         let url_match_str: Option<String> = statement.read(5).ok();
 
         // Parse comma-separated strings
-        let url_match = parse_comma_separated_list(&url_match_str.unwrap_or_default());
+        let url_match = parse_comma_separated_list(&url_match_str.unwrap_or_default(), false);
 
         request_handlers.push(RequestHandler {
             id: handler_id,
@@ -418,7 +418,7 @@ fn load_static_file_processors(connection: &Connection) -> Result<Vec<StaticFile
         let web_root: String = statement.read(1).map_err(|e| format!("Failed to read web_root: {}", e))?;
         let web_root_index_file_list_str: String = statement.read(2).map_err(|e| format!("Failed to read web_root_index_file_list: {}", e))?;
 
-        let web_root_index_file_list = parse_comma_separated_list(&web_root_index_file_list_str);
+        let web_root_index_file_list = parse_comma_separated_list(&web_root_index_file_list_str, false);
 
         processors.push(StaticFileProcessor {
             id: processor_id,
@@ -430,8 +430,14 @@ fn load_static_file_processors(connection: &Connection) -> Result<Vec<StaticFile
     Ok(processors)
 }
 
-fn parse_comma_separated_list(input: &str) -> Vec<String> {
-    if input.is_empty() { Vec::new() } else { input.split(',').map(|s| s.trim().to_string()).collect() }
+fn parse_comma_separated_list(input: &str, to_lowercase: bool) -> Vec<String> {
+    if input.is_empty() { Vec::new() } else {
+        if to_lowercase {
+            input.split(',').map(|s| s.trim().to_lowercase().to_string()).collect()
+        } else {
+            input.split(',').map(|s| s.trim().to_string()).collect()
+        }
+    }
 }
 
 fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {

@@ -32,6 +32,24 @@ pub struct Site {
 pub static REWRITE_FUNCTIONS: &[&str] = &["OnlyWebRootIndexForSubdirs"];
 
 impl Site {
+    pub fn new() -> Self {
+        Site {
+            id: 0,
+            hostnames: vec!["*".to_string()],
+            is_default: false,
+            is_enabled: true,
+            tls_cert_path: String::new(),
+            tls_cert_content: String::new(),
+            tls_key_path: String::new(),
+            tls_key_content: String::new(),
+            request_handlers: Vec::new(),
+            rewrite_functions: Vec::new(),
+            extra_headers: Vec::new(),
+            access_log_enabled: false,
+            access_log_file: String::new(),
+        }
+    }
+
     pub fn sanitize(&mut self) {
         // Trim whitespace from hostnames
         for hostname in &mut self.hostnames {

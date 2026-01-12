@@ -1,7 +1,6 @@
 use crate::admin_portal::http_admin_api::*;
 use crate::compression::compression::Compression;
 use crate::configuration::binding::Binding;
-use crate::configuration::site::Site;
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::error::gruxi_error::GruxiError;
@@ -9,6 +8,7 @@ use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
 use crate::http::http_util::*;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
+use crate::http::site_match::site_matcher::find_best_match_site;
 use crate::logging::syslog::{debug, trace};
 use chrono::Local;
 use hyper::header::HeaderValue;
@@ -192,29 +192,6 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding, s
     }
 
     Ok(response)
-}
-
-// Find a best match site for the requested hostname
-fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &'a str) -> Option<&'a Site> {
-    let mut site = sites.iter().find(|s| s.hostnames.contains(&requested_hostname.to_string()) && s.is_enabled);
-
-    // We check for star hostnames
-    if site.is_none() {
-        site = sites.iter().find(|s| s.hostnames.contains(&"*".to_string()) && s.is_enabled);
-    }
-
-    // If we cant find a matching site, we see if there is a default one
-    if site.is_none() {
-        site = sites.iter().find(|s| s.is_default && s.is_enabled);
-    }
-
-    // If we still cant find a proper site, we return None
-    if site.is_none() {
-        trace(format!("No matching site found for requested hostname: {}", requested_hostname));
-        return None;
-    }
-
-    site
 }
 
 async fn validate_request(gruxi_request: &mut GruxiRequest) -> Result<(), GruxiError> {
