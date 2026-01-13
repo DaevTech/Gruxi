@@ -30,6 +30,18 @@ pub struct GruxiRequest {
 impl GruxiRequest {
     // Created new buffered request from hyper Request<Bytes>
     pub fn new(hyper_request: Request<Bytes>) -> Self {
+        // Figure out hostname
+        let hostname = if let Some(host_header) = hyper_request.uri().authority() {
+            host_header.host().to_string()
+        } else {
+            let host_header_option = hyper_request.headers().get("Host");
+            if let Some(host_header) = host_header_option {
+                host_header.to_str().unwrap_or("").to_string()
+            } else {
+                "".to_string()
+            }
+        };
+
         let (mut parts, body) = hyper_request.into_parts();
 
         // Check if this request has the Upgrade header - if so, we need to extract the upgrade extensions
@@ -38,6 +50,7 @@ impl GruxiRequest {
         // Calculated data cache, such as remote_ip, hostname etc
         let mut calculated_data = HashMap::new();
         calculated_data.insert("body_size_hint".to_string(), body.len().to_string());
+        calculated_data.insert("hostname".to_string(), hostname);
 
         Self {
             parts,
@@ -50,17 +63,29 @@ impl GruxiRequest {
 
     // Created new streaming request from hyper Request<Incoming>
     pub fn from_hyper(hyper_request: Request<hyper::body::Incoming>) -> Self {
+        // Calculated data cache, such as remote_ip, hostname etc
+        let mut calculated_data = HashMap::new();
         let body_size_hint = hyper_request.body().size_hint().upper().unwrap_or(0);
+        calculated_data.insert("body_size_hint".to_string(), body_size_hint.to_string());
+
+        // Figure out hostname
+        let hostname = if let Some(host_header) = hyper_request.uri().authority() {
+            host_header.host().to_string()
+        } else {
+            let host_header_option = hyper_request.headers().get("Host");
+            if let Some(host_header) = host_header_option {
+                host_header.to_str().unwrap_or("").to_string()
+            } else {
+                "".to_string()
+            }
+        };
+        calculated_data.insert("hostname".to_string(), hostname);
 
         let (mut parts, body) = hyper_request.into_parts();
         let body = GruxiBody::Streaming(body);
 
         // Check if this request has the Upgrade header - if so, we need to extract the upgrade extensions
         let upgrade_future = parts.extensions.remove::<hyper::upgrade::OnUpgrade>();
-
-        // Calculated data cache, such as remote_ip, hostname etc
-        let mut calculated_data = HashMap::new();
-        calculated_data.insert("body_size_hint".to_string(), body_size_hint.to_string());
 
         Self {
             parts,
@@ -95,16 +120,8 @@ impl GruxiRequest {
         if let Some(host_header) = self.calculated_data.get("hostname") {
             return host_header.to_string();
         }
-        let requested_hostname = self
-            .parts
-            .headers
-            .get(":authority")
-            .or_else(|| self.parts.headers.get("Host"))
-            .and_then(|h| h.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        self.add_calculated_data("hostname", &requested_hostname);
-        requested_hostname
+
+        "".to_string()
     }
 
     pub fn get_scheme(&mut self) -> String {
