@@ -1445,6 +1445,31 @@ onMounted(() => {
                 </div>
 
                 <div v-if="expandedSections.core" class="section-content">
+                    <!-- Admin portal Settings -->
+                    <div class="binding-item">
+                        <div class="item-header compact" @click="toggleCoreSubsection('adminPortal')">
+                            <div class="header-left">
+                                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('adminPortal') }">▶</span>
+                                <span class="hierarchy-indicator">🛡️</span>
+                                <h4>Admin Portal</h4>
+                            </div>
+                        </div>
+
+                        <div v-if="isCoreSubsectionExpanded('adminPortal')" class="item-content">
+                            <div class="form-grid compact">
+                                <div class="form-field">
+                                    <label>TLS Certificate Path <span class="help-icon" data-tooltip="Full or relative path (relative to the Gruxi server) to the TLS certificate file for the admin portal.">?</span></label>
+                                    <input v-model="config.core.admin_portal.tls_certificate_path" type="text" />
+                                </div>
+                                <div class="form-field">
+                                    <label>TLS Key Path <span class="help-icon" data-tooltip="Full or relative path (relative to the Gruxi server) to the TLS key file for the admin portal.">?</span></label>
+                                    <input v-model="config.core.admin_portal.tls_key_path" type="text" />
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- File Cache Settings -->
                     <div class="binding-item">
                         <div class="item-header compact" @click="toggleCoreSubsection('fileCache')">
@@ -1463,30 +1488,31 @@ onMounted(() => {
                                     <label>
                                         <input v-model="config.core.file_cache.is_enabled" type="checkbox" />
                                         Enable File Caching
+                                        <span class="help-icon" data-tooltip="Enable or disable file caching in the Gruxi server.">?</span>
                                     </label>
                                 </div>
                                 <div class="form-field">
-                                    <label>Max Cached Items (count)</label>
+                                    <label>Max Cached Items (count) <span class="help-icon" data-tooltip="Maximum number of files to cache in the file cache.">?</span></label>
                                     <input v-model.number="config.core.file_cache.cache_item_size" type="number" min="1" />
                                 </div>
                                 <div class="form-field">
-                                    <label>Max Size Per File (MB)</label>
+                                    <label>Max Size Per File (MB) <span class="help-icon" data-tooltip="Maximum size of each file to be cached in megabytes.">?</span></label>
                                     <input v-model.number="fileCacheMaxSizePerFileMb" type="number" min="0" step="0.01" />
                                 </div>
                                 <div class="form-field">
-                                    <label>How often to check files for changes (seconds)</label>
+                                    <label>How often to check files for changes (seconds) <span class="help-icon" data-tooltip="Interval in seconds to check cached files for changes.">?</span></label>
                                     <input v-model.number="config.core.file_cache.cache_item_time_between_checks" type="number" min="1" />
                                 </div>
                                 <div class="form-field">
-                                    <label>Cleanup Thread Interval (seconds)</label>
+                                    <label>Cleanup Thread Interval (seconds) <span class="help-icon" data-tooltip="Interval in seconds for the cleanup thread to run, which periodically cleans up expired cache items.">?</span></label>
                                     <input v-model.number="config.core.file_cache.cleanup_thread_interval" type="number" min="1" />
                                 </div>
                                 <div class="form-field">
-                                    <label>Max Time To Keep a File (seconds)</label>
+                                    <label>Max Time To Keep a File (seconds) <span class="help-icon" data-tooltip="Maximum time in seconds to keep a file in the cache before it is eligible for eviction. Will be applied when the cache reaches its maximum size or over the percentage threshold.">?</span></label>
                                     <input v-model.number="config.core.file_cache.max_item_lifetime" type="number" min="0" />
                                 </div>
                                 <div class="form-field">
-                                    <label>Forced Eviction Threshold (%)</label>
+                                    <label>Forced Eviction Threshold (%) <span class="help-icon" data-tooltip="Percentage threshold at which eviction of cached files occurs, to prevent reaching maximum cache size.">?</span></label>
                                     <input v-model.number="config.core.file_cache.forced_eviction_threshold" type="number" min="1" max="99" />
                                 </div>
                             </div>

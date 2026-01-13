@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::configuration::site::Site;
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(unused)]
@@ -9,17 +9,17 @@ pub struct Binding {
     pub port: u16,
     pub is_admin: bool,
     pub is_tls: bool,
-    #[serde(skip)]
-    pub sites: Vec<Site>,
 }
 
 impl Binding {
-    pub fn get_sites(&self) -> &Vec<Site> {
-        &self.sites
-    }
-
-    pub fn add_site(&mut self, site: Site) {
-        self.sites.push(site);
+    pub fn new() -> Self {
+        Binding {
+            id: Uuid::new_v4().to_string(),
+            ip: "0.0.0.0".to_string(),
+            port: 80,
+            is_admin: false,
+            is_tls: false,
+        }
     }
 
     pub fn sanitize(&mut self) {
@@ -54,11 +54,6 @@ impl Binding {
             // Admin bindings should typically use TLS for security
             if !self.is_tls {
                 errors.push("Admin binding should use TLS for security".to_string());
-            }
-
-            // Admin bindings should have at least one site
-            if self.sites.is_empty() {
-                errors.push("Admin binding must have at least one site configured".to_string());
             }
         }
 

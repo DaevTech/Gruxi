@@ -42,6 +42,12 @@ pub fn load_command_line_args() -> ArgMatches {
                 .value_parser(clap::value_parser!(PathBuf))
                 .value_parser(validate_existing_file),
         )
+        .arg(
+            Arg::new("disable-admin-portal")
+                .long("disable-admin-portal")
+                .help("Disable the admin portal")
+                .action(clap::ArgAction::SetTrue),
+        )
         .get_matches()
 }
 
@@ -64,6 +70,11 @@ pub fn cmd_get_operation_mode() -> String {
 pub fn cmd_should_reset_admin_password() -> bool {
     let cli = get_command_line_args();
     cli.get_flag("reset-admin-password")
+}
+
+pub fn cmd_disable_admin_portal() -> bool {
+    let cli = get_command_line_args();
+    cli.get_flag("disable-admin-portal")
 }
 
 pub fn check_for_command_line_actions() {

@@ -1,3 +1,4 @@
+use crate::core::running_state_manager::get_running_state_manager;
 use crate::logging::syslog::{debug, info, warn};
 use rand;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -17,7 +18,7 @@ use crate::configuration::site::Site;
 use crate::core::database_connection::get_database_connection;
 
 // Persist generated cert/key to disk and update configuration for a specific site
-pub async fn persist_generated_tls_for_site(site: &mut Site, cert_pem: &str, key_pem: &str) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn persist_generated_tls_for_site(site: &Site, cert_pem: &str, key_pem: &str, is_admin: bool) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
     // Ensure target directory exists with appropriate permissions
     let dir = "certs";
     fs::create_dir_all(dir).await.map_err(|e| format!("Failed to create certs directory '{}': {}", dir, e))?;
@@ -51,18 +52,36 @@ pub async fn persist_generated_tls_for_site(site: &mut Site, cert_pem: &str, key
         .map_err(|e| format!("Failed to rename temp key file '{}' to '{}': {}", key_tmp, key_path, e))?;
 
     // Update configuration in DB so future runs use persisted files
-
-    site.tls_cert_path = cert_path.clone();
-    site.tls_key_path = key_path.clone();
-
     let connection = get_database_connection()?;
 
     // Update the fields in the database directly
-    let sql_update = format!(
-        "UPDATE sites SET tls_cert_path = '{}', tls_key_path = '{}' WHERE id = '{}';",
-        site.tls_cert_path, site.tls_key_path, site.id
-    );
-    connection.execute(sql_update.as_str()).map_err(|e| format!("Failed to update site TLS paths in database: {}", e))?;
+    if is_admin {
+        // For admin portal, update the configuration table
+        let sql_update = format!(
+            "UPDATE server_settings SET setting_value = '{}' WHERE setting_key = 'admin_portal_tls_certificate_path';",
+            cert_path.clone()
+        );
+        connection
+            .execute(sql_update.as_str())
+            .map_err(|e| format!("Failed to update admin portal TLS paths in database: {}", e))?;
+        let sql_update = format!(
+            "UPDATE server_settings SET setting_value = '{}' WHERE setting_key = 'admin_portal_tls_key_path';",
+            key_path.clone()
+        );
+        connection
+            .execute(sql_update.as_str())
+            .map_err(|e| format!("Failed to update admin portal TLS paths in database: {}", e))?;
+        return Ok((cert_path, key_path));
+    } else {
+        // For regular site, update the sites table
+        let sql_update = format!(
+            "UPDATE sites SET tls_cert_path = '{}', tls_key_path = '{}' WHERE id = '{}';",
+            cert_path.clone(),
+            key_path.clone(),
+            site.id
+        );
+        connection.execute(sql_update.as_str()).map_err(|e| format!("Failed to update site TLS paths in database: {}", e))?;
+    }
 
     Ok((cert_path, key_path))
 }
@@ -107,14 +126,12 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
     let mut site_added = false;
     let mut fallback_certificate: Option<std::sync::Arc<RustlsCertifiedKey>> = None;
 
-    // We need to work with a mutable copy of the binding to update site configurations
-    let mut binding_copy = binding.clone();
+    // Get the running state
+    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+    let binding_site_cache = running_state.get_binding_site_cache();
+    let sites = binding_site_cache.get_sites_for_binding(&binding.id);
 
-    for site in binding_copy.sites.iter_mut() {
-        if !site.is_enabled {
-            continue;
-        }
-
+    for site in sites.iter() {
         // Determine SANs: handle wildcard sites specially
         let mut sans: Vec<String> = site.hostnames.iter().cloned().filter(|h| !h.trim().is_empty() && h != "*").collect();
         let has_wildcard = site.hostnames.contains(&"*".to_string());
@@ -180,7 +197,7 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
             let priv_key = key_result.ok_or_else(|| "No private key found in generated PEM content".to_string())?;
 
             // Persist generated cert/key to disk and update the site configuration
-            match persist_generated_tls_for_site(site, &cert_pem, &key_pem).await {
+            match persist_generated_tls_for_site(site, &cert_pem, &key_pem, binding.is_admin).await {
                 Ok(cert_paths) => {
                     info(format!("Successfully persisted generated certificate to: {:?}", cert_paths));
                 }
@@ -216,7 +233,7 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
                 }
                 Err(e) => {
                     debug(format!("Failed to add SNI name '{}': {:?}", name, e));
-                } ,
+                }
             }
         }
 
@@ -236,7 +253,7 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
                         }
                         Err(e) => {
                             debug(format!("Failed to add additional SNI name '{}': {:?}", name, e));
-                        },
+                        }
                     }
                 }
             }

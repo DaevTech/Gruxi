@@ -12,10 +12,9 @@ use crate::http::site_match::site_matcher::find_best_match_site;
 use crate::logging::syslog::{debug, trace};
 use chrono::Local;
 use hyper::header::HeaderValue;
-use tokio_util::sync::CancellationToken;
 
 // Entry point to handle request, as we need to do post-processing, like access logging etc
-pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding, shutdown_token: CancellationToken, stop_services_token: CancellationToken) -> Result<GruxiResponse, GruxiError> {
+pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -> Result<GruxiResponse, GruxiError> {
     // Count the request in monitoring
     get_monitoring_state().await.increment_requests_served();
 
@@ -29,18 +28,28 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding, s
         gruxi_request.get_headers()
     ));
 
-    // Figure out which site we are serving
-    let sites = binding.get_sites();
-    let hostname = gruxi_request.get_hostname();
-    let site = find_best_match_site(&sites, &hostname);
-    if let None = site {
+    // Get the running state
+    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+
+    // Get the sites for this binding
+    let binding_site_cache = running_state.get_binding_site_cache();
+    let sites = binding_site_cache.get_sites_for_binding(&binding.id);
+    if sites.is_empty() {
+        trace(format!("No sites configured for binding ID: '{}'", &binding.id));
         return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
     }
 
+    // Get the hostname and figure out which site matches
+    let hostname = gruxi_request.get_hostname();
+    let site = find_best_match_site(&sites, &hostname);
+    if let None = site {
+        trace(format!("No matching site found for hostname: '{}' on binding ID: '{}'", &hostname, &binding.id));
+        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+    }
     let site = site.unwrap();
     trace(format!("Matched site with request: {:?}", &site));
 
-    // Validate the request pre-body extraction, so if any body is sent, we dont waste time processing it
+    // Validate the request
     if let Err(gruxi_error) = validate_request(&mut gruxi_request).await {
         debug(format!("Request validation failed: {:?}", gruxi_error));
         let status_code = match &gruxi_error.kind {
@@ -92,9 +101,6 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding, s
         None
     };
 
-    // Get the running state
-    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
-
     let mut response = if let Some(admin_response) = admin_response {
         admin_response
     } else {
@@ -112,11 +118,6 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding, s
         }
         response_result.unwrap()
     };
-
-    // If this is kept alive and we have shut down, we need to inform the client we are shutting down
-    if shutdown_token.is_cancelled() || stop_services_token.is_cancelled() {
-        response.headers_mut().insert("Connection", "close".parse().unwrap());
-    }
 
     // Consider gzipping content if not already gzipped
     let content_length = response.get_body_size();
@@ -157,9 +158,6 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding, s
     for (key, value) in additional_headers {
         response.headers_mut().insert(key, HeaderValue::from_str(value).unwrap());
     }
-
-    // Add standard headers
-    add_standard_headers_to_response(&mut response);
 
     // Apply site-specific extra headers
     for kv in &site.extra_headers {

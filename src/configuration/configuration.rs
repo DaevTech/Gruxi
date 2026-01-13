@@ -1,3 +1,4 @@
+use crate::configuration::admin_portal::AdminPortal;
 use crate::configuration::core::Core;
 use crate::configuration::file_cache::FileCache;
 use crate::configuration::gzip::Gzip;
@@ -8,7 +9,7 @@ use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteR
 use crate::external_connections::managed_system::php_cgi::PhpCgi;
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
 use crate::http::request_handlers::processors::php_processor::PHPProcessor;
-use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor};
+use crate::http::request_handlers::processors::proxy_processor::ProxyProcessor;
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -78,6 +79,7 @@ impl Configuration {
                     ],
                     whitelisted_file_patterns: vec!["*/.well-known/*".to_string()],
                 },
+                admin_portal: AdminPortal::new(),
             },
             request_handlers: vec![],
             static_file_processors: vec![],
@@ -228,22 +230,12 @@ impl Configuration {
         let mut configuration = Self::new();
 
         // Bindings
-        let admin_binding = Binding {
-            id: Uuid::new_v4().to_string(),
-            ip: "0.0.0.0".to_string(),
-            port: 8000,
-            is_admin: true,
-            is_tls: true,
-            sites: Vec::new(),
-        };
-
         let default_binding = Binding {
             id: Uuid::new_v4().to_string(),
             ip: "0.0.0.0".to_string(),
             port: 80,
             is_admin: false,
-            is_tls: false,
-            sites: Vec::new(),
+            is_tls: false
         };
 
         let default_binding_tls = Binding {
@@ -251,8 +243,7 @@ impl Configuration {
             ip: "0.0.0.0".to_string(),
             port: 443,
             is_admin: false,
-            is_tls: true,
-            sites: Vec::new(),
+            is_tls: true
         };
 
         // Static file processor for first site
@@ -285,35 +276,6 @@ impl Configuration {
             access_log_file: "".to_string(),
         };
 
-        // Static file processor for admin site
-        let request2_static_processor = StaticFileProcessor::new("./www-admin".to_string(), vec!["index.html".to_string()]);
-
-        // Request handler for admin site
-        let request_handler2 = RequestHandler {
-            id: Uuid::new_v4().to_string(),
-            is_enabled: true,
-            name: "Static File Handler".to_string(),
-            processor_type: "static".to_string(),
-            processor_id: request2_static_processor.id.clone(),
-            url_match: vec!["*".to_string()],
-        };
-
-        let admin_site = Site {
-            id: Uuid::new_v4().to_string(),
-            hostnames: vec!["*".to_string()],
-            is_default: true,
-            is_enabled: true,
-            tls_cert_path: "".to_string(),
-            tls_cert_content: "".to_string(),
-            tls_key_path: "".to_string(),
-            tls_key_content: "".to_string(),
-            request_handlers: vec![request_handler2.id.clone()],
-            rewrite_functions: vec![],
-            extra_headers: vec![],
-            access_log_enabled: false,
-            access_log_file: "".to_string(),
-        };
-
         // Default site
         configuration.binding_sites.push(BindingSiteRelationship {
             binding_id: default_binding.id.clone(),
@@ -327,16 +289,6 @@ impl Configuration {
         configuration.request_handlers.push(request_handler1);
         configuration.static_file_processors.push(request1_static_processor);
 
-        // Admin site
-        configuration.binding_sites.push(BindingSiteRelationship {
-            binding_id: admin_binding.id.clone(),
-            site_id: admin_site.id.clone(),
-        });
-        configuration.sites.push(admin_site);
-        configuration.request_handlers.push(request_handler2);
-        configuration.static_file_processors.push(request2_static_processor);
-
-        configuration.bindings.push(admin_binding);
         configuration.bindings.push(default_binding);
         configuration.bindings.push(default_binding_tls);
 

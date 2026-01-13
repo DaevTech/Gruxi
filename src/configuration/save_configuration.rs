@@ -219,6 +219,18 @@ fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> 
     save_server_settings(connection, "max_body_size", &core.server_settings.max_body_size.to_string())?;
     save_server_settings(connection, "blocked_file_patterns", &core.server_settings.blocked_file_patterns.join(","))?;
 
+    // Save admin portal settings
+    if let Some(cert_path) = &core.admin_portal.tls_certificate_path {
+        save_server_settings(connection, "admin_portal_tls_certificate_path", cert_path)?;
+    } else {
+        save_server_settings(connection, "admin_portal_tls_certificate_path", "")?;
+    }
+    if let Some(key_path) = &core.admin_portal.tls_key_path {
+        save_server_settings(connection, "admin_portal_tls_key_path", key_path)?;
+    } else {
+        save_server_settings(connection, "admin_portal_tls_key_path", "")?;
+    }
+
     Ok(())
 }
 

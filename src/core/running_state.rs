@@ -1,7 +1,7 @@
 use crate::{
     external_connections::external_system_handler::ExternalSystemHandler, file::file_reader_structs::FileReaderCache, http::{
         client::http_client::HttpClient,
-        request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager},
+        request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager}, site_match::binding_site_cache::BindingSiteCache,
     }, logging::syslog::debug
 };
 use std::sync::Arc;
@@ -16,6 +16,7 @@ pub struct RunningState {
     pub processor_manager: ProcessorManager,
     pub external_system_handler: ExternalSystemHandler,
     pub http_client: HttpClient,
+    pub binding_site_cache: BindingSiteCache,
 }
 
 impl RunningState {
@@ -44,6 +45,11 @@ impl RunningState {
         let http_client = HttpClient::new();
         debug("HTTP client initialized");
 
+        // Start binding site cache
+        let binding_site_cache = BindingSiteCache::new();
+        binding_site_cache.init().await;
+        debug("Binding site cache initialized");
+
         RunningState {
             access_log_buffer: Arc::new(RwLock::new(access_log_buffer)),
             file_reader_cache: file_reader_cache,
@@ -51,6 +57,7 @@ impl RunningState {
             processor_manager: processor_manager,
             external_system_handler: external_system_handler,
             http_client: http_client,
+            binding_site_cache: binding_site_cache,
         }
     }
 
@@ -76,5 +83,9 @@ impl RunningState {
 
     pub fn get_http_client(&self) -> &HttpClient {
         &self.http_client
+    }
+
+    pub fn get_binding_site_cache(&self) -> &BindingSiteCache {
+        &self.binding_site_cache
     }
 }

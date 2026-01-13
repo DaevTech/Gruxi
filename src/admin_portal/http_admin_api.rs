@@ -1,5 +1,4 @@
 use crate::configuration::configuration::Configuration;
-use crate::configuration::load_configuration::handle_relationship_binding_sites;
 use crate::configuration::save_configuration::save_configuration;
 use crate::configuration::site::Site;
 use crate::core::admin_user::{LoginRequest, authenticate_user, create_session, invalidate_session, verify_session_token};
@@ -186,7 +185,7 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
     }
 
     // Get configuration
-    let config = crate::configuration::load_configuration::init().expect("Expected to be able to load configuration");
+    let config = crate::configuration::load_configuration::fetch_configuration_in_db().expect("Expected to be able to load configuration");
 
     let json_config = match serde_json::to_string_pretty(&config) {
         Ok(json) => json,
@@ -288,9 +287,6 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
             return Ok(response);
         }
     };
-
-    // Make sure to handle relationship binding sites
-    handle_relationship_binding_sites(&configuration.binding_sites, &mut configuration.bindings, &mut configuration.sites);
 
     // Save the configuration
     match save_configuration(&mut configuration, false) {

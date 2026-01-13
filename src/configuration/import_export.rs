@@ -1,5 +1,4 @@
 use crate::configuration::load_configuration::fetch_configuration_in_db;
-use crate::configuration::load_configuration::handle_relationship_binding_sites;
 use std::path::PathBuf;
 
 pub fn export_configuration_to_file(path: &PathBuf) -> Result<(), String> {
@@ -37,9 +36,6 @@ pub fn import_configuration_from_file(path: &PathBuf) -> Result<(), String> {
     let mut configuration: crate::configuration::configuration::Configuration =
         serde_json::from_str(&file_contents).map_err(|e| format!("Failed to deserialize configuration from file {}: {}", path.display(), e))?;
 
-    // Process the binding-site relationships
-    handle_relationship_binding_sites(&configuration.binding_sites, &mut configuration.bindings, &configuration.sites);
-
     // Save configuration to database
     crate::configuration::save_configuration::save_configuration(&mut configuration, false).map_err(|e| format!("Failed to save imported configuration to database: {:?}", e))?;
 
@@ -65,11 +61,8 @@ pub fn validate_configuration_file(path: &PathBuf) -> Result<(), String> {
     }
 
     // Deserialize JSON to Configuration struct to ensure it's valid
-    let mut configuration: crate::configuration::configuration::Configuration =
+    let configuration: crate::configuration::configuration::Configuration =
         serde_json::from_str(&file_contents).map_err(|e| format!("Failed to deserialize configuration from file {}: {}", path.display(), e))?;
-
-    // Process the binding-site relationships
-    handle_relationship_binding_sites(&configuration.binding_sites, &mut configuration.bindings, &configuration.sites);
 
     configuration.validate().map_err(|e| format!("Configuration validation failed: {:?}", e))?;
 

@@ -4,14 +4,14 @@ use crate::external_connections::managed_system::php_cgi;
 use crate::http::request_handlers::processors::php_processor;
 use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorRewrite};
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
-use crate::logging::syslog::info;
+use crate::logging::syslog::{info, trace};
 use crate::{
     configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::HeaderKV, site::Site},
     core::database_connection::get_database_connection,
 };
 use sqlite::Connection;
 use sqlite::State;
-use std::collections::HashMap;
+use uuid::Uuid;
 
 // Load the configuration from the database or create a default one if it doesn't exist
 pub fn init() -> Result<Configuration, Vec<String>> {
@@ -20,17 +20,11 @@ pub fn init() -> Result<Configuration, Vec<String>> {
     // Check if we need to load the default configuration
     let schema_version = get_schema_version();
 
-    let configuration = {
+    let mut configuration = {
         if schema_version == 0 {
             // No schema version found, likely first run - create default configuration
-
             info("No configuration found, creating default configuration");
-
             let mut configuration = Configuration::get_default();
-
-            // Process the binding-site relationships
-            handle_relationship_binding_sites(&configuration.binding_sites, &mut configuration.bindings, &mut configuration.sites);
-
             save_configuration(&mut configuration, true)?;
 
             // Update schema version to value of constant CURRENT_CONFIGURATION_VERSION
@@ -46,7 +40,65 @@ pub fn init() -> Result<Configuration, Vec<String>> {
         }
     };
 
+    // Add admin portal to configuration if we have it enabled (which it is by default)
+    if configuration.core.admin_portal.is_enabled {
+        trace("Admin portal is enabled, adding it to configuration");
+        add_admin_portal_to_configuration(&mut configuration);
+    }
+
     Ok(configuration)
+}
+
+fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
+    let admin_binding = Binding {
+        id: Uuid::new_v4().to_string(),
+        ip: "0.0.0.0".to_string(),
+        port: 8000,
+        is_admin: true,
+        is_tls: true
+    };
+
+    // Static file processor for admin site
+    let request_static_processor = StaticFileProcessor::new("./www-admin".to_string(), vec!["index.html".to_string()]);
+
+    // Request handler for admin site
+    let request_handler = RequestHandler {
+        id: Uuid::new_v4().to_string(),
+        is_enabled: true,
+        name: "Static File Handler".to_string(),
+        processor_type: "static".to_string(),
+        processor_id: request_static_processor.id.clone(),
+        url_match: vec!["*".to_string()],
+    };
+
+    // Get the admin portal configuration
+
+    let admin_site = Site {
+        id: Uuid::new_v4().to_string(),
+        hostnames: vec!["*".to_string()],
+        is_default: true,
+        is_enabled: true,
+        tls_cert_path: configuration.core.admin_portal.get_tls_certificate_path(),
+        tls_cert_content: "".to_string(),
+        tls_key_path: configuration.core.admin_portal.get_tls_key_path(),
+        tls_key_content: "".to_string(),
+        request_handlers: vec![request_handler.id.clone()],
+        rewrite_functions: vec![],
+        extra_headers: vec![],
+        access_log_enabled: true,
+        access_log_file: "./logs/admin-portal-access.log".to_string(),
+    };
+
+    // Admin site
+    configuration.binding_sites.push(BindingSiteRelationship {
+        binding_id: admin_binding.id.clone(),
+        site_id: admin_site.id.clone(),
+    });
+    configuration.sites.push(admin_site);
+    configuration.request_handlers.push(request_handler);
+    configuration.static_file_processors.push(request_static_processor);
+
+    configuration.bindings.push(admin_binding);
 }
 
 fn get_schema_version() -> i32 {
@@ -78,7 +130,7 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
     let connection = get_database_connection()?;
 
     // Basic sites and bindings
-    let mut bindings = load_bindings(&connection)?;
+    let bindings = load_bindings(&connection)?;
     let sites = load_sites(&connection)?;
     let binding_sites = load_binding_sites_relationships(&connection)?;
 
@@ -93,9 +145,6 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
 
     // External systems
     let php_cgi_handlers = load_php_cgi_handlers(&connection)?;
-
-    // Process the binding-site relationships
-    handle_relationship_binding_sites(&binding_sites, &mut bindings, &sites);
 
     // Do a sanitize, in case there are any invalid entries in the database
     let mut configuration = Configuration {
@@ -207,6 +256,8 @@ fn load_php_cgi_handlers(connection: &Connection) -> Result<Vec<php_cgi::PhpCgi>
     Ok(handlers)
 }
 
+/*
+TODO: Remove this function and its usage since we no longer store sites in bindings
 pub fn handle_relationship_binding_sites(relationships: &Vec<BindingSiteRelationship>, bindings: &mut Vec<Binding>, sites: &Vec<Site>) {
     // For sites and binding, generate hashmaps for quick lookup
     let mut binding_map = bindings.iter_mut().map(|b| (b.id.clone(), b)).collect::<HashMap<_, _>>();
@@ -220,6 +271,7 @@ pub fn handle_relationship_binding_sites(relationships: &Vec<BindingSiteRelation
         }
     }
 }
+*/
 
 fn load_core_config(connection: &Connection) -> Result<Core, String> {
     // Load server settings (single record with id=1)
@@ -237,6 +289,7 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
         let value: String = statement.read(1).map_err(|e| format!("Failed to read value: {}", e))?;
 
         match key.as_str() {
+            // File cache
             "file_cache_is_enabled" => {
                 core.file_cache.is_enabled = value.parse::<bool>().map_err(|e| format!("Failed to parse file_cache_is_enabled: {}", e))?;
             }
@@ -258,17 +311,28 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             "file_cache_forced_eviction_threshold" => {
                 core.file_cache.forced_eviction_threshold = value.parse::<usize>().map_err(|e| format!("Failed to parse file_cache_forced_eviction_threshold: {}", e))?;
             }
+            // Gzip
             "gzip_is_enabled" => {
                 core.gzip.is_enabled = value.parse::<bool>().map_err(|e| format!("Failed to parse gzip_is_enabled: {}", e))?;
             }
             "gzip_compressible_content_types" => {
                 core.gzip.compressible_content_types = parse_comma_separated_list(&value, true);
             }
+
+            // Server settings
             "max_body_size" => {
                 core.server_settings.max_body_size = value.parse::<usize>().map_err(|e| format!("Failed to parse max_body_size: {}", e))?;
             }
             "blocked_file_patterns" => {
                 core.server_settings.blocked_file_patterns = parse_comma_separated_list(&value, true);
+            }
+
+            // Admin portal settings
+            "admin_portal_tls_certificate_path" => {
+                core.admin_portal.tls_certificate_path = Some(value);
+            }
+            "admin_portal_tls_key_path" => {
+                core.admin_portal.tls_key_path = Some(value);
             }
             _ => continue,
         }
@@ -293,8 +357,7 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
             ip,
             port: port as u16,
             is_admin: is_admin != 0,
-            is_tls: is_tls != 0,
-            sites: Vec::new(),
+            is_tls: is_tls != 0
         });
     }
 
