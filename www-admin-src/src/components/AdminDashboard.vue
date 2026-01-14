@@ -40,6 +40,11 @@ const stats = reactive({
     lastUpdated: new Date(),
 });
 
+// Basic server info (from /basic endpoint)
+const basicData = reactive({
+    gruxiVersion: '...',
+});
+
 // Handle logout
 const handleLogout = () => {
     emit('logout');
@@ -53,6 +58,36 @@ const setActiveView = (viewId) => {
 // Toggle sidebar
 const toggleSidebar = () => {
     sidebarCollapsed.value = !sidebarCollapsed.value;
+};
+
+// Function to fetch basic data from API
+const updateBasicData = async () => {
+    try {
+        const token = props.user?.sessionToken || localStorage.getItem('gruxi_session_token');
+        if (!token) {
+            basicData.gruxiVersion = '...';
+            return;
+        }
+
+        const response = await fetch('/basic', {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            basicData.gruxiVersion = data.gruxi_version || '...';
+        } else if (response.status === 401) {
+            emit('logout');
+        } else {
+            console.error('Failed to fetch basic data:', response.status);
+        }
+    } catch (error) {
+        console.error('Error fetching basic data:', error);
+    }
 };
 
 // Function to fetch real monitoring data from API
@@ -159,6 +194,7 @@ const formatRequestCount = (count) => {
 
 // Initialize dashboard
 onMounted(() => {
+    updateBasicData();
     updateStats();
     setInterval(updateStats, 10000); // Update stats every 10 seconds
 });
@@ -200,6 +236,7 @@ onMounted(() => {
                 </ul>
             </nav>
 
+            <div v-if="!sidebarCollapsed" class="gruxi-version">Gruxi version: {{ basicData.gruxiVersion }}</div>
             <div class="sidebar-footer">
                 <!-- Operation Mode Selector -->
                 <OperationModeSelector v-if="!sidebarCollapsed" :user="user" />
@@ -416,6 +453,13 @@ onMounted(() => {
 .sidebar-footer {
     padding: 1.25rem 1.5rem;
     border-top: 1px solid #374151;
+}
+
+.gruxi-version {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    margin-bottom: 0.75rem;
+    padding: 0rem 1.5rem;
 }
 
 .footer-separator {

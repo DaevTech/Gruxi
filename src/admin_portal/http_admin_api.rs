@@ -7,7 +7,7 @@ use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operati
 use crate::core::triggers::get_trigger_handler;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
-use crate::http::http_util::{clean_url_path};
+use crate::http::http_util::clean_url_path;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::logging::syslog::{debug, error, info, trace};
@@ -29,6 +29,8 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site) ->
         handle_login_request(gruxi_request, site).await
     } else if path_cleaned == "logout" && method == "POST" {
         handle_logout_request(gruxi_request, site).await
+    } else if path_cleaned == "basic" && method == "GET" {
+        admin_get_basic_data_endpoint(gruxi_request, site).await
     } else if path_cleaned == "config" && method == "GET" {
         admin_get_configuration_endpoint(gruxi_request, site).await
     } else if path_cleaned == "config" && method == "POST" {
@@ -424,6 +426,32 @@ pub async fn admin_monitoring_endpoint(gruxi_request: &mut GruxiRequest, _admin_
     let monitoring_data = get_monitoring_state().await.get_json().await;
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(monitoring_data.to_string()));
+    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    return Ok(response);
+}
+
+// Get basic data on the server
+pub async fn admin_get_basic_data_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
+    // Check authentication first
+    match require_authentication(&gruxi_request).await {
+        Ok(Some(_session)) => {
+            debug("User authenticated, retrieving basic data for admin portal".to_string());
+        }
+        Ok(None) => {
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            return Ok(response);
+        }
+        Err(auth_response) => {
+            return Ok(auth_response);
+        }
+    }
+
+    let response_json = serde_json::json!({
+        "gruxi_version": env!("CARGO_PKG_VERSION"),
+    });
+
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
     response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
     return Ok(response);
 }
