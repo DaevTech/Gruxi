@@ -20,7 +20,8 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -
 
     // Log the request details
     debug(format!(
-        "Received request: method={}, path={}, query={}, body_size={}, headers={:?}",
+        "Received request: hostname={}, method={}, path={}, query={}, body_size={}, headers={:?}",
+        gruxi_request.get_hostname(),
         gruxi_request.get_http_method(),
         gruxi_request.get_path(),
         gruxi_request.get_query(),

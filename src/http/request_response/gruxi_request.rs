@@ -1,4 +1,5 @@
 use http::HeaderValue;
+use http::header::HOST;
 use http::request::Parts;
 use http_body_util::BodyExt;
 use http_body_util::combinators::BoxBody;
@@ -30,18 +31,6 @@ pub struct GruxiRequest {
 impl GruxiRequest {
     // Created new buffered request from hyper Request<Bytes>
     pub fn new(hyper_request: Request<Bytes>) -> Self {
-        // Figure out hostname
-        let hostname = if let Some(host_header) = hyper_request.uri().authority() {
-            host_header.host().to_string()
-        } else {
-            let host_header_option = hyper_request.headers().get("Host");
-            if let Some(host_header) = host_header_option {
-                host_header.to_str().unwrap_or("").to_string()
-            } else {
-                "".to_string()
-            }
-        };
-
         let (mut parts, body) = hyper_request.into_parts();
 
         // Check if this request has the Upgrade header - if so, we need to extract the upgrade extensions
@@ -50,7 +39,6 @@ impl GruxiRequest {
         // Calculated data cache, such as remote_ip, hostname etc
         let mut calculated_data = HashMap::new();
         calculated_data.insert("body_size_hint".to_string(), body.len().to_string());
-        calculated_data.insert("hostname".to_string(), hostname);
 
         Self {
             parts,
@@ -67,19 +55,6 @@ impl GruxiRequest {
         let mut calculated_data = HashMap::new();
         let body_size_hint = hyper_request.body().size_hint().upper().unwrap_or(0);
         calculated_data.insert("body_size_hint".to_string(), body_size_hint.to_string());
-
-        // Figure out hostname
-        let hostname = if let Some(host_header) = hyper_request.uri().authority() {
-            host_header.host().to_string()
-        } else {
-            let host_header_option = hyper_request.headers().get("Host");
-            if let Some(host_header) = host_header_option {
-                host_header.to_str().unwrap_or("").to_string()
-            } else {
-                "".to_string()
-            }
-        };
-        calculated_data.insert("hostname".to_string(), hostname);
 
         let (mut parts, body) = hyper_request.into_parts();
         let body = GruxiBody::Streaming(body);
@@ -117,11 +92,32 @@ impl GruxiRequest {
     }
 
     pub fn get_hostname(&mut self) -> String {
-        if let Some(host_header) = self.calculated_data.get("hostname") {
-            return host_header.to_string();
+        if let Some(hostname) = self.calculated_data.get("hostname") {
+            return hostname.clone();
         }
 
-        "".to_string()
+        // Default to empty string
+        let mut hostname = String::new();
+
+        // Host / :authority
+        if let Some(host) = self.parts.headers.get(HOST) {
+            if let Ok(host) = host.to_str() {
+                hostname = host.to_string();
+            }
+        }
+
+        // Absolute-form URI (proxy requests)
+        if let Some(authority) = self.parts.uri.authority() {
+            hostname = authority.as_str().to_string();
+        }
+
+        // Remove any ports if present
+        if let Some(colon_index) = hostname.find(':') {
+            hostname = hostname[..colon_index].to_string();
+        }
+
+        self.add_calculated_data("hostname", &hostname);
+        hostname
     }
 
     pub fn get_scheme(&mut self) -> String {
