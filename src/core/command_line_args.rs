@@ -48,6 +48,13 @@ pub fn load_command_line_args() -> ArgMatches {
                 .help("Disable the admin portal")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("benchmark")
+                .long("bench")
+                .help("--bench flag for benchmarking purposes")
+                .hide(true)
+                .action(clap::ArgAction::SetTrue),
+        )
         .get_matches()
 }
 

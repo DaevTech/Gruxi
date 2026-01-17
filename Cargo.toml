@@ -42,11 +42,11 @@ name = "gruxi"
 path = "src/lib.rs"
 
 [dev-dependencies]
-#criterion = { version = "0.8", features = ["html_reports", "cargo_bench_support"] }
-#pprof = { version = "0.15", features = ["flamegraph"] }
-hyper = { version = "1", features = ["server", "http1", "http2", "client"] }
-hyper-util = { version = "0.1", features = ["tokio", "server", "client"] }
+criterion = { version = "0.8", features = ["html_reports", "cargo_bench_support"] }
 
-#[[bench]]
-#name = "syslog_benchmark"
-#harness = false
+[[bench]]
+name = "syslog_benchmark"
+harness = false
+[[bench]]
+name = "normalized_path"
+harness = false
