@@ -52,6 +52,18 @@ fn get_http_server_addr() -> SocketAddr {
 
 /// Send raw HTTP request and get raw response
 async fn send_raw_http_request(addr: SocketAddr, request: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let response_bytes = send_raw_http_request_bytes(addr, request).await?;
+    Ok(String::from_utf8_lossy(&response_bytes).into_owned())
+}
+
+/// Send raw HTTP request and get raw response bytes.
+///
+/// This avoids UTF-8 assumptions and preserves the exact body bytes, which is
+/// required for meaningful Content-Length comparisons.
+async fn send_raw_http_request_bytes(
+    addr: SocketAddr,
+    request: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let mut stream = timeout(TEST_TIMEOUT, TcpStream::connect(addr)).await??;
 
     if !request.is_empty() {
@@ -61,13 +73,13 @@ async fn send_raw_http_request(addr: SocketAddr, request: &str) -> Result<String
     // Give the server time to process
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let mut response = String::new();
+    let mut response = Vec::new();
     // Use timeout for reading response to avoid hanging
-    match timeout(Duration::from_millis(5000), stream.read_to_string(&mut response)).await {
+    match timeout(Duration::from_millis(5000), stream.read_to_end(&mut response)).await {
         Ok(Ok(_)) => Ok(response),
         Ok(Err(e)) => Err(e.into()),
         Err(_) => {
-            // Timeout - return what we have or empty string
+            // Timeout - return what we have
             Ok(response)
         }
     }
@@ -75,22 +87,25 @@ async fn send_raw_http_request(addr: SocketAddr, request: &str) -> Result<String
 
 /// Parse HTTP response into components
 fn parse_http_response(response: &str) -> (String, HeaderMap, String) {
-    let mut lines = response.lines();
-    let status_line = lines.next().unwrap_or("").to_string();
+    // Split headers/body using the HTTP delimiter. This preserves the body verbatim
+    // (no newline normalization), which is required for meaningful Content-Length checks.
+    let (header_block, body) = if let Some(pos) = response.find("\r\n\r\n") {
+        (&response[..pos], response[pos + 4..].to_string())
+    } else if let Some(pos) = response.find("\n\n") {
+        (&response[..pos], response[pos + 2..].to_string())
+    } else {
+        (response, String::new())
+    };
+
+    let mut header_lines = header_block.lines();
+    let status_line = header_lines.next().unwrap_or("").trim_end_matches('\r').to_string();
 
     let mut headers = HeaderMap::new();
-    let mut body = String::new();
-    let mut in_body = false;
-
-    for line in lines {
-        if in_body {
-            body.push_str(line);
-            body.push('\n');
-        } else if line.is_empty() {
-            in_body = true;
-        } else if let Some(colon_pos) = line.find(':') {
-            let name = &line[..colon_pos].trim().to_lowercase();
-            let value = &line[colon_pos + 1..].trim();
+    for line in header_lines {
+        let line = line.trim_end_matches('\r');
+        if let Some((name, value)) = line.split_once(':') {
+            let name = name.trim().to_lowercase();
+            let value = value.trim();
             if let Ok(header_name) = name.parse::<hyper::header::HeaderName>() {
                 if let Ok(header_value) = value.parse::<hyper::header::HeaderValue>() {
                     headers.insert(header_name, header_value);
@@ -99,7 +114,63 @@ fn parse_http_response(response: &str) -> (String, HeaderMap, String) {
         }
     }
 
-    (status_line, headers, body.to_string())
+    (status_line, headers, body)
+}
+
+/// Parse HTTP response bytes into components.
+///
+/// Note: This preserves the body bytes verbatim (no newline normalization).
+fn parse_http_response_bytes(response: &[u8]) -> (String, HeaderMap, Vec<u8>) {
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.is_empty() || haystack.len() < needle.len() {
+            return None;
+        }
+        haystack.windows(needle.len()).position(|w| w == needle)
+    }
+
+    let (header_block, body) = if let Some(pos) = find_subslice(response, b"\r\n\r\n") {
+        (&response[..pos], response[pos + 4..].to_vec())
+    } else if let Some(pos) = find_subslice(response, b"\n\n") {
+        (&response[..pos], response[pos + 2..].to_vec())
+    } else {
+        (response, Vec::new())
+    };
+
+    let mut headers = HeaderMap::new();
+    let mut lines = header_block.split(|b| *b == b'\n');
+
+    let status_line = lines
+        .next()
+        .map(|l| {
+            let l = l.strip_suffix(b"\r").unwrap_or(l);
+            String::from_utf8_lossy(l).to_string()
+        })
+        .unwrap_or_default();
+
+    for line in lines {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+
+        let Some(colon_pos) = line.iter().position(|b| *b == b':') else {
+            continue;
+        };
+
+        let name_bytes = &line[..colon_pos];
+        let value_bytes = &line[colon_pos + 1..];
+
+        let name = String::from_utf8_lossy(name_bytes).trim().to_ascii_lowercase();
+        let value = String::from_utf8_lossy(value_bytes).trim().to_string();
+
+        if let Ok(header_name) = hyper::header::HeaderName::from_bytes(name.as_bytes()) {
+            if let Ok(header_value) = hyper::header::HeaderValue::from_bytes(value.as_bytes()) {
+                headers.insert(header_name, header_value);
+            }
+        }
+    }
+
+    (status_line, headers, body)
 }
 
 /// Validate status line format: HTTP-Version SP Status-Code SP Reason-Phrase CRLF
@@ -134,14 +205,14 @@ async fn test_required_methods_support() {
 
     // RFC 7231: GET and HEAD methods MUST be supported by all general-purpose servers
     let get_request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, get_request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, get_request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
     assert!(validate_status_line(&status_line), "Invalid status line: {}", status_line);
     assert!(!status_line.contains("501"), "GET method should be implemented"); // Not "Not Implemented"
 
     let head_request = "HEAD / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, head_request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, head_request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
     assert!(validate_status_line(&status_line), "Invalid status line: {}", status_line);
     assert!(!status_line.contains("501"), "HEAD method should be implemented");
 }
@@ -152,13 +223,13 @@ async fn test_head_method_identical_to_get_minus_body() {
 
     // GET request
     let get_request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let get_response = send_raw_http_request(server_addr, get_request).await.unwrap();
-    let (get_status, get_headers, get_body) = parse_http_response(&get_response);
+    let get_response = send_raw_http_request_bytes(server_addr, get_request).await.unwrap();
+    let (get_status, get_headers, get_body) = parse_http_response_bytes(&get_response);
 
     // HEAD request
     let head_request = "HEAD / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let head_response = send_raw_http_request(server_addr, head_request).await.unwrap();
-    let (head_status, head_headers, head_body) = parse_http_response(&head_response);
+    let head_response = send_raw_http_request_bytes(server_addr, head_request).await.unwrap();
+    let (head_status, head_headers, head_body) = parse_http_response_bytes(&head_response);
 
     // Status code should be identical
     let get_status_code = get_status.split_whitespace().nth(1).unwrap_or("000");
@@ -179,8 +250,8 @@ async fn test_options_method_allowed_methods() {
     let server_addr = get_http_server_addr();
 
     let options_request = "OPTIONS * HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, options_request).await.unwrap();
-    let (status_line, headers, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, options_request).await.unwrap();
+    let (status_line, headers, _) = parse_http_response_bytes(&response);
 
     assert!(validate_status_line(&status_line), "Invalid status line: {}", status_line);
 
@@ -204,8 +275,8 @@ async fn test_unknown_method_handling() {
     let server_addr = get_http_server_addr();
 
     let unknown_request = "CUSTOMMETHOD / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, unknown_request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, unknown_request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should return 501 Not Implemented for unknown methods
     assert!(status_line.contains("501") || status_line.contains("405"));
@@ -217,8 +288,8 @@ async fn test_method_case_sensitivity() {
 
     // Methods are case-sensitive per RFC 7231
     let lowercase_request = "get / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, lowercase_request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, lowercase_request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should return 400 Bad Request or 501 Not Implemented for invalid method case
     assert!(status_line.contains("400") || status_line.contains("501"));
@@ -233,8 +304,8 @@ async fn test_status_code_format_compliance() {
     let server_addr = get_http_server_addr();
 
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Validate Status-Line format: HTTP-Version SP Status-Code SP Reason-Phrase CRLF
     assert!(validate_status_line(&status_line));
@@ -255,8 +326,8 @@ async fn test_404_not_found_response() {
     let server_addr = get_http_server_addr();
 
     let request = "GET /nonexistent-file-that-should-not-exist HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     assert!(status_line.contains("404"));
 }
@@ -267,8 +338,8 @@ async fn test_405_method_not_allowed_includes_allow_header() {
 
     // Try to POST to a resource that doesn't accept POST
     let request = "POST /index.html HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, headers, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, headers, _) = parse_http_response_bytes(&response);
 
     if status_line.contains("405") {
         // 405 Method Not Allowed MUST include Allow header
@@ -300,8 +371,8 @@ async fn test_host_header_requirement() {
 
     // HTTP/1.1 requests MUST include Host header
     let request_without_host = "GET / HTTP/1.1\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request_without_host).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request_without_host).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should return 400 Bad Request for missing Host header in HTTP/1.1
     assert!(status_line.contains("400"));
@@ -313,8 +384,8 @@ async fn test_header_case_insensitivity() {
 
     // Header names are case-insensitive
     let request = "GET / HTTP/1.1\r\nhost: localhost\r\nuser-agent: TestClient\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should process lowercase headers correctly
     assert!(validate_status_line(&status_line));
@@ -327,8 +398,8 @@ async fn test_invalid_header_characters() {
 
     // Headers with invalid characters should be rejected
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nInvalid\x00Header: value\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should return 400 Bad Request for invalid header characters
     assert!(status_line.contains("400"));
@@ -340,8 +411,8 @@ async fn test_content_length_validation() {
 
     // Content-Length must match actual body length
     let request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nConnection: close\r\n\r\ntest\r\n\r\n"; // 4 chars, not 5
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Server should handle Content-Length mismatch appropriately
     assert!(validate_status_line(&status_line));
@@ -353,8 +424,8 @@ async fn test_multiple_host_headers() {
 
     // Multiple Host headers should be rejected
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nHost: example.com\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should return 400 Bad Request for multiple Host headers
     assert!(status_line.contains("400"));
@@ -370,8 +441,8 @@ async fn test_chunked_transfer_encoding() {
 
     // Send chunked request
     let request = "POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ntest\r\n0\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should handle chunked encoding properly
     assert!(validate_status_line(&status_line));
@@ -384,8 +455,8 @@ async fn test_content_length_vs_transfer_encoding() {
 
     // Transfer-Encoding takes precedence over Content-Length
     let request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ntest\r\n0\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should process as chunked, ignoring Content-Length
     assert!(validate_status_line(&status_line));
@@ -413,8 +484,8 @@ async fn test_trailer_headers_in_chunked_encoding() {
 
     // Chunked encoding with trailer headers
     let request = "POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nTrailer: X-Custom-Header\r\n\r\n4\r\ntest\r\n0\r\nX-Custom-Header: value\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should handle trailer headers correctly
     assert!(validate_status_line(&status_line));
@@ -496,8 +567,8 @@ async fn test_http10_backward_compatibility() {
 
     // HTTP/1.0 request (no Host header required)
     let request = "GET / HTTP/1.0\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     assert!(validate_status_line(&status_line));
     // Server should respond with HTTP/1.0 or HTTP/1.1
@@ -509,8 +580,8 @@ async fn test_http11_version_response() {
     let server_addr = get_http_server_addr();
 
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Server should respond with HTTP/1.1 for HTTP/1.1 requests
     assert!(status_line.starts_with("HTTP/1.1"));
@@ -521,8 +592,8 @@ async fn test_invalid_http_version() {
     let server_addr = get_http_server_addr();
 
     let request = "GET / HTTP/2.0\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should handle unsupported HTTP version appropriately
     assert!(status_line.contains("400") || status_line.contains("505"));
@@ -537,8 +608,8 @@ async fn test_accept_header_negotiation() {
     let server_addr = get_http_server_addr();
 
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, headers, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, headers, _) = parse_http_response_bytes(&response);
 
     assert!(validate_status_line(&status_line));
 
@@ -551,8 +622,8 @@ async fn test_accept_encoding_support() {
     let server_addr = get_http_server_addr();
 
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nAccept-Encoding: gzip, deflate, br\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should handle Accept-Encoding header
     assert!(validate_status_line(&status_line));
@@ -563,8 +634,8 @@ async fn test_quality_value_processing() {
     let server_addr = get_http_server_addr();
 
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nAccept: text/html;q=0.9,text/plain;q=0.8,*/*;q=0.1\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should process q-values correctly
     assert!(validate_status_line(&status_line));
@@ -576,8 +647,8 @@ async fn test_406_not_acceptable_response() {
 
     // Request only unsupported media types
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nAccept: application/vnd.unsupported-format\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Might return content anyway or 406 Not Acceptable
     assert!(validate_status_line(&status_line));
@@ -593,8 +664,8 @@ async fn test_malformed_request_line() {
 
     // Invalid request line format
     let request = "INVALID REQUEST LINE\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should return 400 Bad Request
     assert!(status_line.contains("400"));
@@ -607,8 +678,8 @@ async fn test_request_uri_too_long() {
     // Extremely long URI
     let long_path = "a".repeat(8192);
     let request = format!("GET /{} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", long_path);
-    let response = send_raw_http_request(server_addr, &request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, &request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should return 414 Request-URI Too Long or handle gracefully
     assert!(validate_status_line(&status_line));
@@ -621,8 +692,8 @@ async fn test_request_header_fields_too_large() {
     // Very large header
     let large_header_value = "x".repeat(8192);
     let request = format!("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nX-Large-Header: {}\r\n\r\n", large_header_value);
-    let response = send_raw_http_request(server_addr, &request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, &request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should return 431 Request Header Fields Too Large or handle gracefully
     assert!(validate_status_line(&status_line));
@@ -634,8 +705,8 @@ async fn test_invalid_uri_characters() {
 
     // URI with invalid characters
     let request = "GET /path with spaces HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should return 400 Bad Request for invalid URI
     assert!(status_line.contains("400"));
@@ -647,11 +718,11 @@ async fn test_empty_request_handling() {
 
     // Send empty request
     let request = "";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
 
     // Should handle empty request gracefully - either return 400 Bad Request or close connection
     if !response.is_empty() {
-        let (status_line, _, _) = parse_http_response(&response);
+        let (status_line, _, _) = parse_http_response_bytes(&response);
         assert!(status_line.contains("400") || status_line.contains("HTTP/1.1"));
     }
     // If response is empty, that's also acceptable (connection closed)
@@ -670,8 +741,8 @@ async fn test_non_admin_endpoint_http_support() {
 
     // Non-admin endpoints should work over HTTP
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     assert!(validate_status_line(&status_line));
     assert!(!status_line.contains("400"));
@@ -686,8 +757,8 @@ async fn test_response_header_format() {
     let server_addr = get_http_server_addr();
 
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, headers, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, headers, _) = parse_http_response_bytes(&response);
 
     assert!(validate_status_line(&status_line));
 
@@ -700,15 +771,23 @@ async fn test_response_body_consistency() {
     let server_addr = get_http_server_addr();
 
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, headers, body) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, headers, body) = parse_http_response_bytes(&response);
 
     assert!(validate_status_line(&status_line));
 
-    // If Content-Length is present, body should match
-    if let Some(content_length) = headers.get("content-length") {
-        if let Ok(length) = content_length.to_str().unwrap_or("0").parse::<usize>() {
-            assert_eq!(body.len(), length);
+    // If Content-Length is present (and response is not chunked), body byte length should match.
+    let is_chunked = headers
+        .get("transfer-encoding")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_ascii_lowercase().contains("chunked"))
+        .unwrap_or(false);
+
+    if !is_chunked {
+        if let Some(content_length) = headers.get("content-length") {
+            if let Ok(length) = content_length.to_str().unwrap_or("0").parse::<usize>() {
+                assert_eq!(body.len(), length);
+            }
         }
     }
 }
@@ -719,15 +798,15 @@ async fn test_http_message_crlf_handling() {
 
     // Test with proper CRLF line endings
     let request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     assert!(validate_status_line(&status_line));
 
     // Test with LF only (should be tolerant per RFC)
     let request_lf = "GET / HTTP/1.1\nHost: localhost\nConnection: close\n\n";
-    let response_lf = send_raw_http_request(server_addr, request_lf).await.unwrap();
-    let (status_line_lf, _, _) = parse_http_response(&response_lf);
+    let response_lf = send_raw_http_request_bytes(server_addr, request_lf).await.unwrap();
+    let (status_line_lf, _, _) = parse_http_response_bytes(&response_lf);
 
     // Should be tolerant of LF-only line endings
     assert!(validate_status_line(&status_line_lf));
@@ -739,8 +818,8 @@ async fn test_whitespace_handling_in_headers() {
 
     // Test with extra whitespace around header values
     let request = "GET / HTTP/1.1\r\nHost:   localhost   \r\nUser-Agent:  TestClient  \r\nConnection: close\r\n\r\n";
-    let response = send_raw_http_request(server_addr, request).await.unwrap();
-    let (status_line, _, _) = parse_http_response(&response);
+    let response = send_raw_http_request_bytes(server_addr, request).await.unwrap();
+    let (status_line, _, _) = parse_http_response_bytes(&response);
 
     // Should handle whitespace in headers correctly
     assert!(validate_status_line(&status_line));
@@ -766,7 +845,7 @@ async fn test_concurrent_requests_compliance() {
         let addr = server_addr;
         let handle = tokio::spawn(async move {
             let request = format!("GET /?request={} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", i);
-            send_raw_http_request(addr, &request).await.unwrap()
+            send_raw_http_request_bytes(addr, &request).await.unwrap()
         });
         handles.push(handle);
     }
@@ -777,7 +856,7 @@ async fn test_concurrent_requests_compliance() {
     // All responses should be valid
     for response_result in responses {
         let response = response_result.unwrap();
-        let (status_line, _, _) = parse_http_response(&response);
+        let (status_line, _, _) = parse_http_response_bytes(&response);
         assert!(validate_status_line(&status_line));
     }
 }
