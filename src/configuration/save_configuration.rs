@@ -232,6 +232,11 @@ fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> 
         save_server_settings(connection, "admin_portal_tls_key_path", "")?;
     }
 
+    // Save TLS settings
+    save_server_settings(connection, "tls_account_email", &core.tls_settings.account_email)?;
+    save_server_settings(connection, "tls_use_staging_server", &core.tls_settings.use_staging_server.to_string())?;
+    save_server_settings(connection, "tls_certificate_cache_path", &core.tls_settings.certificate_cache_path)?;
+
     Ok(())
 }
 
@@ -306,7 +311,7 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
 
     connection
         .execute(format!(
-            "INSERT INTO sites (id, is_default, is_enabled, hostnames, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, request_handlers, rewrite_functions, access_log_enabled, access_log_file, extra_headers) VALUES ('{}', {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}', '{}')",
+            "INSERT INTO sites (id, is_default, is_enabled, hostnames, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, request_handlers, rewrite_functions, access_log_enabled, access_log_file, extra_headers, tls_automatic_enabled, tls_automatic_last_update, tls_automatic_last_update_success) VALUES ('{}', {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}', '{}', {}, {}, {})",
             site.id,
             if site.is_default { 1 } else { 0 },
             if site.is_enabled { 1 } else { 0 },
@@ -319,7 +324,10 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
             site.rewrite_functions.join(","),
             if site.access_log_enabled { 1 } else { 0 },
             site.access_log_file.replace("'", "''"),
-            extra_headers_str
+            extra_headers_str,
+            if site.tls_automatic_enabled { 1 } else { 0 },
+            site.tls_automatic_last_update,
+            site.tls_automatic_last_update_success
         ))
         .map_err(|e| format!("Failed to insert site: {}", e))?;
 

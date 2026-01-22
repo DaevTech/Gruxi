@@ -14,14 +14,20 @@ pub struct Site {
     pub hostnames: Vec<String>,
     pub is_default: bool,
     pub is_enabled: bool,
+    // Automatic TLS
+    pub tls_automatic_enabled: bool,
+    pub tls_automatic_last_update: u64, // Timestamp of last automatic TLS update attempt
+    pub tls_automatic_last_update_success: u64, // Timestamp of last successful automatic TLS update
     // TLS certificate path or actual content
     pub tls_cert_path: String,
     pub tls_cert_content: String,
     // TLS private key path or actual content
     pub tls_key_path: String,
     pub tls_key_content: String,
+    // Rewrite functions to apply
     pub rewrite_functions: Vec<String>, // List of rewrite functions to apply
-    pub request_handlers: Vec<String>,  // List of request handler IDs for this site
+    // List of request handelers (and therefore processors) to use, in order of priority
+    pub request_handlers: Vec<String>, // List of request handler IDs for this site
     #[serde(default)]
     pub extra_headers: Vec<HeaderKV>,
     // Logs
@@ -39,6 +45,9 @@ impl Site {
             hostnames: vec!["*".to_string()],
             is_default: false,
             is_enabled: true,
+            tls_automatic_enabled: false,
+            tls_automatic_last_update: 0,
+            tls_automatic_last_update_success: 0,
             tls_cert_path: String::new(),
             tls_cert_content: String::new(),
             tls_key_path: String::new(),
@@ -139,6 +148,16 @@ impl Site {
             }
         }
 
+        // If automatic TLS is enabled, each hostname must a valid domain and public facing
+        if self.tls_automatic_enabled {
+            for hostname in self.hostnames.iter() {
+                let hostname_trimmed = hostname.trim();
+                if let Err(err_msg) = Site::verify_hostname(hostname_trimmed) {
+                    errors.push(err_msg);
+                }
+            }
+        }
+
         // Validate extra headers (optional but keys/values must be non-empty when present)
         for (idx, kv) in self.extra_headers.iter().enumerate() {
             if kv.key.trim().is_empty() {
@@ -159,11 +178,48 @@ impl Site {
         }
         hashmap
     }
+
+    pub fn verify_hostname(hostname: &str) -> Result<(), String> {
+        let hostname_trimmed = hostname.trim();
+
+        // Check the basics
+        if hostname_trimmed == "*" {
+            return Err(format!(
+                "Hostname '{}' cannot be wildcard '*' when automatic TLS is enabled - It needs to be public domains, such as example.com",
+                hostname_trimmed
+            ));
+        } else if hostname_trimmed.parse::<std::net::IpAddr>().is_ok() {
+            return Err(format!(
+                "Hostname '{}' cannot be an IP address when automatic TLS is enabled - It needs to be public domains, such as example.com",
+                hostname_trimmed
+            ));
+        }
+
+        // Validate domain with PSL
+        let domain_parsed_option = psl::domain(hostname_trimmed.as_bytes());
+        if domain_parsed_option.is_none() {
+            return Err(format!(
+                "Hostname '{}' is not a valid domain name for automatic TLS - It needs to be public domains, such as example.com",
+                hostname_trimmed
+            ));
+        } else {
+            let domain_parsed = domain_parsed_option.unwrap();
+            let domain_suffix = domain_parsed.suffix();
+            if !domain_suffix.is_known() {
+                return Err(format!(
+                    "Hostname '{}' has an unknown top level domain - It needs to be public domains, such as example.com",
+                    hostname_trimmed
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[test]
 fn test_site_validation_access_log_enabled_empty_file() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.access_log_enabled = true;
     site.access_log_file = "".to_string();
 
@@ -175,7 +231,7 @@ fn test_site_validation_access_log_enabled_empty_file() {
 
 #[test]
 fn test_site_validation_access_log_enabled_directory_path() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.access_log_enabled = true;
     site.access_log_file = "/logs/".to_string();
 
@@ -187,7 +243,7 @@ fn test_site_validation_access_log_enabled_directory_path() {
 
 #[test]
 fn test_site_validation_access_log_enabled_windows_directory_path() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.access_log_enabled = true;
     site.access_log_file = "C:\\logs\\".to_string();
 
@@ -199,7 +255,7 @@ fn test_site_validation_access_log_enabled_windows_directory_path() {
 
 #[test]
 fn test_site_validation_access_log_disabled_empty_file() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.access_log_enabled = false;
     site.access_log_file = "".to_string();
 
@@ -209,7 +265,7 @@ fn test_site_validation_access_log_disabled_empty_file() {
 
 #[test]
 fn test_site_validation_access_log_enabled_valid_file() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.access_log_enabled = true;
     site.access_log_file = "/logs/access.log".to_string();
 
@@ -219,7 +275,7 @@ fn test_site_validation_access_log_enabled_valid_file() {
 
 #[test]
 fn test_site_validation_access_log_enabled_windows_valid_file() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.access_log_enabled = true;
     site.access_log_file = "C:\\logs\\access.log".to_string();
 
@@ -229,7 +285,7 @@ fn test_site_validation_access_log_enabled_windows_valid_file() {
 
 #[test]
 fn test_site_validation_rewrite_functions_single_valid() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.rewrite_functions = vec!["OnlyWebRootIndexForSubdirs".to_string()];
 
     let result = site.validate();
@@ -238,7 +294,7 @@ fn test_site_validation_rewrite_functions_single_valid() {
 
 #[test]
 fn test_site_validation_rewrite_functions_empty_value() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.rewrite_functions = vec!["".to_string()];
 
     let result = site.validate();
@@ -250,7 +306,7 @@ fn test_site_validation_rewrite_functions_empty_value() {
 
 #[test]
 fn test_site_validation_rewrite_functions_multiple_with_empty() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.rewrite_functions = vec!["OnlyWebRootIndexForSubdirs".to_string(), "".to_string()];
 
     let result = site.validate();
@@ -265,7 +321,7 @@ fn test_site_validation_rewrite_functions_multiple_with_empty() {
 
 #[test]
 fn test_site_validation_rewrite_functions_unknown_value() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.rewrite_functions = vec!["UnknownRewriteFunction".to_string()];
 
     let result = site.validate();
@@ -280,7 +336,7 @@ fn test_site_validation_rewrite_functions_unknown_value() {
 
 #[test]
 fn test_site_validation_rewrite_functions_mixed_known_and_unknown() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.rewrite_functions = vec!["OnlyWebRootIndexForSubdirs".to_string(), "UnknownRewriteFunction".to_string()];
 
     let result = site.validate();
@@ -299,7 +355,7 @@ fn test_site_validation_rewrite_functions_mixed_known_and_unknown() {
 
 #[test]
 fn test_site_validation_rewrite_functions_duplicate_values() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.rewrite_functions = vec!["OnlyWebRootIndexForSubdirs".to_string(), "OnlyWebRootIndexForSubdirs".to_string()];
 
     let result = site.validate();
@@ -314,7 +370,7 @@ fn test_site_validation_rewrite_functions_duplicate_values() {
 
 #[test]
 fn test_site_validation_rewrite_functions_duplicate_and_unknown() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.rewrite_functions = vec!["OnlyWebRootIndexForSubdirs".to_string(), "OnlyWebRootIndexForSubdirs".to_string(), "AnotherUnknown".to_string()];
 
     let result = site.validate();
@@ -333,7 +389,7 @@ fn test_site_validation_rewrite_functions_duplicate_and_unknown() {
 
 #[test]
 fn test_site_validation_rewrite_functions_whitespace_only() {
-    let mut site = create_valid_site();
+    let mut site = Site::new();
     site.rewrite_functions = vec!["   ".to_string()];
 
     let result = site.validate();
@@ -344,23 +400,4 @@ fn test_site_validation_rewrite_functions_whitespace_only() {
         errors.iter().any(|e| e.contains("Rewrite function 1 cannot be empty")),
         "Whitespace-only rewrite function should be treated as empty"
     );
-}
-
-#[cfg(test)]
-fn create_valid_site() -> Site {
-    Site {
-        id: Uuid::new_v4().to_string(),
-        hostnames: vec!["example.com".to_string()],
-        is_default: false,
-        is_enabled: true,
-        tls_cert_path: "".to_string(),
-        tls_cert_content: "".to_string(),
-        tls_key_path: "".to_string(),
-        tls_key_content: "".to_string(),
-        request_handlers: vec![],
-        rewrite_functions: vec![],
-        extra_headers: vec![],
-        access_log_enabled: false,
-        access_log_file: "".to_string(),
-    }
 }

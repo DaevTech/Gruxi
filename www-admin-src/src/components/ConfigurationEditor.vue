@@ -91,6 +91,33 @@ const loadConfiguration = async () => {
             if (!Array.isArray(config.value.core.server_settings.blocked_file_patterns)) {
                 config.value.core.server_settings.blocked_file_patterns = [];
             }
+
+            // Ensure tls_settings exists for older configs
+            if (!config.value.core.tls_settings) {
+                config.value.core.tls_settings = {
+                    account_email: '',
+                    use_staging_server: false,
+                    certificate_cache_path: '',
+                };
+            }
+            if (config.value.core.tls_settings.account_email === null || config.value.core.tls_settings.account_email === undefined) {
+                config.value.core.tls_settings.account_email = '';
+            }
+            if (config.value.core.tls_settings.use_staging_server === null || config.value.core.tls_settings.use_staging_server === undefined) {
+                config.value.core.tls_settings.use_staging_server = false;
+            }
+            if (config.value.core.tls_settings.certificate_cache_path === null || config.value.core.tls_settings.certificate_cache_path === undefined) {
+                config.value.core.tls_settings.certificate_cache_path = '';
+            }
+
+            // Ensure tls_automatic_enabled exists on sites for older configs
+            if (Array.isArray(config.value.sites)) {
+                for (const site of config.value.sites) {
+                    if (site.tls_automatic_enabled === null || site.tls_automatic_enabled === undefined) {
+                        site.tls_automatic_enabled = false;
+                    }
+                }
+            }
         } else {
             error.value = 'Failed to load configuration';
         }
@@ -432,7 +459,8 @@ const addSite = () => {
         tls_cert_content: '',
         tls_key_path: '',
         tls_key_content: '',
-        rewrite_functions: [],
+        tls_automatic_enabled: false,
+        rewrite_functions: ['OnlyWebRootIndexForSubdirs'],
         request_handlers: [],
         extra_headers: [],
         access_log_enabled: false,
@@ -658,7 +686,7 @@ const addProcessorToSite = (siteIndex, processorType) => {
         newProcessor = {
             id: processorId,
             web_root: './www-default',
-            web_root_index_file_list: ['index.html'],
+            web_root_index_file_list: [],
         };
         config.value.static_file_processors.push(newProcessor);
         newName = 'Static File Processor';
@@ -941,17 +969,12 @@ onMounted(() => {
                                     <label>
                                         <input v-model="binding.is_tls" type="checkbox" />
                                         Enable TLS (https://)
-                                        <span class="help-icon" data-tooltip="Enable this if you want to secure the connection using TLS. If you do, you should also specify the paths to the TLS certificate and key files on the sites attached.">?</span>
-                                    </label>
-                                    <label>
-                                        <input v-model="binding.is_admin" type="checkbox" />
-                                        Admin portal
-                                        <span class="help-icon" data-tooltip="Whether this binding is for the Gruxi Admin portal, serving the API for admin requests. This should ONLY be enable on the binding which serves the admin interface.">?</span>
+                                        <span class="help-icon" data-tooltip="Enable this if you want to secure the connection using TLS. If you do, you should also specify the paths to the TLS certificate and key files on the sites attached. If no certificates are referenced, Gruxi will generate self-signed certificates.">?</span>
                                     </label>
                                 </div>
                             </div>
 
-                            <div class="two-column-layout form-grid max500 compact">
+                            <div class="form-grid max500 compact">
                                 <div class="compact half-width">
                                     <div class="form-field small-field">
                                         <label>IP Address</label>
@@ -995,7 +1018,6 @@ onMounted(() => {
                                 <h4 class="site-hostname-title">{{ site.hostnames.join(' - ') || 'No hostnames' }}</h4>
                                 <span v-if="site.is_default" class="default-badge">DEFAULT</span>
                                 <span v-if="!site.is_enabled" class="admin-badge">DISABLED</span>
-                                <span v-if="getSiteBindings(site.id).some((bindingId) => config.bindings?.find((b) => b.id === bindingId)?.is_admin)" class="admin-badge">ADMIN PORTAL</span>
                             </div>
                             <button @click.stop="removeSite(siteIndex)" class="remove-button compact" :disabled="config.sites.length === 1">Remove</button>
                         </div>
@@ -1067,7 +1089,7 @@ onMounted(() => {
                                                 <input
                                                     type="text"
                                                     class="tag-input"
-                                                    placeholder="Add hostname..."
+                                                    placeholder="Add hostname and hit enter..."
                                                     @keydown.enter.prevent="
                                                         (e) => {
                                                             if (e.target.value.trim()) {
@@ -1392,9 +1414,25 @@ onMounted(() => {
                                 </div>
 
                                 <div v-if="isSiteSubsectionExpanded(siteIndex, 'tls')">
-                                    <div class="info-field">
+
+                                    <div class="form-grid compact">
+                                        <div class="form-field checkbox-grid compact">
+                                            <label>
+                                                <input v-model="site.tls_automatic_enabled" type="checkbox" />
+                                                Enable Automatic TLS Certificates
+                                                <span class="help-icon" data-tooltip="If enabled, Gruxi will attempt to automatically obtain and renew TLS certificates for this site. Requires Core Settings → TLS Settings (account email), and hostnames must be publicly reachable.">?</span>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div class="info-field" v-if="!site.tls_automatic_enabled">
                                         <p><strong>Note:</strong> You can either specify file paths or paste the certificate/key content directly. If both are provided, the file paths take precedence.</p>
                                     </div>
+
+                                    <div class="info-field" v-if="site.tls_automatic_enabled">
+                                        <p><strong>Note:</strong> Certificates will be automatically obtained and renewed by Gruxi and therefore should not be edited manually.</p>
+                                    </div>
+
                                     <div class="tls-grid-full">
                                         <div class="tls-paths-row">
                                             <div class="form-field">
@@ -1402,17 +1440,17 @@ onMounted(() => {
                                                     >Certificate Path
                                                     <span class="help-icon" data-tooltip="Path to the TLS certificate file. You can specify an absolute path or a path relative to the Gruxi server base directory. Such as './certs/mycert.pem' or '/etc/ssl/certs/mycert.pem'.">?</span>
                                                 </label>
-                                                <input v-model="site.tls_cert_path" type="text" placeholder="Path to certificate file" />
+                                                <input v-model="site.tls_cert_path" type="text" placeholder="Path to certificate file" :disabled="site.tls_automatic_enabled" />
                                             </div>
                                             <div class="form-field">
                                                 <label
                                                     >Private Key Path
                                                     <span class="help-icon" data-tooltip="Path to the TLS private key file. You can specify an absolute path or a path relative to the Gruxi server base directory. Such as './certs/mykey.pem' or '/etc/ssl/private/mykey.pem'.">?</span>
                                                 </label>
-                                                <input v-model="site.tls_key_path" type="text" placeholder="Path to private key file" />
+                                                <input v-model="site.tls_key_path" type="text" placeholder="Path to private key file" :disabled="site.tls_automatic_enabled" />
                                             </div>
                                         </div>
-                                        <div class="tls-content-row">
+                                        <div class="tls-content-row" v-if="!site.tls_automatic_enabled">
                                             <div class="form-field">
                                                 <label>Certificate Content (PEM format)</label>
                                                 <textarea v-model="site.tls_cert_content" placeholder="Paste your certificate content here in PEM format (-----BEGIN CERTIFICATE-----...)" rows="6" class="tls-content-textarea"></textarea>
@@ -1502,7 +1540,7 @@ onMounted(() => {
                             <div class="header-left">
                                 <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('baseSettings') }">▶</span>
                                 <span class="hierarchy-indicator">⚙️</span>
-                                <h4>Base settings</h4>
+                                <h4>Base Settings</h4>
                             </div>
                         </div>
 
@@ -1523,7 +1561,7 @@ onMounted(() => {
                                             <span class="help-icon" data-tooltip="File extensions to block from being served by static file handlers (e.g. .php, .sql). Each value must start with a dot. When a client requests a blocked file they will see a HTTP 404 error, so it just seems like it is not found.">?</span>
                                         </label>
                                         <div class="tag-field">
-                                            <span v-for="(pattern, patternIndex) in (config.core.server_settings.blocked_file_patterns || [])" :key="patternIndex" class="tag-item">
+                                            <span v-for="(pattern, patternIndex) in config.core.server_settings.blocked_file_patterns || []" :key="patternIndex" class="tag-item">
                                                 {{ pattern }}
                                                 <button @click="removeBlockedFilePattern(patternIndex)" class="tag-remove-button" type="button">×</button>
                                             </span>
@@ -1651,6 +1689,47 @@ onMounted(() => {
                                         </div>
                                         <button @click="addGzipContentType" type="button" class="add-button">+ Add Content Type</button>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TLS Settings -->
+                    <div class="binding-item">
+                        <div class="item-header compact" @click="toggleCoreSubsection('tlsSettings')">
+                            <div class="header-left">
+                                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('tlsSettings') }">▶</span>
+                                <span class="hierarchy-indicator">🔒</span>
+                                <h4>TLS Settings</h4>
+                                <span class="item-summary" v-if="config.core.tls_settings?.account_email">({{ config.core.tls_settings.account_email }})</span>
+                                <span class="item-summary" v-if="config.core.tls_settings?.use_staging_server">(Using Certificate Staging Server)</span>
+                            </div>
+                        </div>
+
+                        <div v-if="isCoreSubsectionExpanded('tlsSettings')" class="item-content">
+                            <div class="form-grid compact">
+                                <div class="form-field">
+                                    <label>
+                                        LetsEncrypt Account Email
+                                        <span class="help-icon" data-tooltip="Email address used for automatic certificate issuance and renewal (e.g. Let's Encrypt). Required if any site has Automatic TLS enabled.">?</span>
+                                    </label>
+                                    <input v-model="config.core.tls_settings.account_email" type="text" placeholder="admin@example.com" />
+                                </div>
+
+                                <div class="form-field">
+                                    <label>
+                                        Alternative Certificate Cache Path
+                                        <span class="help-icon" data-tooltip="Choose alternative directory where obtained certificates and renewal state can be cached. Absolute or relative to the Gruxi server base directory. This is ONLY if you want to use another location than the default, which is ./certs/cache">?</span>
+                                    </label>
+                                    <input v-model="config.core.tls_settings.certificate_cache_path" type="text" placeholder="./certs/cache - Only set this field if needed" />
+                                </div>
+
+                                <div class="form-field full-width">
+                                    <label>
+                                        <input v-model="config.core.tls_settings.use_staging_server" type="checkbox" />
+                                        Use LetsEncrypt Staging Server
+                                        <span class="help-icon" data-tooltip="Enable to use the LetsEncrypt staging environment for testing (avoids production rate limits). Do not use for real traffic.">?</span>
+                                    </label>
                                 </div>
                             </div>
                         </div>
@@ -2090,7 +2169,7 @@ onMounted(() => {
 
 .save-error-message .error-header {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 0.75rem;
     margin-bottom: 1rem;
     font-size: 1.1rem;
@@ -2447,13 +2526,13 @@ onMounted(() => {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
     gap: 1.5rem;
-    background: white;
 }
 
 .form-field {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+
 }
 
 .form-field.small-field {
@@ -2707,7 +2786,7 @@ onMounted(() => {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1rem;
-    margin-bottom: 1rem;
+    margin: 1rem 0rem;
 }
 
 /* Three column layout for lists */
@@ -2748,6 +2827,7 @@ onMounted(() => {
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    margin: 1rem;
 }
 
 .tls-paths-row {
@@ -2805,7 +2885,7 @@ onMounted(() => {
 .request-processing-section,
 .processors-section,
 .tls-settings-section {
-    margin: 1rem 1.25rem;
+    margin: 1rem 1rem;
     padding: 5px;
     background: #f8fafc;
     border-radius: 8px;
@@ -2844,7 +2924,7 @@ onMounted(() => {
 }
 
 .info-field {
-    margin: 1rem 0rem;
+    margin: 1rem 1rem;
     padding: 0.75rem;
     background: #f0f9ff;
     border: 1px solid #bae6fd;

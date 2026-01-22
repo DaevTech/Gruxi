@@ -1,4 +1,4 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::Criterion;
 use gruxi::file::normalized_path::NormalizedPath;
 use rand::Rng;
 
@@ -27,7 +27,7 @@ const RANDOM_PATH_LIST: [&str; 20] = [
     "/extras/extra.html",
 ];
 
-fn normalized_path_benchmark(c: &mut Criterion) {
+pub fn normalized_path_benchmark(c: &mut Criterion) {
     c.bench_function("normalized_path_same_web_root_and_path", |b| {
         b.iter(|| NormalizedPath::new("/var/www", "/html/index.html"));
     });
@@ -42,6 +42,3 @@ fn normalized_path_benchmark(c: &mut Criterion) {
         });
     });
 }
-
-criterion_group!(benches, normalized_path_benchmark);
-criterion_main!(benches);

@@ -5,6 +5,7 @@ use crate::configuration::gzip::Gzip;
 use crate::configuration::request_handler::RequestHandler;
 use crate::configuration::server_settings::ServerSettings;
 use crate::configuration::site::Site;
+use crate::configuration::tls_settings::TlsSettings;
 use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship};
 use crate::external_connections::managed_system::php_cgi::PhpCgi;
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
@@ -30,7 +31,7 @@ pub struct Configuration {
     pub php_cgi_handlers: Vec<PhpCgi>,
 }
 
-pub static CURRENT_CONFIGURATION_VERSION: i32 = 3;
+pub static CURRENT_CONFIGURATION_VERSION: i32 = 5;
 
 impl Configuration {
     pub fn new() -> Self {
@@ -85,6 +86,7 @@ impl Configuration {
                     ]
                 },
                 admin_portal: AdminPortal::new(),
+                tls_settings: TlsSettings::new(),
             },
             request_handlers: vec![],
             static_file_processors: vec![],
@@ -228,6 +230,12 @@ impl Configuration {
             }
         }
 
+        // Validate that account email in TLS settings, if any of the sites have TLS automatic enabled
+        let tls_automatic_sites: Vec<&Site> = self.sites.iter().filter(|s| s.tls_automatic_enabled).collect();
+        if !tls_automatic_sites.is_empty() && self.core.tls_settings.account_email.is_empty() {
+            errors.push("At least one site has TLS automatic enabled, but no account email is set in TLS settings".to_string());
+        }
+
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
@@ -265,21 +273,9 @@ impl Configuration {
         };
 
         // Sites
-        let default_site = Site {
-            id: Uuid::new_v4().to_string(),
-            hostnames: vec!["*".to_string()],
-            is_default: true,
-            is_enabled: true,
-            tls_cert_path: "".to_string(),
-            tls_cert_content: "".to_string(),
-            tls_key_path: "".to_string(),
-            tls_key_content: "".to_string(),
-            request_handlers: vec![request_handler1.id.clone()],
-            rewrite_functions: vec![],
-            extra_headers: vec![],
-            access_log_enabled: false,
-            access_log_file: "".to_string(),
-        };
+        let mut default_site = Site::new();
+        default_site.is_default = true;
+        default_site.request_handlers = vec![request_handler1.id.clone()];
 
         // Default site
         configuration.binding_sites.push(BindingSiteRelationship {

@@ -1,8 +1,25 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::Criterion;
 use gruxi::logging::syslog::*;
 use tokio::runtime::Runtime;
 
-fn syslog_benchmark_without_stdout_single(c: &mut Criterion) {
+pub fn syslog_benchmark_internal(c: &mut Criterion) {
+    let mut syslog = SysLog::new(LogType::Warn, LogType::Off);
+    syslog.calculate_enabled_levels();
+
+    c.bench_function("syslog_internal_trace_msg", |b| {
+        b.iter(|| {
+            syslog.add_log(LogType::Trace, "This is a syslog trace message for benchmarking purposes.".to_string());
+        })
+    });
+
+    c.bench_function("syslog_internal_warn_msg", |b| {
+        b.iter(|| {
+            syslog.add_log(LogType::Warn, "This is a syslog warn message for benchmarking purposes.".to_string());
+        })
+    });
+}
+
+pub fn syslog_benchmark_without_stdout_single(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     rt.block_on(async {
         // Initialize the syslog
@@ -22,7 +39,7 @@ async fn syslog_benchmark_concurrency() {
     futures::future::join_all(handles).await;
 }
 
-fn syslog_benchmark_without_stdout_high_concurrency(c: &mut Criterion) {
+pub fn syslog_benchmark_without_stdout_high_concurrency(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     rt.block_on(async {
         // Initialize the syslog
@@ -34,6 +51,3 @@ fn syslog_benchmark_without_stdout_high_concurrency(c: &mut Criterion) {
         b.iter(|| rt.block_on(syslog_benchmark_concurrency()));
     });
 }
-
-criterion_group!(benches, syslog_benchmark_without_stdout_single, syslog_benchmark_without_stdout_high_concurrency);
-criterion_main!(benches);

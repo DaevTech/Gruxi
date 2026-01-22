@@ -1,3 +1,4 @@
+use crate::configuration::tls_settings::TlsSettings;
 use crate::configuration::{admin_portal::AdminPortal, file_cache::FileCache};
 use crate::configuration::gzip::Gzip;
 use crate::configuration::server_settings::ServerSettings;
@@ -9,6 +10,7 @@ pub struct Core {
     pub gzip: Gzip,
     pub server_settings: ServerSettings,
     pub admin_portal: AdminPortal,
+    pub tls_settings: TlsSettings,
 }
 
 impl Core {
@@ -17,6 +19,7 @@ impl Core {
         self.gzip.sanitize();
         self.server_settings.sanitize();
         self.admin_portal.sanitize();
+        self.tls_settings.sanitize();
     }
 
     pub fn validate(&self) -> Result<(), Vec<String>> {
@@ -47,6 +50,13 @@ impl Core {
         if let Err(admin_portal_errors) = self.admin_portal.validate() {
             for error in admin_portal_errors {
                 errors.push(format!("Admin Portal: {}", error));
+            }
+        }
+
+        // Validate TLS settings
+        if let Err(tls_errors) = self.tls_settings.validate() {
+            for error in tls_errors {
+                errors.push(format!("TLS Settings: {}", error));
             }
         }
 

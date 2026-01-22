@@ -1,13 +1,13 @@
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::logging::syslog::{debug, warn};
 use rand;
+use rustls::crypto::aws_lc_rs;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::BufReader;
 use tls_listener::rustls as tokio_rustls;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio_rustls::TlsAcceptor;
-use tokio_rustls::rustls::crypto::ring::sign as ring_sign;
 use tokio_rustls::rustls::server::ResolvesServerCertUsingSni;
 use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
 use tokio_rustls::rustls::sign::CertifiedKey as RustlsCertifiedKey;
@@ -64,10 +64,7 @@ pub async fn persist_generated_tls_for_site(site: &Site, cert_pem: &str, key_pem
         connection
             .execute(sql_update.as_str())
             .map_err(|e| format!("Failed to update admin portal TLS paths in database: {}", e))?;
-        let sql_update = format!(
-            "UPDATE server_settings SET setting_value = '{}' WHERE setting_key = 'admin_portal_tls_key_path';",
-            key_path.clone()
-        );
+        let sql_update = format!("UPDATE server_settings SET setting_value = '{}' WHERE setting_key = 'admin_portal_tls_key_path';", key_path.clone());
         connection
             .execute(sql_update.as_str())
             .map_err(|e| format!("Failed to update admin portal TLS paths in database: {}", e))?;
@@ -118,7 +115,7 @@ impl ResolvesServerCert for FallbackCertResolver {
 
 // Build a TLS acceptor that selects certificates per-site using SNI
 pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
-    let provider = rustls::crypto::ring::default_provider();
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
 
     // Create SNI resolver
     let mut resolver = ResolvesServerCertUsingSni::new();
@@ -131,7 +128,7 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
     let binding_site_cache = running_state.get_binding_site_cache();
     let sites = binding_site_cache.get_sites_for_binding(&binding.id);
 
-    for site in sites.iter() {
+    for site in sites.iter().filter(|s| s.is_enabled) {
         // Determine SANs: handle wildcard sites specially
         let mut sans: Vec<String> = site.hostnames.iter().cloned().filter(|h| !h.trim().is_empty() && h != "*").collect();
         let has_wildcard = site.hostnames.contains(&"*".to_string());
@@ -215,7 +212,7 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
         }
 
         // Build a signing key and certified key for rustls
-        let signing_key = ring_sign::any_supported_type(&priv_key).map_err(|e| format!("Unsupported private key type for: {}", e))?;
+        let signing_key = aws_lc_rs::sign::any_supported_type(&priv_key).map_err(|e| format!("Unsupported private key type for: {}", e))?;
         let certified = RustlsCertifiedKey::new(cert_chain.clone(), signing_key);
         let certified_arc = std::sync::Arc::new(certified);
 
@@ -270,7 +267,7 @@ pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dy
             rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).map_err(|e| format!("Failed to generate fallback self-signed cert: {}", e))?;
         let cert_der = CertificateDer::from(cert.der().to_vec());
         let key_der = PrivateKeyDer::try_from(signing_key.serialize_der()).map_err(|e| format!("Invalid key DER: {}", e))?;
-        let signing_key = ring_sign::any_supported_type(&key_der).map_err(|e| format!("Unsupported private key type for rustls: {}", e))?;
+        let signing_key = aws_lc_rs::sign::any_supported_type(&key_der).map_err(|e| format!("Unsupported private key type for rustls: {}", e))?;
         let certified = RustlsCertifiedKey::new(vec![cert_der], signing_key);
 
         let certified_arc = std::sync::Arc::new(certified);

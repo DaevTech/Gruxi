@@ -2,7 +2,7 @@ use crate::{
     external_connections::external_system_handler::ExternalSystemHandler, file::file_reader_structs::FileReaderCache, http::{
         client::http_client::HttpClient,
         request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager}, site_match::binding_site_cache::BindingSiteCache,
-    }, logging::syslog::debug
+    }, logging::syslog::debug, tls::tls_cert_manager::TlsCertManager
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -17,6 +17,7 @@ pub struct RunningState {
     pub external_system_handler: ExternalSystemHandler,
     pub http_client: HttpClient,
     pub binding_site_cache: BindingSiteCache,
+    pub tls_cert_manager: TlsCertManager,
 }
 
 impl RunningState {
@@ -48,7 +49,12 @@ impl RunningState {
         // Start binding site cache
         let binding_site_cache = BindingSiteCache::new();
         binding_site_cache.init().await;
-        debug("Binding site cache initialized");
+        debug("Binding<>site cache initialized");
+
+        // Start TLS certificate manager
+        let tls_cert_manager = TlsCertManager::new().await;
+        TlsCertManager::start_certificate_loop().await;
+        debug("TLS certificate manager initialized");
 
         RunningState {
             access_log_buffer: Arc::new(RwLock::new(access_log_buffer)),
@@ -58,6 +64,7 @@ impl RunningState {
             external_system_handler: external_system_handler,
             http_client: http_client,
             binding_site_cache: binding_site_cache,
+            tls_cert_manager: tls_cert_manager,
         }
     }
 
@@ -87,5 +94,9 @@ impl RunningState {
 
     pub fn get_binding_site_cache(&self) -> &BindingSiteCache {
         &self.binding_site_cache
+    }
+
+    pub fn get_tls_cert_manager(&self) -> &TlsCertManager {
+        &self.tls_cert_manager
     }
 }

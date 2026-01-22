@@ -23,6 +23,16 @@ pub fn migrate_database() -> i32 {
         migrate_db_2_to_3(&connection);
         schema_version = 3;
     }
+    // Migration from 3 to 4
+    if schema_version == 3 {
+        migrate_db_3_to_4(&connection);
+        schema_version = 4;
+    }
+    // Migration from 4 to 5
+    if schema_version == 4 {
+        migrate_db_4_to_5(&connection);
+        schema_version = 5;
+    }
 
     schema_version
 }
@@ -35,4 +45,30 @@ fn migrate_db_2_to_3(connection: &Connection) {
     }
 
     set_schema_version(3).expect("Failed to set schema version to 3 after migration");
+}
+
+fn migrate_db_3_to_4(connection: &Connection) {
+    // Add "tls_automatic_enabled" to "sites" table
+    let alter_table_result = connection.execute("ALTER TABLE sites ADD COLUMN tls_automatic_enabled BOOLEAN NOT NULL DEFAULT 0;");
+    if let Err(e) = alter_table_result {
+        panic!("Failed to migrate database from version 3 to 4: {}", e);
+    }
+
+    set_schema_version(4).expect("Failed to set schema version to 4 after migration");
+}
+
+fn migrate_db_4_to_5(connection: &Connection) {
+    // Add "tls_automatic_last_update" to "sites" table
+    let alter_table_result = connection.execute("ALTER TABLE sites ADD COLUMN tls_automatic_last_update INTEGER NOT NULL DEFAULT 0;");
+    if let Err(e) = alter_table_result {
+        panic!("Failed to migrate database from version 4 to 5: {}", e);
+    }
+
+    // Add "tls_automatic_last_update_success" to "sites" table
+    let alter_table_result = connection.execute("ALTER TABLE sites ADD COLUMN tls_automatic_last_update_success INTEGER NOT NULL DEFAULT 0;");
+    if let Err(e) = alter_table_result {
+        panic!("Failed to migrate database from version 4 to 5: {}", e);
+    }
+
+    set_schema_version(5).expect("Failed to set schema version to 5 after migration");
 }

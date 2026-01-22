@@ -21,7 +21,10 @@ pub fn init() -> Result<Configuration, Vec<String>> {
 
     // Determine if we need to migrate
     if schema_version > 0 && schema_version < CURRENT_DB_SCHEMA_VERSION {
-        info(format!("Database schema version {} is older than current version {}, migrating...", schema_version, CURRENT_DB_SCHEMA_VERSION));
+        info(format!(
+            "Database schema version {} is older than current version {}, migrating...",
+            schema_version, CURRENT_DB_SCHEMA_VERSION
+        ));
         migrate_database();
     }
 
@@ -58,7 +61,7 @@ fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
         ip: "0.0.0.0".to_string(),
         port: 8000,
         is_admin: true,
-        is_tls: true
+        is_tls: true,
     };
 
     // Static file processor for admin site
@@ -81,6 +84,9 @@ fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
         hostnames: vec!["*".to_string()],
         is_default: true,
         is_enabled: true,
+        tls_automatic_enabled: false,
+        tls_automatic_last_update: 0,
+        tls_automatic_last_update_success: 0,
         tls_cert_path: configuration.core.admin_portal.get_tls_certificate_path(),
         tls_cert_content: "".to_string(),
         tls_key_path: configuration.core.admin_portal.get_tls_key_path(),
@@ -219,7 +225,6 @@ fn load_php_processors(connection: &Connection) -> Result<Vec<php_processor::PHP
 
         new_processor.initialize();
         processors.push(new_processor);
-
     }
 
     Ok(processors)
@@ -305,6 +310,17 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             "admin_portal_tls_key_path" => {
                 core.admin_portal.tls_key_path = Some(value);
             }
+
+            // TLS settings
+            "tls_account_email" => {
+                core.tls_settings.account_email = value;
+            }
+            "tls_use_staging_server" => {
+                core.tls_settings.use_staging_server = value.parse::<bool>().map_err(|e| format!("Failed to parse tls_use_staging_server: {}", e))?;
+            }
+            "tls_certificate_cache_path" => {
+                core.tls_settings.certificate_cache_path = value;
+            }
             _ => continue,
         }
     }
@@ -328,7 +344,7 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
             ip,
             port: port as u16,
             is_admin: is_admin != 0,
-            is_tls: is_tls != 0
+            is_tls: is_tls != 0,
         });
     }
 
@@ -370,11 +386,23 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
         let extra_headers_pairs = parse_key_value_pairs(&extra_headers_str);
         let extra_headers: Vec<HeaderKV> = extra_headers_pairs.into_iter().map(|(k, v)| HeaderKV { key: k, value: v }).collect();
 
+        // TLS Automatic Enabled (added in schema version 4)
+        let tls_automatic_enabled: i64 = statement.read(13).map_err(|e| format!("Failed to read tls_automatic_enabled: {}", e))?;
+
+        // TLS Automatic Last Update (added in schema version 5)
+        let tls_automatic_last_update: i64 = statement.read(14).map_err(|e| format!("Failed to read tls_automatic_last_update: {}", e))?;
+
+        // TLS Automatic Last Update Success (added in schema version 5)
+        let tls_automatic_last_update_success: i64 = statement.read(15).map_err(|e| format!("Failed to read tls_automatic_last_update_success: {}", e))?;
+
         sites.push(Site {
             id: site_id,
             hostnames,
             is_default: is_default != 0,
             is_enabled: is_enabled != 0,
+            tls_automatic_enabled: tls_automatic_enabled != 0,
+            tls_automatic_last_update: tls_automatic_last_update as u64,
+            tls_automatic_last_update_success: tls_automatic_last_update_success as u64,
             tls_cert_path,
             tls_cert_content,
             tls_key_path,
