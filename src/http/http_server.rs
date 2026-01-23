@@ -128,7 +128,11 @@ async fn start_server_binding(binding: Binding) {
                                 match acceptor.accept(tcp_stream).await {
                                     Ok(tls_stream) => {
                                         let io = TokioIo::new(tls_stream);
+                                        // Increment requests in queue when connection is ready to be served
+                                        get_monitoring_state().await.increment_requests_in_queue();
                                         serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token).await;
+                                        // Decrement when connection is fully handled
+                                        get_monitoring_state().await.decrement_requests_in_queue();
                                     }
                                     Err(err) => {
                                         trace(format!("TLS handshake error: {:?}", err));
@@ -167,7 +171,11 @@ async fn start_server_binding(binding: Binding) {
                             let stop_services_token = stop_services_token.clone();
 
                             tokio::spawn(async move {
+                                // Increment requests in queue when connection is ready to be served
+                                get_monitoring_state().await.increment_requests_in_queue();
                                 serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token).await;
+                                // Decrement when connection is fully handled
+                                get_monitoring_state().await.decrement_requests_in_queue();
                             });
                         }
                         Err(err) => {
@@ -212,8 +220,6 @@ where
             add_standard_headers_to_response(&mut response);
 
             debug(format!("Responding with: {:?}", response));
-
-            get_monitoring_state().await.decrement_requests_in_progress();
 
             // Convert gruxi_response to hyper response
             Ok::<_, std::convert::Infallible>(response.into_hyper())

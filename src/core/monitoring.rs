@@ -12,7 +12,6 @@ pub struct MonitoringState {
     file_cache_enabled: AtomicBool,
     file_cache_current_items: AtomicUsize,
     file_cache_max_items: AtomicUsize,
-
 }
 
 impl MonitoringState {
@@ -90,22 +89,25 @@ impl MonitoringState {
 
     pub fn increment_requests_served(&self) {
         self.requests_served.fetch_add(1, Ordering::Relaxed);
-        self.requests_in_progress.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn decrement_requests_in_progress(&self) {
-        self.requests_in_progress.fetch_sub(1, Ordering::Relaxed);
     }
 
     pub fn get_requests_served(&self) -> usize {
         self.requests_served.load(Ordering::Relaxed)
     }
 
+    pub fn increment_requests_in_queue(&self) {
+        self.requests_in_progress.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn decrement_requests_in_queue(&self) {
+        self.requests_in_progress.fetch_sub(1, Ordering::Relaxed);
+    }
+
     pub async fn get_json(&self) -> serde_json::Value {
         let monitoring_state = get_monitoring_state().await;
 
         // Get the requests in progress minus one to account for the current monitoring request
-        let requests_in_progress = monitoring_state.requests_in_progress.load(Ordering::Relaxed) - 1;
+        let requests_in_progress = monitoring_state.requests_in_progress.load(Ordering::Relaxed).saturating_sub(1);
 
         serde_json::json!({
             "requests_served": monitoring_state.get_requests_served(),
