@@ -7,11 +7,12 @@ pub struct MonitoringState {
     requests_served: AtomicUsize,
     requests_served_last: AtomicUsize,
     requests_served_per_sec: AtomicUsize,
-    waiting_requests: AtomicUsize,
+    requests_in_progress: AtomicUsize,
     server_start_time: std::time::Instant,
     file_cache_enabled: AtomicBool,
     file_cache_current_items: AtomicUsize,
     file_cache_max_items: AtomicUsize,
+
 }
 
 impl MonitoringState {
@@ -23,7 +24,7 @@ impl MonitoringState {
             requests_served: AtomicUsize::new(0),      // Updated from http server
             requests_served_last: AtomicUsize::new(0), // Updated from monitoring thread
             requests_served_per_sec: AtomicUsize::new(0),
-            waiting_requests: AtomicUsize::new(0),
+            requests_in_progress: AtomicUsize::new(0), // Updated from http server
             server_start_time: std::time::Instant::now(),
             file_cache_enabled: AtomicBool::new(configuration.core.file_cache.is_enabled),
             file_cache_current_items: AtomicUsize::new(0), // Updated from monitoring thread
@@ -38,8 +39,6 @@ impl MonitoringState {
     }
 
     async fn monitoring_task() {
-        let current_handle = tokio::runtime::Handle::current();
-
         let update_interval_seconds: usize = 10;
         let update_interval = tokio::time::Duration::from_secs(update_interval_seconds as u64);
 
@@ -49,10 +48,6 @@ impl MonitoringState {
 
         loop {
             let monitoring_state = get_monitoring_state().await;
-
-            // Set how many active threads we have in tokio
-            let metrics = current_handle.metrics();
-            monitoring_state.waiting_requests.store(metrics.num_alive_tasks(), Ordering::SeqCst);
 
             // Calculate requests per second
             let current_requests = monitoring_state.get_requests_served();
@@ -96,6 +91,11 @@ impl MonitoringState {
 
     pub fn increment_requests_served(&self) {
         self.requests_served.fetch_add(1, Ordering::SeqCst);
+        self.requests_in_progress.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn decrement_requests_in_progress(&self) {
+        self.requests_in_progress.fetch_sub(1, Ordering::SeqCst);
     }
 
     pub fn get_requests_served(&self) -> usize {
@@ -105,10 +105,13 @@ impl MonitoringState {
     pub async fn get_json(&self) -> serde_json::Value {
         let monitoring_state = get_monitoring_state().await;
 
+        // Get the requests in progress minus one to account for the current monitoring request
+        let requests_in_progress = monitoring_state.requests_in_progress.load(Ordering::SeqCst) - 1;
+
         serde_json::json!({
             "requests_served": monitoring_state.get_requests_served(),
             "requests_per_sec": f64::from_bits(monitoring_state.requests_served_per_sec.load(Ordering::Relaxed) as u64),
-            "waiting_requests": monitoring_state.waiting_requests.load(Ordering::SeqCst),
+            "requests_in_progress": requests_in_progress,
             "uptime_seconds": monitoring_state.server_start_time.elapsed().as_secs(),
             "file_cache": {
                 "enabled": monitoring_state.file_cache_enabled.load(Ordering::SeqCst),

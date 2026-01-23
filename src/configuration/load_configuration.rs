@@ -82,11 +82,8 @@ fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
     // If automatic TLS is enabled and a domain is configured, use that domain
     // Otherwise use wildcard to match any hostname
     let admin_hostnames = if configuration.core.admin_portal.tls_automatic_enabled {
-        if let Some(domain) = &configuration.core.admin_portal.domain_name {
-            if !domain.is_empty() { vec![domain.clone()] } else { vec!["*".to_string()] }
-        } else {
-            vec!["*".to_string()]
-        }
+        let domain = &configuration.core.admin_portal.domain_name;
+        if !domain.is_empty() { vec![domain.clone()] } else { vec!["*".to_string()] }
     } else {
         vec!["*".to_string()]
     };
@@ -315,9 +312,7 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
 
             // Admin portal settings
             "admin_portal_domain_name" => {
-                if !value.is_empty() {
-                    core.admin_portal.domain_name = Some(value);
-                }
+                core.admin_portal.domain_name = value;
             }
             "admin_portal_tls_automatic_enabled" => {
                 core.admin_portal.tls_automatic_enabled = value.parse::<bool>().map_err(|e| format!("Failed to parse admin_portal_tls_automatic_enabled: {}", e))?;

@@ -5,7 +5,7 @@ use crate::configuration::site::Site;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AdminPortal {
     pub is_enabled: bool,
-    pub domain_name: Option<String>,
+    pub domain_name: String,
     pub tls_automatic_enabled: bool,
     pub tls_certificate_path: Option<String>,
     pub tls_key_path: Option<String>,
@@ -17,7 +17,7 @@ impl AdminPortal {
 
         AdminPortal {
             is_enabled,
-            domain_name: None,
+            domain_name: "".to_string(),
             tls_automatic_enabled: false,
             tls_certificate_path: None,
             tls_key_path: None,
@@ -26,12 +26,11 @@ impl AdminPortal {
 
     pub fn sanitize(&mut self) {
         // Trim the strings if they exist
-        if let Some(domain) = &mut self.domain_name {
-            *domain = domain.trim().to_lowercase();
-            if domain.is_empty() {
-                self.domain_name = None;
-            }
+        self.domain_name = self.domain_name.trim().to_lowercase();
+        if self.domain_name.is_empty() {
+            self.domain_name = "".to_string();
         }
+
         if let Some(cert_path) = &mut self.tls_certificate_path {
             *cert_path = cert_path.trim().to_string();
         }
@@ -45,9 +44,9 @@ impl AdminPortal {
 
         // Validate domain_name if tls_automatic_enabled
         if self.tls_automatic_enabled {
-            if let Some(domain) = &self.domain_name {
+            if !self.domain_name.is_empty() {
                 // Verify that domain is valid and public
-                if let Err(_) = Site::verify_hostname(domain) {
+                if let Err(_) = Site::verify_hostname(&self.domain_name) {
                     errors.push("Admin portal automatic TLS requires a valid public domain name to be configured".to_string());
                 }
             } else {
@@ -73,7 +72,7 @@ impl AdminPortal {
     }
 
     pub fn get_domain_name(&self) -> String {
-        self.domain_name.clone().unwrap_or_default()
+        self.domain_name.clone()
     }
 
     pub fn get_tls_certificate_path(&self) -> String {

@@ -221,11 +221,8 @@ fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> 
     save_server_settings(connection, "blocked_file_patterns", &core.server_settings.blocked_file_patterns.join(","))?;
 
     // Save admin portal settings
-    if let Some(domain_name) = &core.admin_portal.domain_name {
-        save_server_settings(connection, "admin_portal_domain_name", domain_name)?;
-    } else {
-        save_server_settings(connection, "admin_portal_domain_name", "")?;
-    }
+    save_server_settings(connection, "admin_portal_domain_name", &core.admin_portal.domain_name.to_string())?;
+
     save_server_settings(connection, "admin_portal_tls_automatic_enabled", &core.admin_portal.tls_automatic_enabled.to_string())?;
     if let Some(cert_path) = &core.admin_portal.tls_certificate_path {
         save_server_settings(connection, "admin_portal_tls_certificate_path", cert_path)?;

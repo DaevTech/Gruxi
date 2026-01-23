@@ -1,7 +1,6 @@
 use crate::admin_portal::http_admin_api::*;
 use crate::compression::compression::Compression;
 use crate::configuration::binding::Binding;
-use crate::core::monitoring::get_monitoring_state;
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
@@ -15,9 +14,6 @@ use hyper::header::HeaderValue;
 
 // Entry point to handle request, as we need to do post-processing, like access logging etc
 pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -> Result<GruxiResponse, GruxiError> {
-    // Count the request in monitoring
-    get_monitoring_state().await.increment_requests_served();
-
     // Log the request details
     debug(format!(
         "Received request: hostname={}, method={}, path={}, query={}, body_size={}, headers={:?}",

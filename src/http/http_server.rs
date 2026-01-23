@@ -1,4 +1,5 @@
 use crate::configuration::binding::Binding;
+use crate::core::monitoring::get_monitoring_state;
 use crate::http::handle_request::handle_request;
 use crate::http::http_tls::build_unified_tls_acceptor;
 use crate::http::http_util::add_standard_headers_to_response;
@@ -192,6 +193,9 @@ where
         let remote_ip = remote_addr_ip.clone();
 
         async move {
+            // Count the request in monitoring
+            get_monitoring_state().await.increment_requests_served();
+
             let mut gruxi_request = GruxiRequest::from_hyper(req);
             gruxi_request.add_calculated_data("remote_ip", &remote_ip);
             let gruxi_response_result = handle_request(gruxi_request, binding).await;
@@ -208,6 +212,9 @@ where
             add_standard_headers_to_response(&mut response);
 
             debug(format!("Responding with: {:?}", response));
+
+            get_monitoring_state().await.decrement_requests_in_progress();
+
             // Convert gruxi_response to hyper response
             Ok::<_, std::convert::Infallible>(response.into_hyper())
         }

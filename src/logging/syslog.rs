@@ -162,6 +162,7 @@ impl SysLog {
     }
 
     fn set_new_log_level(new_log_level: LogType) {
+        SYS_LOG.write().unwrap().buffered_log.consider_flush(true);
         SYS_LOG.write().unwrap().log_level = new_log_level;
         SYS_LOG.write().unwrap().calculate_enabled_levels();
     }

@@ -123,7 +123,7 @@ const updateStats = async () => {
             stats.serverStatus = 'Running';
             stats.requests = data.requests_served || 0;
             stats.requestsPerSec = data.requests_per_sec || 0;
-            stats.activeConnections = data.waiting_requests || 0;
+            stats.activeConnections = data.requests_in_progress || 0;
 
             // Update file cache stats
             if (data.file_cache) {
@@ -299,10 +299,9 @@ onMounted(() => {
 
                             <div class="stat-card">
                                 <div class="stat-header">
-                                    <h3>Active Threads</h3>
+                                    <h3>In-Progress requests</h3>
                                 </div>
                                 <div class="stat-value">{{ stats.activeConnections }}</div>
-                                <div class="stat-subtitle">Including system threads</div>
                             </div>
                         </div>
                         <div class="stats-row">
