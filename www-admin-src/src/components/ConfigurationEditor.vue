@@ -658,6 +658,7 @@ const addProcessorToSite = (siteIndex, processorType) => {
             request_timeout: 30,
             local_web_root: '',
             fastcgi_web_root: '',
+            server_software_spoof: '',
         };
         config.value.php_processors.push(newProcessor);
         newName = 'PHP Processor';
