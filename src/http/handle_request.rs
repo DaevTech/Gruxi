@@ -38,17 +38,18 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -
 
     // Get the hostname and figure out which site matches
     let hostname = gruxi_request.get_hostname();
-    let site = find_best_match_site(&sites, &hostname);
-    if let None = site {
-        if hostname.is_empty() {
-            trace(format!("No hostname provided in request on binding ID: '{}'", &binding.id));
-            return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_REQUEST.as_u16()));
-        } else {
-            trace(format!("No matching site found for hostname: '{}' on binding ID: '{}'", &hostname, &binding.id));
-            return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+    let site = match find_best_match_site(&sites, &hostname) {
+        Some(site) => site,
+        None => {
+            if hostname.is_empty() {
+                trace(format!("No hostname provided in request on binding ID: '{}'", &binding.id));
+                return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_REQUEST.as_u16()));
+            } else {
+                trace(format!("No matching site found for hostname: '{}' on binding ID: '{}'", &hostname, &binding.id));
+                return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+            }
         }
-    }
-    let site = site.unwrap();
+    };
     trace(format!("Matched site with request: {:?}", &site));
 
     // Validate the request
@@ -118,7 +119,14 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -
             trace(format!("No request handler matched for URL path: {}", &gruxi_request.get_path_and_query()));
             return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
         }
-        response_result.unwrap()
+
+        match response_result {
+            Ok(response) => response,
+            Err(_) => {
+                trace(format!("No request handler matched for URL path: {}", &gruxi_request.get_path_and_query()));
+                return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+            }
+        }
     };
 
     // Consider gzipping content if not already gzipped
@@ -158,7 +166,13 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -
 
     // Set any additional headers
     for (key, value) in additional_headers {
-        response.headers_mut().insert(key, HeaderValue::from_str(value).unwrap());
+        let header_value_result = HeaderValue::from_str(value);
+        match header_value_result {
+            Ok(header_value) => {
+                response.headers_mut().insert(key, header_value);
+            }
+            Err(e) => debug(format!("Failed to create header value for key '{}', value '{}': {}", key, value, e)),
+        }
     }
 
     // Apply site-specific extra headers

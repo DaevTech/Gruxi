@@ -34,18 +34,30 @@ pub fn initialize_database() -> Result<(), String> {
 
 pub fn get_schema_version() -> i32 {
     let connection_result = get_database_connection();
-    if let Err(_) = connection_result {
-        return 0;
-    }
-    let connection = connection_result.unwrap();
+    let connection = match connection_result {
+        Ok(conn) => conn,
+        Err(_) => {
+            return 0;
+        }
+    };
 
     let statement_result = connection.prepare("SELECT gruxi_value FROM gruxi WHERE gruxi_key = 'schema_version' LIMIT 1");
-    if let Err(_) = statement_result {
-        return 0;
-    }
-    let mut statement = statement_result.unwrap();
+    let mut statement = match statement_result {
+        Ok(s) => s,
+        Err(_) => {
+            return 0;
+        }
+    };
 
-    match statement.next().unwrap() {
+    let state_result = statement.next();
+    let state = match state_result {
+        Ok(s) => s,
+        Err(_) => {
+            return 0;
+        }
+    };
+
+    match state {
         State::Row => {
             let version: i64 = statement.read(0).unwrap_or(0);
             version as i32

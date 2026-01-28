@@ -193,19 +193,21 @@ impl Site {
 
         // Validate domain with PSL
         let domain_parsed_option = psl::domain(hostname_trimmed.as_bytes());
-        if domain_parsed_option.is_none() {
-            return Err(format!(
-                "Hostname '{}' is not a valid domain name for automatic TLS - It needs to be public domains, such as example.com",
-                hostname_trimmed
-            ));
-        } else {
-            let domain_parsed = domain_parsed_option.unwrap();
-            let domain_suffix = domain_parsed.suffix();
-            if !domain_suffix.is_known() {
+        match domain_parsed_option {
+            None => {
                 return Err(format!(
-                    "Hostname '{}' has an unknown top level domain - It needs to be public domains, such as example.com",
+                    "Hostname '{}' is not a valid domain name for automatic TLS - It needs to be public domains, such as example.com",
                     hostname_trimmed
                 ));
+            }
+            Some(domain_parsed) => {
+                let domain_suffix = domain_parsed.suffix();
+                if !domain_suffix.is_known() {
+                    return Err(format!(
+                        "Hostname '{}' has an unknown top level domain - It needs to be public domains, such as example.com",
+                        hostname_trimmed
+                    ));
+                }
             }
         }
 

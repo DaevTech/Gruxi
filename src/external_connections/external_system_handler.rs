@@ -2,7 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::Semaphore;
 
-use crate::{external_connections::managed_system::php_cgi::PhpCgi, logging::syslog::trace};
+use crate::{
+    external_connections::managed_system::php_cgi::PhpCgi,
+    logging::syslog::{error, trace},
+};
 
 pub struct ExternalSystemHandler {
     pub php_cgi_id_to_port: HashMap<String, u16>,
@@ -11,7 +14,6 @@ pub struct ExternalSystemHandler {
 
 impl ExternalSystemHandler {
     pub async fn new() -> Self {
-
         let mut connection_semaphore = HashMap::new();
 
         // Get the config, to determine what we need
@@ -29,7 +31,20 @@ impl ExternalSystemHandler {
                 php_cgi_config.concurrent_threads,
                 php_cgi_config.executable.clone(),
             );
-            let port = new_php_cgi.start().await.expect(format!("Failed to start PHP-CGI handler with ID: {}", php_cgi_config.id).as_str());
+
+            let port_result = new_php_cgi.start().await;
+            let port = match port_result {
+                Ok(p) => p,
+                Err(e) => {
+                    error(format!("Failed to start PHP-CGI handler with ID: {}: {}", php_cgi_config.id, e));
+                    0
+                }
+            };
+
+            // If we couldn't start, skip it
+            if port == 0 {
+                continue;
+            }
 
             // We save the id matched to port for reference
             php_cgi_id_to_port.insert(php_cgi_config.id.clone(), port);
@@ -44,7 +59,10 @@ impl ExternalSystemHandler {
             trace(format!("Initialized PHP-CGI handler with ID: {}", php_cgi_config.id));
         }
 
-        ExternalSystemHandler { php_cgi_id_to_port, connection_semaphore }
+        ExternalSystemHandler {
+            php_cgi_id_to_port,
+            connection_semaphore,
+        }
     }
 
     pub fn get_port_for_php_cgi(&self, php_cgi_id: &str) -> Result<u16, ()> {

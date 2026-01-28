@@ -119,8 +119,13 @@ impl PhpCgi {
                 return Err("Failed to allocate port for PHP-CGI process".to_string());
             }
         }
+        let port = match self.assigned_port {
+            Some(p) => p,
+            None => {
+                return Err("Assigned port is missing after allocation".to_string());
+            }
+        };
 
-        let port = self.assigned_port.unwrap();
         let mut cmd = Command::new(&self.executable);
         cmd.kill_on_drop(true);
 
@@ -154,8 +159,24 @@ impl PhpCgi {
 
     pub async fn start_monitoring_thread(mut instance: PhpCgi) {
         let triggers = get_trigger_handler();
-        let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
-        let stop_services_token = triggers.get_trigger("stop_services").expect("Failed to get stop_services trigger").read().await.clone();
+
+        let shutdown_token_option = triggers.get_token("shutdown").await;
+        let shutdown_token = match shutdown_token_option {
+            Some(token) => token,
+            None => {
+                error("Failed to get shutdown token - PHP-CGI monitoring thread exiting - Please report a bug".to_string());
+                return;
+            }
+        };
+
+        let stop_services_token_option = triggers.get_token("stop_services").await;
+        let stop_services_token = match stop_services_token_option {
+            Some(token) => token,
+            None => {
+                error("Failed to get stop_services token - PHP-CGI monitoring thread exiting - Please report a bug".to_string());
+                return;
+            }
+        };
 
         loop {
             select! {

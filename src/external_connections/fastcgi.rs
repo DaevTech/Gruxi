@@ -210,11 +210,13 @@ impl FastCgi {
     pub async fn process_fastcgi_request(gruxi_request: &mut GruxiRequest) -> Result<GruxiResponse, FastCgiError> {
         // Generate FastCGI parameters
         let params_result = Self::generate_fast_cgi_params(gruxi_request);
-        if params_result.is_err() {
-            error(format!("Failed to generate FastCGI parameters from request {:?}", gruxi_request));
-            return Err(FastCgiError::Initialization);
-        }
-        let params = params_result.unwrap();
+        let params = match params_result {
+            Ok(p) => p,
+            Err(_) => {
+                error(format!("Failed to generate FastCGI parameters from request {:?}", gruxi_request));
+                return Err(FastCgiError::Initialization);
+            }
+        };
         trace(format!("Generated FastCGI parameters: {:?}", params));
 
         // Determine FastCGI server IP and port
@@ -228,30 +230,30 @@ impl FastCgi {
 
         // Now we work on getting a semaphore permit for the connection, if relevant
         let connection_semaphore_option = gruxi_request.get_connection_semaphore();
-        let response = if connection_semaphore_option.is_some() {
-            // We only need a permit, if a connection semaphore is set
-            let connection_semaphore = connection_semaphore_option.unwrap();
 
-            let available_permits = connection_semaphore.available_permits();
-            trace(format!("Acquiring connection permit for FastCGI server at {} (available permits: {})", ip_and_port, available_permits));
+        let response = match connection_semaphore_option {
+            Some(connection_semaphore) => {
+                // We only need a permit, if a connection semaphore is set
+                let available_permits = connection_semaphore.available_permits();
+                trace(format!("Acquiring connection permit for FastCGI server at {} (available permits: {})", ip_and_port, available_permits));
 
-            // Acquire a connection permit to limit concurrent connections to php-fpm
-            let _permit = match connection_semaphore.acquire().await {
-                Ok(permit) => {
-                    trace(format!(
-                        "Connection permit acquired for FastCGI server (remaining permits: {})",
-                        connection_semaphore.available_permits()
-                    ));
-                    permit
-                }
-                Err(e) => {
-                    error(format!("Failed to acquire connection permit for FastCGI server: {}", e));
-                    return Err(FastCgiError::ConnectionPermitAcquisition);
-                }
-            };
-            Self::do_fastcgi_request_and_response(gruxi_request, &ip_and_port, &params).await
-        } else {
-            Self::do_fastcgi_request_and_response(gruxi_request, &ip_and_port, &params).await
+                // Acquire a connection permit to limit concurrent connections to php-fpm
+                let _permit = match connection_semaphore.acquire().await {
+                    Ok(permit) => {
+                        trace(format!(
+                            "Connection permit acquired for FastCGI server (remaining permits: {})",
+                            connection_semaphore.available_permits()
+                        ));
+                        permit
+                    }
+                    Err(e) => {
+                        error(format!("Failed to acquire connection permit for FastCGI server: {}", e));
+                        return Err(FastCgiError::ConnectionPermitAcquisition);
+                    }
+                };
+                Self::do_fastcgi_request_and_response(gruxi_request, &ip_and_port, &params).await
+            }
+            None => Self::do_fastcgi_request_and_response(gruxi_request, &ip_and_port, &params).await,
         };
 
         response

@@ -2,6 +2,8 @@ use std::{path::PathBuf, sync::OnceLock};
 
 use clap::{Arg, ArgMatches, Command};
 
+use crate::{configuration::import_export::{export_configuration_to_file, import_configuration_from_file}, core::admin_user::reset_admin_password};
+
 pub fn load_command_line_args() -> ArgMatches {
     // Parse command line args
     Command::new("Gruxi")
@@ -88,20 +90,44 @@ pub fn check_for_command_line_actions() {
     let cli = get_command_line_args();
 
     if cmd_should_reset_admin_password() {
-        let random_password = crate::core::admin_user::reset_admin_password().expect("Failed to reset admin password");
-        println!("Password changed for user 'admin' to: {}", random_password);
-        std::process::exit(0);
-    }
+        let random_password_result = reset_admin_password();
 
+        match random_password_result {
+            Ok(random_password) => {
+                println!("Password changed for user 'admin' to: {}", random_password);
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Failed to reset admin password: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
     // Check for export configuration
     if let Some(path) = cli.get_one::<PathBuf>("export-configuration") {
-        crate::configuration::import_export::export_configuration_to_file(path).expect("Failed to export configuration");
+        let export_configuration_result = export_configuration_to_file(path);
+        match export_configuration_result {
+            Ok(_) => {
+                println!("Configuration successfully exported to {}", path.display());
+            }
+            Err(e) => {
+                eprintln!("Error exporting configuration: {}", e);
+            }
+        }
         std::process::exit(0);
     }
 
     // Check for import configuration
     if let Some(path) = cli.get_one::<PathBuf>("import-configuration") {
-        crate::configuration::import_export::import_configuration_from_file(path).expect("Failed to import configuration");
+        let import_configuration_result = import_configuration_from_file(path);
+        match import_configuration_result {
+            Ok(_) => {
+                println!("Configuration successfully imported from {}", path.display());
+            }
+            Err(e) => {
+                eprintln!("Error importing configuration: {}", e);
+            }
+        }
         std::process::exit(0);
     }
 

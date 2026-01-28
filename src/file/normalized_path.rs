@@ -33,11 +33,13 @@ impl NormalizedPath {
         // Normalize the path part, which is also decoded
         if !path.is_empty() {
             let normalized_path_cleaned_result = Self::clean_url_path(&path);
-            if normalized_path_cleaned_result.is_err() {
-                debug(format!("Failed to clean URL path in NormalizePath: {:?}", normalized_path));
-                return Err(());
-            }
-            normalized_path.path = normalized_path_cleaned_result.unwrap();
+            normalized_path.path = match normalized_path_cleaned_result {
+                Ok(p) => p,
+                Err(_) => {
+                    debug(format!("Failed to clean URL path in NormalizePath: {:?}", normalized_path));
+                    return Err(());
+                }
+            };
         }
 
         // Remove ending / from web root
@@ -52,10 +54,13 @@ impl NormalizedPath {
             normalized_path.full_path = "".to_string();
         } else {
             let full_path_result = Self::resolve_relative_path(&normalized_path.full_path);
-            if full_path_result.is_err() {
-                return Err(());
-            }
-            normalized_path.full_path = full_path_result.unwrap();
+            normalized_path.full_path = match full_path_result {
+                Ok(p) => p,
+                Err(_) => {
+                    return Err(());
+                }
+            };
+
             while normalized_path.full_path.contains("\\") {
                 normalized_path.full_path = normalized_path.full_path.replace("\\", "/");
             }
@@ -83,10 +88,11 @@ impl NormalizedPath {
 
         for _ in 0..max_rounds {
             let decoded_result = decode(&decoded);
-            if decoded_result.is_err() {
-                return Err(());
-            }
-            let new_decoded = decoded_result.unwrap().to_string();
+            let new_decoded = match decoded_result {
+                Ok(d) => d.to_string(),
+                Err(_) => return Err(()),
+            };
+
             if new_decoded == decoded {
                 return Ok(decoded);
             }
@@ -252,17 +258,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_normalized_path_basics() {
-        let normalized = NormalizedPath::new("/var/www", "/images/css/style.css").unwrap();
+        let normalized = match NormalizedPath::new("/var/www", "/images/css/style.css") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for valid path"),
+        };
         assert_eq!(normalized.get_web_root(), "/var/www");
         assert_eq!(normalized.get_path(), "/images/css/style.css");
         assert_eq!(normalized.get_full_path(), "/var/www/images/css/style.css");
 
-        let normalized = NormalizedPath::new("/var/www", "/").unwrap();
+        let normalized = match NormalizedPath::new("/var/www", "/") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for root path"),
+        };
         assert_eq!(normalized.get_web_root(), "/var/www");
         assert_eq!(normalized.get_path(), "/");
         assert_eq!(normalized.get_full_path(), "/var/www/");
 
-        let normalized = NormalizedPath::new("/var/www", "/index.php").unwrap();
+        let normalized = match NormalizedPath::new("/var/www", "/index.php") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for index.php path"),
+        };
         assert_eq!(normalized.get_web_root(), "/var/www");
         assert_eq!(normalized.get_path(), "/index.php");
         assert_eq!(normalized.get_full_path(), "/var/www/index.php");
@@ -303,7 +318,10 @@ mod tests {
         let normalized = NormalizedPath::new("/var/www", "/a/..;/../b");
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "////").unwrap();
+        let normalized = match NormalizedPath::new("/var/www", "////") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for multiple slashes path"),
+        };
         assert_eq!(normalized.get_web_root(), "/var/www");
         assert_eq!(normalized.get_path(), "/");
         assert_eq!(normalized.get_full_path(), "/var/www/");
@@ -359,7 +377,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_normalized_path_acceptable_dot_paths() {
-        let normalized = NormalizedPath::new("/var/www", "/.well-known/test.txt").unwrap();
+        let normalized = match NormalizedPath::new("/var/www", "/.well-known/test.txt") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for .well-known path"),
+        };
         assert_eq!(normalized.get_web_root(), "/var/www");
         assert_eq!(normalized.get_path(), "/.well-known/test.txt");
         assert_eq!(normalized.get_full_path(), "/var/www/.well-known/test.txt");
@@ -424,7 +445,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_normalized_path_with_unicode_issue() {
-        let normalized = NormalizedPath::new("/var/www", "/images/style\u{0301}.css").unwrap();
+        let normalized = match NormalizedPath::new("/var/www", "/images/style\u{0301}.css") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for unicode normalized path"),
+        };
         assert_eq!(normalized.get_web_root(), "/var/www");
         assert_eq!(normalized.get_path(), "/images/stylé.css");
         assert_eq!(normalized.get_full_path(), "/var/www/images/stylé.css");
@@ -441,21 +465,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_normalized_path_relative_paths() {
-        let mut current_dir = env::current_dir().unwrap().to_string_lossy().to_string();
+        let mut current_dir = match env::current_dir() {
+            Ok(dir) => dir.to_string_lossy().to_string(),
+            Err(_) => panic!("Failed to get current directory"),
+        };
         while current_dir.contains("\\") {
             current_dir = current_dir.replace("\\", "/");
         }
 
-        let normalized = NormalizedPath::new("./www-admin", "").unwrap();
+        let normalized = match NormalizedPath::new("./www-admin", "") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for ./www-admin path"),
+        };
         assert_eq!(normalized.get_full_path(), format!("{}/www-admin", current_dir));
 
-        let normalized = NormalizedPath::new("www-admin", "").unwrap();
+        let normalized = match NormalizedPath::new("www-admin", "") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for www-admin path"),
+        };
         assert_eq!(normalized.get_full_path(), format!("{}/www-admin", current_dir));
 
-        let normalized = NormalizedPath::new("./www-admin", "/index.php").unwrap();
+        let normalized = match NormalizedPath::new("./www-admin", "/index.php") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for ./www-admin/index.php path"),
+        };
         assert_eq!(normalized.get_full_path(), format!("{}/www-admin/index.php", current_dir));
 
-        let normalized = NormalizedPath::new("", "/index.php").unwrap();
+        let normalized = match NormalizedPath::new("", "/index.php") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for /index.php path"),
+        };
         assert_eq!(normalized.get_full_path(), "/index.php");
     }
 }

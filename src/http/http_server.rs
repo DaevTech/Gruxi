@@ -7,6 +7,7 @@ use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::logging::syslog::{debug, error, info, trace, warn};
 use crate::tls::shared_acme_manager::initialize_shared_acme_manager;
+use futures::FutureExt;
 use hyper::Request;
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -79,7 +80,14 @@ async fn start_listener_with_retry(addr: SocketAddr) -> TcpListener {
 }
 
 async fn start_server_binding(binding: Binding) {
-    let ip = binding.ip.parse::<std::net::IpAddr>().unwrap();
+    let ip_result = binding.ip.parse::<std::net::IpAddr>();
+    let ip = match ip_result {
+        Ok(ip_addr) => ip_addr,
+        Err(e) => {
+            error(format!("Invalid IP address for binding {}: {}. Skipping this binding.", binding.ip, e));
+            return;
+        }
+    };
     let port = binding.port;
     let addr = SocketAddr::new(ip, port);
 
@@ -87,8 +95,24 @@ async fn start_server_binding(binding: Binding) {
     trace(format!("Listening on binding: {:?}", binding));
 
     let triggers = crate::core::triggers::get_trigger_handler();
-    let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
-    let stop_services_token = triggers.get_trigger("stop_services").expect("Failed to get stop_services trigger").read().await.clone();
+
+    let shutdown_token_option = triggers.get_token("shutdown").await;
+    let shutdown_token = match shutdown_token_option {
+        Some(token) => token,
+        None => {
+            error("Failed to get shutdown token - Could not start server binding. Please report a bug".to_string());
+            return;
+        }
+    };
+
+    let stop_services_token_option = triggers.get_token("stop_services").await;
+    let stop_services_token = match stop_services_token_option {
+        Some(token) => token,
+        None => {
+            error("Failed to get stop_services token - Could not start server binding. Please report a bug".to_string());
+            return;
+        }
+    };
 
     if binding.is_tls {
         // Build unified TLS acceptor that handles both ACME and manual certificates
@@ -129,10 +153,15 @@ async fn start_server_binding(binding: Binding) {
                                     Ok(tls_stream) => {
                                         let io = TokioIo::new(tls_stream);
                                         // Increment requests in queue when connection is ready to be served
-                                        get_monitoring_state().await.increment_requests_in_queue();
-                                        serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token).await;
+                                        let monitoring_state = get_monitoring_state().await;
+                                        monitoring_state.increment_requests_in_queue();
+
+                                        if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token)).catch_unwind().await {
+                                            debug(format!("Panic occurred while serving TLS connection: {:?}", panic));
+                                        }
+
                                         // Decrement when connection is fully handled
-                                        get_monitoring_state().await.decrement_requests_in_queue();
+                                        monitoring_state.decrement_requests_in_queue();
                                     }
                                     Err(err) => {
                                         trace(format!("TLS handshake error: {:?}", err));
@@ -172,10 +201,15 @@ async fn start_server_binding(binding: Binding) {
 
                             tokio::spawn(async move {
                                 // Increment requests in queue when connection is ready to be served
-                                get_monitoring_state().await.increment_requests_in_queue();
-                                serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token).await;
+                                let monitoring_state = get_monitoring_state().await;
+                                monitoring_state.increment_requests_in_queue();
+
+                                if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token)).catch_unwind().await {
+                                    debug(format!("Panic occurred while serving connection: {:?}", panic));
+                                }
+
                                 // Decrement when connection is fully handled
-                                get_monitoring_state().await.decrement_requests_in_queue();
+                                monitoring_state.decrement_requests_in_queue();
                             });
                         }
                         Err(err) => {

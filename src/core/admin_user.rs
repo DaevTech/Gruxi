@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
-use crate::logging::syslog::info;
+use crate::logging::syslog::{error, info};
 use random_password_generator::generate_password;
 use serde::{Deserialize, Serialize};
 use sqlite::Connection;
@@ -50,7 +50,13 @@ pub fn create_default_admin_user(connection: &Connection) -> Result<(), String> 
     let mut need_to_clear_sessions = false;
 
     if !admin_exists {
-        let (random_password, password_hash) = get_random_hashed_password();
+        let random_password_result = get_random_hashed_password();
+        let (random_password, password_hash) = match random_password_result {
+            Ok(res) => res,
+            Err(_) => {
+                return Err("Failed to generate new password".to_string());
+            }
+        };
 
         let created_at = Utc::now().to_rfc3339();
 
@@ -83,7 +89,14 @@ fn invalidate_sessions_for_user(connection: &Connection, username: &str) -> Resu
 pub fn reset_admin_password() -> Result<String, String> {
     let connection = get_database_connection()?;
 
-    let (random_password, password_hash) = get_random_hashed_password();
+    let random_password_result = get_random_hashed_password();
+    let (random_password, password_hash) = match random_password_result {
+        Ok(res) => res,
+        Err(_) => {
+            return Err("Failed to generate new password".to_string());
+        }
+    };
+
     connection
         .execute(format!("UPDATE users SET password_hash = '{}' WHERE username = 'admin'", password_hash))
         .map_err(|e| format!("Failed to reset admin password: {}", e))?;
@@ -94,10 +107,17 @@ pub fn reset_admin_password() -> Result<String, String> {
     Ok(random_password)
 }
 
-fn get_random_hashed_password() -> (String, String) {
+fn get_random_hashed_password() -> Result<(String, String), ()> {
     let random_password = generate_password(true, true, false, 20);
-    let password_hash = bcrypt::hash(&random_password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
-    (random_password, password_hash)
+    let password_hash_result = bcrypt::hash(&random_password, bcrypt::DEFAULT_COST);
+    let password_hash = match password_hash_result {
+        Ok(hash) => hash,
+        Err(_) => {
+            error("Failed to hash password");
+            return Err(())
+        }
+    };
+    Ok((random_password, password_hash))
 }
 
 pub fn authenticate_user(username: &str, password: &str) -> Result<Option<User>, String> {

@@ -45,8 +45,13 @@ impl LoadBalancerImpl for RoundRobin {
             let server = &self.servers[self.current_index];
             self.current_index = (self.current_index + 1) % total;
 
-            if self.health_state.get(server).unwrap().load(Ordering::SeqCst) {
-                return Some(server.clone());
+            match self.health_state.get(server) {
+                None => continue,
+                Some(health) => {
+                    if health.load(Ordering::SeqCst) {
+                        return Some(server.clone());
+                    }
+                }
             }
         }
 
@@ -56,7 +61,11 @@ impl LoadBalancerImpl for RoundRobin {
     fn check_health(&mut self) {
         for server in &self.servers {
             let server_uri = server.clone() + &self.health_url_path;
-            let healthy_state = self.health_state.get(server).unwrap().clone();
+            let healthy_state_option = self.health_state.get(server);
+            let healthy_state = match healthy_state_option {
+                Some(s) => s.clone(),
+                None => continue,
+            };
             self.check_uri_health(&server_uri, healthy_state, self.health_timeout_secs);
         }
     }

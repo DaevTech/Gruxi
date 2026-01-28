@@ -59,19 +59,23 @@ impl ProcessorTrait for PHPProcessor {
         // Check and normalize web roots if not already done
         if self.normalized_local_web_root.is_none() {
             let normalized_path_result = NormalizedPath::new(&self.local_web_root, "");
-            if normalized_path_result.is_err() {
-                error(format!("Failed to normalize local web root path: {}", self.local_web_root));
-                return;
-            }
-            self.normalized_local_web_root = Some(normalized_path_result.unwrap());
+            self.normalized_local_web_root = match normalized_path_result {
+                Ok(path) => Some(path),
+                Err(_) => {
+                    error(format!("Failed to normalize local web root path: {}", self.local_web_root));
+                    return;
+                }
+            };
         }
         if self.normalized_fastcgi_web_root.is_none() {
             let normalized_path_result = NormalizedPath::new(&self.fastcgi_web_root, "");
-            if normalized_path_result.is_err() {
-                error(format!("Failed to normalize FastCGI web root path: {}", self.fastcgi_web_root));
-                return;
-            }
-            self.normalized_fastcgi_web_root = Some(normalized_path_result.unwrap());
+            self.normalized_fastcgi_web_root = match normalized_path_result {
+                Ok(path) => Some(path),
+                Err(_) => {
+                    error(format!("Failed to normalize FastCGI web root path: {}", self.fastcgi_web_root));
+                    return;
+                }
+            };
         }
     }
 
@@ -143,26 +147,39 @@ impl ProcessorTrait for PHPProcessor {
 
     async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
         // Get our web roots, based on normalized paths, so we know they are safe
-        if self.normalized_local_web_root.is_none() || self.normalized_fastcgi_web_root.is_none() {
-            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
-        }
-        let local_web_root = self.normalized_local_web_root.as_ref().unwrap().get_full_path();
-        let fastcgi_web_root = self.normalized_fastcgi_web_root.as_ref().unwrap().get_full_path();
+        let local_web_root_option = self.normalized_local_web_root.as_ref();
+        let local_web_root = match local_web_root_option {
+            Some(path) => path.get_full_path(),
+            None => {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal)));
+            }
+        };
+        let fastcgi_web_root_option = self.normalized_fastcgi_web_root.as_ref();
+        let fastcgi_web_root = match fastcgi_web_root_option {
+            Some(path) => path.get_full_path(),
+            None => {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal)));
+            }
+        };
 
         let mut path = gruxi_request.get_path().clone();
 
         // Get the file, if it exists
         let normalized_path_result = NormalizedPath::new(&local_web_root, &path);
-        if normalized_path_result.is_err() {
-            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
-        }
-        let normalized_path = normalized_path_result.unwrap();
+        let normalized_path = match normalized_path_result {
+            Ok(path) => path,
+            Err(_) => {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
+            }
+        };
 
         let file_data_result = resolve_web_root_and_path_and_get_file(&normalized_path).await;
-        if let Err(e) = file_data_result {
-            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
-        }
-        let mut file_data = file_data_result.unwrap();
+        let mut file_data = match file_data_result {
+            Ok(data) => data,
+            Err(e) => {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
+            }
+        };
         let mut file_path = file_data.meta.file_path.clone();
 
         // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
@@ -175,15 +192,20 @@ impl ProcessorTrait for PHPProcessor {
 
                 // Check if the index file exists
                 let normalized_path_result = NormalizedPath::new(&local_web_root, &path);
-                if let Err(_) = normalized_path_result {
-                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
-                }
-                let normalized_path = normalized_path_result.unwrap();
+                let normalized_path = match normalized_path_result {
+                    Ok(path) => path,
+                    Err(_) => {
+                        return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
+                    }
+                };
+
                 let file_data_result = resolve_web_root_and_path_and_get_file(&normalized_path).await;
-                if let Err(e) = file_data_result {
-                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
-                }
-                file_data = file_data_result.unwrap();
+                let file_data = match file_data_result {
+                    Ok(data) => data,
+                    Err(e) => {
+                        return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
+                    }
+                };
                 file_path = file_data.meta.file_path.clone();
             } else {
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
@@ -196,17 +218,21 @@ impl ProcessorTrait for PHPProcessor {
             trace(format!("File is a directory: {}", file_path));
 
             let normalized_path_result = NormalizedPath::new(&file_path, "/index.php");
-            if let Err(_) = normalized_path_result {
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
-            }
-            let normalized_path = normalized_path_result.unwrap();
+            let normalized_path = match normalized_path_result {
+                Ok(path) => path,
+                Err(_) => {
+                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
+                }
+            };
 
             let file_data_result = resolve_web_root_and_path_and_get_file(&normalized_path).await;
-            if file_data_result.is_err() {
-                trace(format!("Did not find index file: {}", file_path));
-                return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
-            }
-            file_data = file_data_result.unwrap();
+            file_data = match file_data_result {
+                Ok(data) => data,
+                Err(_) => {
+                    return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+                }
+            };
+
             if file_data.meta.exists == false {
                 trace(format!("Index files in dir does not exist: {}", file_path));
                 return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
@@ -219,23 +245,28 @@ impl ProcessorTrait for PHPProcessor {
 
         // Now get the IP and port to connect to
         let connect_ip_and_port_result = self.get_ip_and_port().await;
-        if connect_ip_and_port_result.is_err() {
-            // Cannot determine how to connect to the PHP handler, so we cannot handle
-            error(format!("PHP Processor: Cannot determine how to connect to PHP handler for processor ID: {}", self.id));
-            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Connection)));
-        }
-        let connect_ip_and_port = connect_ip_and_port_result.unwrap();
+        let connect_ip_and_port = match connect_ip_and_port_result {
+            Ok(ip_and_port) => ip_and_port,
+            Err(_) => {
+                // Cannot determine how to connect to the PHP handler, so we cannot handle
+                error(format!("PHP Processor: Cannot determine how to connect to PHP handler for processor ID: {}", self.id));
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Connection)));
+            }
+        };
 
         // Figure out if we have a connection semaphore to use
         if !self.php_cgi_handler_id.trim().is_empty() {
             let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
             let external_system_handler = running_state.get_external_system_handler();
+
             let semaphore_option = external_system_handler.get_connection_semaphore(&self.php_cgi_handler_id);
-            if semaphore_option.is_none() {
-                error(format!("PHP Processor: Cannot find connection semaphore for PHP-CGI handler ID: {}", self.php_cgi_handler_id));
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal)));
-            }
-            let connection_semaphore = semaphore_option.unwrap();
+            let connection_semaphore = match semaphore_option {
+                Some(semaphore) => semaphore,
+                None => {
+                    error(format!("PHP Processor: Cannot find connection semaphore for PHP-CGI handler ID: {}", self.php_cgi_handler_id));
+                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal)));
+                }
+            };
             gruxi_request.set_connection_semaphore(connection_semaphore);
         }
 
@@ -251,16 +282,16 @@ impl ProcessorTrait for PHPProcessor {
 
         // Process the FastCGI request with timeout
         match tokio::time::timeout(Duration::from_secs(self.request_timeout as u64), FastCgi::process_fastcgi_request(gruxi_request)).await {
-            Ok(response) => {
-                if response.is_err() {
-                    error("PHP Request processing via FastCGI failed".to_string());
-                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::FastCgi(response.err().unwrap())));
-                } else {
+            Ok(response) => match response {
+                Ok(resp) => {
                     trace("PHP Request completed successfully".to_string());
+                    return Ok(resp);
                 }
-
-                return Ok(response.unwrap());
-            }
+                Err(err) => {
+                    error("PHP Request processing via FastCGI failed".to_string());
+                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::FastCgi(err)));
+                }
+            },
             Err(_) => {
                 debug(format!("PHP Request timed out - Timeout: {} seconds - Request: {:?}", self.request_timeout, gruxi_request));
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Timeout)));
@@ -286,12 +317,13 @@ impl PHPProcessor {
             let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
             let external_system_handler = running_state.get_external_system_handler();
             let php_cgi_port_result = external_system_handler.get_port_for_php_cgi(&self.php_cgi_handler_id);
-            if php_cgi_port_result.is_err() {
-                // Cannot find port for the specified PHP-CGI handler, so we cannot handle
-                error(format!("PHP Processor: Cannot find port for PHP-CGI handler ID: {}", self.php_cgi_handler_id));
-                return Err(());
-            }
-            let php_cgi_port = php_cgi_port_result.unwrap();
+            let php_cgi_port = match php_cgi_port_result {
+                Ok(port) => port,
+                Err(_) => {
+                    error(format!("PHP Processor: Cannot find port for PHP-CGI handler ID: {}", self.php_cgi_handler_id));
+                    return Err(());
+                }
+            };
 
             Ok(format!("127.0.0.1:{}", php_cgi_port))
         } else if self.served_by_type == "php-fpm" {

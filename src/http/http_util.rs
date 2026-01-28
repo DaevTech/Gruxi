@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use http::HeaderValue;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::Bytes;
 
@@ -26,24 +27,38 @@ pub fn empty_response_with_status(status: hyper::StatusCode) -> GruxiResponse {
     resp
 }
 
+const VARY_ACCEPT_ENCODING_VALUE: HeaderValue = HeaderValue::from_static("Accept-Encoding");
+const SERVER_HEADER_VALUE: HeaderValue = HeaderValue::from_static("Gruxi");
+const CONTENT_TYPE_OCTET_STREAM: HeaderValue = HeaderValue::from_static("application/octet-stream");
+const CONTENT_TYPE_TEXT_HTML: HeaderValue = HeaderValue::from_static("text/html");
+
 pub fn add_standard_headers_to_response(resp: &mut GruxiResponse) {
-    // Set our standard headers, if not already set
-    for (key, value) in get_standard_headers() {
-        if resp.headers().contains_key(key) {
-            continue;
-        }
-        resp.headers_mut().insert(key, value.parse().unwrap());
+    // Default Vary header to Accept-Encoding
+    if !resp.headers().contains_key("Vary") {
+        resp.headers_mut().insert("Vary", VARY_ACCEPT_ENCODING_VALUE.clone());
     }
 
     // Always set server header
-    resp.headers_mut().insert("Server", "Gruxi".parse().unwrap());
+    resp.headers_mut().insert("Server", SERVER_HEADER_VALUE.clone());
 
     // Make sure we always a content type header, also when empty, then set octet-stream
-    if !resp.headers().contains_key("Content-Type") || resp.headers().get("Content-Type").unwrap().to_str().unwrap().is_empty() {
+    let is_content_type_empty_option = resp.headers().get("Content-Type");
+    let is_content_type_empty = match is_content_type_empty_option {
+        Some(v) => {
+            let to_str_result = v.to_str();
+            match to_str_result {
+                Ok(s) => s.is_empty(),
+                Err(_) => true,
+            }
+        }
+        None => true,
+    };
+
+    if !resp.headers().contains_key("Content-Type") || is_content_type_empty {
         if resp.get_status() == hyper::StatusCode::OK {
-            resp.headers_mut().insert("Content-Type", "application/octet-stream".parse().unwrap());
+            resp.headers_mut().insert("Content-Type", CONTENT_TYPE_OCTET_STREAM.clone());
         } else {
-            resp.headers_mut().insert("Content-Type", "text/html".parse().unwrap());
+            resp.headers_mut().insert("Content-Type", CONTENT_TYPE_TEXT_HTML.clone());
         }
     }
 }
@@ -59,8 +74,4 @@ pub fn get_list_of_hop_by_hop_headers(is_websocket_upgrade: bool) -> Vec<String>
     }
 
     hop_by_hop_headers
-}
-
-fn get_standard_headers() -> Vec<(&'static str, &'static str)> {
-    return vec![("Vary", "Accept-Encoding")];
 }

@@ -5,8 +5,8 @@ pub fn tls_config() -> ClientConfig {
 
     let mut roots = RootCertStore::empty();
 
-    let native_certs = rustls_native_certs::load_native_certs().expect("failed to load platform certs");
-    for cert in native_certs {
+    let native_certs_result = rustls_native_certs::load_native_certs();
+    for cert in native_certs_result.certs {
         roots.add(cert).expect("failed to add cert to root store");
     }
 

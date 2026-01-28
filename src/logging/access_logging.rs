@@ -17,7 +17,15 @@ impl AccessLogBuffer {
         let mut access_log_buffer = AccessLogBuffer { buffered_logs: HashMap::new() };
 
         // Have a fallback log path in case it could not be resolved
-        let default_log_path = NormalizedPath::new("./logs", "").unwrap().get_full_path();
+        let default_log_path_result = NormalizedPath::new("./logs", "");
+        let mut default_log_available = true;
+        let default_log_path = match default_log_path_result {
+            Ok(norm) => norm.get_full_path(),
+            Err(_) => {
+                default_log_available = false;
+                "".to_string()
+            }
+        };
 
         // We get the config and add the logs we need
         let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
@@ -35,6 +43,11 @@ impl AccessLogBuffer {
                 Ok(path) => path.get_full_path(),
                 Err(_) => {
                     error(format!("Invalid access log path for site {}: {}. Using default {}.", site_id, site.access_log_file, default_log_path));
+                    // We check if the default log path is available
+                    if !default_log_available {
+                        panic!("Default log path './logs' and the specified access log path '{}' are both not available.", site.access_log_file);
+                    }
+
                     let default_log_path_plus_site = format!("{}/{}.log", default_log_path, site_id);
                     default_log_path_plus_site
                 }
@@ -53,7 +66,11 @@ impl AccessLogBuffer {
     pub fn add_log(&self, site_id: String, log: String) {
         let log_buffer = self.buffered_logs.get(&site_id);
         if let Some(buffer) = log_buffer {
-            buffer.buffered_log.lock().unwrap().push(log);
+            let buffered_log_result = buffer.buffered_log.lock();
+            match buffered_log_result {
+                Ok(mut guard) => guard.push(log),
+                Err(e) => debug(format!("Failed to acquire lock to add access log entry for site {}: {}", site_id, e)),
+            }
         }
         // We currently just fail silently if no log buffer is found for the site_id
     }
@@ -66,8 +83,24 @@ impl AccessLogBuffer {
         trace("Starting access log write thread".to_string());
 
         let triggers = crate::core::triggers::get_trigger_handler();
-        let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
-        let service_stop_token = triggers.get_trigger("stop_services").expect("Failed to get stop_services trigger").read().await.clone();
+
+        let shutdown_token_option = triggers.get_token("shutdown").await;
+        let shutdown_token = match shutdown_token_option {
+            Some(token) => token,
+            None => {
+                error("Failed to get shutdown token - Could not start flushing thread for access logging. Please report a bug".to_string());
+                return;
+            }
+        };
+
+        let stop_services_token_option = triggers.get_token("stop_services").await;
+        let stop_services_token = match stop_services_token_option {
+            Some(token) => token,
+            None => {
+                error("Failed to get stop_services token - Could not start flushing thread for access logging. Please report a bug".to_string());
+                return;
+            }
+        };
 
         let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
 
@@ -97,7 +130,7 @@ impl AccessLogBuffer {
                     }
                     break;
                 },
-                _ = service_stop_token.cancelled() => {
+                _ = stop_services_token.cancelled() => {
                     trace("Access log write thread received stop services signal, so flushing remaining logs and exiting".to_string());
                     let access_log_buffer_rwlock = running_state.get_access_log_buffer();
                     let access_log_buffer = access_log_buffer_rwlock.read().await;

@@ -11,22 +11,29 @@ use crate::file::normalized_path::{NormalizedPath};
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::logging::syslog::{debug, error, info, trace};
+use http::HeaderValue;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
 use std::path::Path;
 use tokio_util::bytes;
 
+const JSON_HEADER_VALUE: HeaderValue = HeaderValue::from_static("application/json");
+const TEXT_PLAIN_HEADER_VALUE: HeaderValue = HeaderValue::from_static("text/plain");
+
 pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
     let path = gruxi_request.get_path();
     let method = gruxi_request.get_http_method();
 
     let normalized_path_result = NormalizedPath::new("", &path);
-    if normalized_path_result.is_err() {
-        trace(format!("Failed to normalize path: {}", path));
-        return Err(GruxiError::new_with_kind_only(GruxiErrorKind::AdminApi(AdminApiError::InvalidRequest)));
-    }
-    let normalized_path = normalized_path_result.unwrap();
+    let normalized_path = match normalized_path_result {
+        Ok(np) => np,
+        Err(_) => {
+            trace(format!("Failed to normalize path: {}", path));
+            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::AdminApi(AdminApiError::InvalidRequest)));
+        }
+    };
+
     let path_cleaned = normalized_path.get_path();
 
     trace(format!("Handling request for admin portal with path: {}", path_cleaned));
@@ -80,7 +87,7 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
         Err(e) => {
             error(format!("Failed to parse login request: {}", e));
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid JSON format for login"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     };
@@ -93,13 +100,13 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
         Ok(None) => {
             info(format!("Failed login attempt for username: {}", login_request.username));
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid username or password"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(e) => {
             error(format!("Database error during authentication: {}", e));
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     };
@@ -111,7 +118,7 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
             error(format!("Failed to create session: {}", e));
             let return_message = r#"{"error": "Failed to create session"}"#;
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(return_message));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     };
@@ -128,7 +135,7 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
     });
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
-    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
     return Ok(response);
 }
 
@@ -152,24 +159,24 @@ pub async fn handle_logout_request(gruxi_request: &mut GruxiRequest, _admin_site
                     "message": "Logout successful"
                 });
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
-                response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                 Ok(response)
             }
             Ok(false) => {
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::NOT_FOUND.as_u16(), bytes::Bytes::from(r#"{"error": "Session not found"}"#));
-                response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                 Ok(response)
             }
             Err(e) => {
                 error(format!("Failed to logout session: {}", e));
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
-                response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                 Ok(response)
             }
         }
     } else {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "No session token provided"}"#));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         Ok(response)
     }
 }
@@ -184,7 +191,7 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
         Ok(None) => {
             // This shouldn't happen as require_authentication returns error for None
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(auth_response) => {
@@ -194,7 +201,16 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
     }
 
     // Get configuration
-    let config = crate::configuration::load_configuration::fetch_configuration_in_db().expect("Expected to be able to load configuration");
+    let config_result = crate::configuration::load_configuration::fetch_configuration_in_db();
+    let config = match config_result {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            error(format!("Failed to retrieve configuration from database: {}", e));
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Failed to retrieve configuration"}"#));
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            return Ok(response);
+        }
+    };
 
     let json_config = match serde_json::to_string_pretty(&config) {
         Ok(json) => json,
@@ -204,13 +220,13 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
                 hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
                 bytes::Bytes::from(r#"{"error": "Failed to serialize configuration"}"#),
             );
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     };
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(json_config));
-    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
     return Ok(response);
 }
 
@@ -224,7 +240,7 @@ pub async fn admin_post_configuration_reload(gruxi_request: &mut GruxiRequest, _
         Ok(None) => {
             // This shouldn't happen as require_authentication returns error for None
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(auth_response) => {
@@ -246,7 +262,7 @@ pub async fn admin_post_configuration_reload(gruxi_request: &mut GruxiRequest, _
     });
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
-    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
     return Ok(response);
 }
 
@@ -265,7 +281,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(auth_response) => {
@@ -276,7 +292,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
     // Read the request body
     if gruxi_request.get_body_size() == 0 {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Empty request body"}"#));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         return Ok(response);
     }
     let body_bytes = gruxi_request.get_body_bytes().await;
@@ -292,7 +308,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
             });
 
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     };
@@ -312,7 +328,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
                         hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
                         bytes::Bytes::from(r#"{"error": "Configuration saved but failed to serialize response"}"#),
                     );
-                    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                     return Ok(response);
                 }
             };
@@ -324,7 +340,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
             });
 
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Ok(false) => {
@@ -339,7 +355,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
                         hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
                         bytes::Bytes::from(r#"{"error": "Failed to serialize configuration response"}"#),
                     );
-                    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                     return Ok(response);
                 }
             };
@@ -351,7 +367,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
             });
 
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(validation_errors) => {
@@ -361,7 +377,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
             });
 
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     }
@@ -395,19 +411,19 @@ pub async fn require_authentication(gruxi_request: &GruxiRequest) -> Result<Opti
             Ok(Some(session)) => Ok(Some(session)),
             Ok(None) => {
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid or expired session"}"#));
-                response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                 Err(response)
             }
             Err(e) => {
                 error(format!("Failed to verify session: {}", e));
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
-                response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                 Err(response)
             }
         }
     } else {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         Err(response)
     }
 }
@@ -421,7 +437,7 @@ pub async fn admin_monitoring_endpoint(gruxi_request: &mut GruxiRequest, _admin_
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(auth_response) => {
@@ -433,7 +449,7 @@ pub async fn admin_monitoring_endpoint(gruxi_request: &mut GruxiRequest, _admin_
     let monitoring_data = get_monitoring_state().await.get_json().await;
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(monitoring_data.to_string()));
-    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
     return Ok(response);
 }
 
@@ -446,7 +462,7 @@ pub async fn admin_get_basic_data_endpoint(gruxi_request: &mut GruxiRequest, _ad
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(auth_response) => {
@@ -459,14 +475,14 @@ pub async fn admin_get_basic_data_endpoint(gruxi_request: &mut GruxiRequest, _ad
     });
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
-    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
     return Ok(response);
 }
 
 // Admin healthcheck endpoint - returns simple status without authentication
 pub async fn admin_healthcheck_endpoint(_gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from("The server is healthy"));
-    response.headers_mut().insert("Content-Type", "text/plain".parse().unwrap());
+    response.headers_mut().insert("Content-Type", TEXT_PLAIN_HEADER_VALUE);
     return Ok(response);
 }
 
@@ -479,7 +495,7 @@ pub async fn admin_logs_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: 
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(auth_response) => {
@@ -500,7 +516,7 @@ pub async fn admin_logs_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: 
         get_log_file_content(filename).await
     } else {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid logs endpoint path"}"#));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         return Ok(response);
     }
 }
@@ -541,7 +557,7 @@ async fn list_log_files() -> Result<GruxiResponse, GruxiError> {
             });
 
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(e) => {
@@ -552,7 +568,7 @@ async fn list_log_files() -> Result<GruxiResponse, GruxiError> {
             });
 
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(error_response.to_string()));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     }
@@ -563,14 +579,14 @@ async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiErro
     // Validate filename to prevent directory traversal
     if filename.contains("..") || filename.contains("/") || filename.contains("\\") {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid filename"}"#));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         return Ok(response);
     }
 
     // Ensure filename ends with .log
     if !filename.ends_with(".log") {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Only .log files are allowed"}"#));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         return Ok(response);
     }
 
@@ -578,7 +594,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiErro
 
     if !log_path.exists() {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::NOT_FOUND.as_u16(), bytes::Bytes::from(r#"{"error": "Log file not found"}"#));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         return Ok(response);
     }
 
@@ -625,7 +641,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiErro
                     });
 
                     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
-                    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                     return Ok(response);
                 }
                 Err(e) => {
@@ -636,7 +652,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiErro
                     });
 
                     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(error_response.to_string()));
-                    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+                    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                     return Ok(response);
                 }
             }
@@ -649,7 +665,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiErro
             });
 
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(error_response.to_string()));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     }
@@ -675,7 +691,7 @@ pub async fn admin_get_operation_mode_endpoint(gruxi_request: &mut GruxiRequest,
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(auth_response) => {
@@ -693,7 +709,7 @@ pub async fn admin_get_operation_mode_endpoint(gruxi_request: &mut GruxiRequest,
         Err(e) => {
             error(format!("Failed to serialize operation mode response: {}", e));
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Failed to serialize response"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     };
@@ -707,7 +723,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
     // Check if this is a POST request
     if gruxi_request.get_http_method() != "POST" {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16(), bytes::Bytes::from(r#"{"error": "Method not allowed"}"#));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         return Ok(response);
     }
 
@@ -718,7 +734,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(auth_response) => {
@@ -729,7 +745,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
     // Read the request body
     if gruxi_request.get_body_size() == 0 {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Empty request body"}"#));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         return Ok(response);
     }
     let body_bytes = gruxi_request.get_body_bytes().await;
@@ -745,7 +761,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
             });
 
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
-            response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     };
@@ -758,7 +774,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
         });
 
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
-        response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         return Ok(response);
     }
 
@@ -778,6 +794,6 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
     });
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
-    response.headers_mut().insert("Content-Type", "application/json".parse().unwrap());
+    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
     return Ok(response);
 }

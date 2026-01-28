@@ -170,47 +170,45 @@ impl RequestHandler {
             }
         };
 
-        if response_result.is_err() {
-            // Some of the errors are not critical, so we just log and continue
-            // But some we want to convey back to the user directly
-            let err = response_result.as_ref().err().unwrap();
-            match err.kind {
-                // Static file errors that we want to convey directly
-                GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(_)) => {
-                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
-                }
-                GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(_)) => {
-                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16())); // We dont want to expose that it was blocked due to security
-                }
+        return match &response_result {
+            Ok(_) => response_result,
+            Err(err) => {
+                match err.kind {
+                    // Static file errors that we want to convey directly
+                    GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(_)) => {
+                        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
+                    }
+                    GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(_)) => {
+                        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16())); // We dont want to expose that it was blocked due to security
+                    }
 
-                // Proxy errors that we want to convey directly
-                GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable) => {
-                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
-                }
-                GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout) => {
-                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::GATEWAY_TIMEOUT.as_u16()));
-                }
-                GruxiErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed) => {
-                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
-                }
+                    // Proxy errors that we want to convey directly
+                    GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable) => {
+                        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
+                    }
+                    GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout) => {
+                        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::GATEWAY_TIMEOUT.as_u16()));
+                    }
+                    GruxiErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed) => {
+                        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
+                    }
 
-                // PHP errors that we want to convey directly
-                GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(_)) => {
-                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
-                }
-                GruxiErrorKind::PHPProcessor(PHPProcessorError::Timeout) => {
-                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::GATEWAY_TIMEOUT.as_u16()));
-                }
-                GruxiErrorKind::PHPProcessor(PHPProcessorError::Connection) => {
-                    return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
-                }
+                    // PHP errors that we want to convey directly
+                    GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(_)) => {
+                        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()));
+                    }
+                    GruxiErrorKind::PHPProcessor(PHPProcessorError::Timeout) => {
+                        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::GATEWAY_TIMEOUT.as_u16()));
+                    }
+                    GruxiErrorKind::PHPProcessor(PHPProcessorError::Connection) => {
+                        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_GATEWAY.as_u16()));
+                    }
 
-                // Other errors we have logged, but will continue to the next handler
-                _ => {}
+                    // Other errors we have logged, but will continue to the next handler
+                    _ => response_result
+                }
             }
-        }
-
-        response_result
+        };
     }
 }
 
@@ -287,7 +285,6 @@ mod tests {
         assert!(handler.matches_url("/any/path/index.php"));
         assert!(!handler.matches_url("/php"));
         assert!(handler.matches_url("/index.php"));
-
     }
 
     #[test]

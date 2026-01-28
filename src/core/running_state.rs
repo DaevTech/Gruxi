@@ -6,7 +6,7 @@ use crate::{
         request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager},
         site_match::binding_site_cache::BindingSiteCache,
     },
-    logging::syslog::debug,
+    logging::syslog::{debug},
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -61,7 +61,7 @@ impl RunningState {
             processor_manager: processor_manager,
             external_system_handler: external_system_handler,
             http_client: http_client,
-            binding_site_cache: binding_site_cache
+            binding_site_cache: binding_site_cache,
         }
     }
 

@@ -2,7 +2,13 @@ use crate::configuration::load_configuration::fetch_configuration_in_db;
 use std::path::PathBuf;
 
 pub fn export_configuration_to_file(path: &PathBuf) -> Result<(), String> {
-    let cached_configuration = fetch_configuration_in_db().expect("Could not load configuration for export");
+    let cached_configuration_result = fetch_configuration_in_db();
+    let cached_configuration = match cached_configuration_result {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return Err(format!("Failed to retrieve configuration from database: {}", e));
+        }
+    };
 
     // Serialize configuration to JSON
     let serialized = serde_json::to_string_pretty(&cached_configuration).map_err(|e| format!("Failed to serialize configuration: {}", e))?;

@@ -1,5 +1,6 @@
 use crate::http::request_response::gruxi_body::GruxiBody;
 use crate::http::request_response::body_error::{BodyError, box_err};
+use crate::logging::syslog::{error};
 use http::response::Parts;
 use http_body_util::BodyExt;
 use http_body_util::Full;
@@ -21,7 +22,17 @@ pub struct GruxiResponse {
 impl GruxiResponse {
     // Created new empty response with given status code
     pub fn new_empty_with_status(status_code: u16) -> Self {
-        let response = Response::builder().status(status_code).body(Bytes::new()).unwrap();
+        let response_result = Response::builder().status(status_code).body(Bytes::new());
+        let response = match response_result {
+            Ok(r) => r,
+            Err(_) => {
+                error(format!("Failed to create empty response with status code: {}", status_code));
+                let mut response = Response::new(Bytes::new());
+                *response.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+                response
+
+            }
+        };
 
         // Convert to Response<Incoming> compatible format
         let body_size_hint = 0;

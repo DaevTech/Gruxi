@@ -20,13 +20,15 @@ pub trait LoadBalancerImpl: Send + 'static {
     fn get_next_server(&mut self) -> Option<String>;
     fn check_health(&mut self);
     fn check_uri_health(&self, uri: &str, health_register: Arc<AtomicBool>, request_timeout_secs: u64) {
-        let uri_parsed: Result<Uri, _> = uri.parse();
-        if uri_parsed.is_err() {
-            health_register.store(false, Ordering::SeqCst);
-            error(format!("Health check failed: Invalid URI for server '{}'", uri));
-            return;
-        }
-        let server_uri = uri_parsed.unwrap();
+        let uri_parsed_result: Result<Uri, _> = uri.parse();
+        let server_uri = match uri_parsed_result {
+            Ok(u) => u,
+            Err(e) => {
+                health_register.store(false, Ordering::SeqCst);
+                error(format!("Health check failed: Invalid URI for server '{}': {}", uri, e));
+                return;
+            }
+        };
 
         tokio::spawn(async move {
             // Get a client from the running state
@@ -58,8 +60,24 @@ async fn load_balancer_task<T: LoadBalancerImpl>(mut lb: T, mut rx: mpsc::Receiv
 
     // Get a token for shutdown
     let triggers = get_trigger_handler();
-    let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
-    let stop_services_token = triggers.get_trigger("stop_services").expect("Failed to get stop_services trigger").read().await.clone();
+
+    let shutdown_token_option = triggers.get_token("shutdown").await;
+    let shutdown_token = match shutdown_token_option {
+        Some(token) => token,
+        None => {
+            error("Failed to get shutdown token - Could not start load balancer task. Please report a bug".to_string());
+            return;
+        }
+    };
+
+    let stop_services_token_option = triggers.get_token("stop_services").await;
+    let stop_services_token = match stop_services_token_option {
+        Some(token) => token,
+        None => {
+            error("Failed to get stop_services token - Could not start load balancer task. Please report a bug".to_string());
+            return;
+        }
+    };
 
     loop {
         tokio::select! {

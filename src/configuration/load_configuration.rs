@@ -15,7 +15,7 @@ use sqlite::Connection;
 use uuid::Uuid;
 
 // Load the configuration from the database or create a default one if it doesn't exist
-pub fn init() -> Result<Configuration, Vec<String>> {
+pub fn init() -> Configuration {
     // Get our current schema version from db
     let schema_version = get_schema_version();
 
@@ -34,15 +34,28 @@ pub fn init() -> Result<Configuration, Vec<String>> {
             // No schema version found, likely first run - create default configuration
             info("No configuration found, creating default configuration");
             let mut configuration = Configuration::get_default();
-            save_configuration(&mut configuration, true)?;
+            let save_result = save_configuration(&mut configuration, true);
+            if let Err(e) = save_result {
+                panic!("Failed to save default configuration to database: {:?}", e);
+            }
 
             // Update schema version to value of constant CURRENT_CONFIGURATION_VERSION
-            set_schema_version(CURRENT_DB_SCHEMA_VERSION).map_err(|e| vec![format!("Failed to set schema version: {}", e)])?;
+            let set_schema_version_result = set_schema_version(CURRENT_DB_SCHEMA_VERSION).map_err(|e| vec![format!("Failed to set schema version: {}", e)]);
+            if let Err(e) = set_schema_version_result {
+                panic!("Failed to set schema version: {:?}", e);
+            }
 
             configuration
         } else {
             // Load existing configuration
-            fetch_configuration_in_db().map_err(|e| vec![format!("Failed to load configuration from database: {}", e)])?
+            let existing_configuration_result = fetch_configuration_in_db();
+            let existing_configuration = match existing_configuration_result {
+                Ok(conf) => conf,
+                Err(e) => {
+                    panic!("Failed to load configuration from database: {:?}", e);
+                }
+            };
+            existing_configuration
         }
     };
 
@@ -52,7 +65,7 @@ pub fn init() -> Result<Configuration, Vec<String>> {
         add_admin_portal_to_configuration(&mut configuration);
     }
 
-    Ok(configuration)
+    configuration
 }
 
 fn add_admin_portal_to_configuration(configuration: &mut Configuration) {

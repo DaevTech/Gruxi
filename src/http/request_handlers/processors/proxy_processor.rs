@@ -103,7 +103,11 @@ impl ProxyProcessor {
                 i += from_len;
             } else {
                 // Push the next character (handle UTF-8 properly)
-                let ch = s[i..].chars().next().unwrap();
+                let ch_option = s[i..].chars().next();
+                let ch = match ch_option {
+                    Some(c) => c,
+                    None => break,
+                };
                 result.push(ch);
                 i += ch.len_utf8();
             }
@@ -229,13 +233,14 @@ impl ProcessorTrait for ProxyProcessor {
         let running_state_read_lock = running_state.read().await;
         let processor_manager = running_state_read_lock.get_processor_manager();
 
-        let server_to_handle_request = processor_manager.load_balancer_registry.get_next_server(self.id.as_str()).await;
-
-        if server_to_handle_request.is_none() {
-            error(format!("Could not find a upstream server to handle request for proxy processor with id: {}", self.id));
-            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable)));
-        }
-        let server_to_handle_request = server_to_handle_request.unwrap();
+        let server_to_handle_request_option = processor_manager.load_balancer_registry.get_next_server(self.id.as_str()).await;
+        let server_to_handle_request = match server_to_handle_request_option {
+            Some(s) => s,
+            None => {
+                error(format!("No upstream servers are currently available for proxy processor with id: {}", self.id));
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable)));
+            }
+        };
 
         // Rewrite the request URL to point to the upstream server
         let original_uri = gruxi_request.get_uri();

@@ -1,5 +1,5 @@
 use crate::{
-    configuration::{configuration::Configuration, load_configuration::init},
+    configuration::{configuration::Configuration},
     core::triggers::get_trigger_handler,
 };
 use crate::logging::syslog::trace;
@@ -12,7 +12,7 @@ pub struct CachedConfiguration {
 
 impl CachedConfiguration {
     pub fn new() -> Self {
-        let configuration = init().expect("Failed to load configuration");
+        let configuration = super::load_configuration::init();
         CachedConfiguration {
             configuration: Arc::new(RwLock::new(configuration)),
         }
@@ -27,15 +27,20 @@ impl CachedConfiguration {
         trace("Starting thread to monitor for configuration refresh signal for the cached configuration");
 
         let triggers = get_trigger_handler();
-        let refresh_trigger = triggers.get_trigger("refresh_cached_configuration").expect("Failed to get refresh_cached_configuration trigger");
-        let mut refresh_trigger_token = refresh_trigger.read().await.clone();
+        let refresh_trigger_result = triggers.get_token("refresh_cached_configuration").await;
+        let mut refresh_trigger_token = match refresh_trigger_result {
+            Some(trigger) => trigger,
+            None => {
+                panic!("Failed to get refresh_cached_configuration trigger - Configuration reload task aborted - Please report a bug");
+            }
+        };
 
         loop {
             refresh_trigger_token.cancelled().await;
             trace("Refresh cached configuration trigger received, reloading configuration");
 
             {
-                let new_configuration = init().expect("Failed to reload configuration");
+                let new_configuration = super::load_configuration::init();
                 let cached_configuration = get_cached_configuration();
                 let mut config_write_guard = cached_configuration.configuration.write().await;
                 *config_write_guard = new_configuration;
@@ -45,8 +50,13 @@ impl CachedConfiguration {
             }
 
             // Get new token for next time
-            let refresh_trigger = triggers.get_trigger("refresh_cached_configuration").expect("Failed to get refresh_cached_configuration trigger");
-            refresh_trigger_token = refresh_trigger.read().await.clone();
+            let refresh_trigger_result = triggers.get_token("refresh_cached_configuration").await;
+            refresh_trigger_token = match refresh_trigger_result {
+                Some(trigger) => trigger,
+                None => {
+                    panic!("Failed to get refresh_cached_configuration trigger - Configuration reload task aborted - Please report a bug");
+                }
+            };
 
             trace("Cached configuration successfully refreshed");
         }

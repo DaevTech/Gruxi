@@ -1,4 +1,3 @@
-use gruxi::configuration::cached_configuration::get_cached_configuration;
 use gruxi::core::command_line_args::{check_for_command_line_actions, get_command_line_args};
 use gruxi::core::operation_mode::get_operation_mode;
 use gruxi::core::running_state_manager::get_running_state_manager;
@@ -24,7 +23,7 @@ async fn main() {
     start_gruxi_basics();
 
     // Start the running state manager thread, which also listens for configuration changes
-    tokio::spawn(async {
+    let join_handle = tokio::spawn(async {
         // Start tasks that run in the background
         start_background_tasks().await;
 
@@ -36,11 +35,25 @@ async fn main() {
 
         let triggers = get_trigger_handler();
 
-        let shutdown_token_trigger = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger");
+        let shutdown_token_trigger_option = triggers.get_trigger("shutdown");
+        let shutdown_token_trigger = match shutdown_token_trigger_option {
+            Some(trigger) => trigger,
+            None => {
+                error("Failed to get shutdown trigger - If this happens, please report a bug");
+                return;
+            }
+        };
         let shutdown_token = shutdown_token_trigger.read().await.clone();
 
         loop {
-            let configuration_trigger = triggers.get_trigger("reload_configuration").expect("Failed to get reload_configuration trigger");
+            let configuration_trigger_option = triggers.get_trigger("reload_configuration");
+            let configuration_trigger = match configuration_trigger_option {
+                Some(trigger) => trigger,
+                None => {
+                    error("Failed to get reload_configuration trigger - If this happens, please report a bug");
+                    return;
+                }
+            };
             let configuration_token = configuration_trigger.read().await.clone();
 
             select! {
@@ -56,8 +69,10 @@ async fn main() {
             }
         }
     })
-    .await
-    .unwrap();
+    .await;
+    if let Err(e) = join_handle {
+        error(format!("Main loop task exited with error: {}", e));
+    }
 
     // Waiting a little while to allow graceful shutdown
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -83,17 +98,14 @@ fn start_gruxi_basics() {
     info(format!("Operation mode: {:?}", operation_mode));
 
     // Load the configuration early to catch any errors
-    match gruxi::configuration::load_configuration::init() {
-        Ok(_) => {
-            // Load the cached configuration, so it is ready to go
-            get_cached_configuration();
-        }
-        Err(e) => {
-            error(format!("Failed to load configuration: {}", e.join("; ")));
-            std::process::exit(1);
-        }
-    }
+    gruxi::configuration::load_configuration::init();
 
     // Initialize the admin site
-    initialize_admin_site();
+    match initialize_admin_site() {
+        Ok(_) => (),
+        Err(_) => {
+            error("Failed to initialize admin site");
+            std::process::exit(1);
+        }
+    };
 }

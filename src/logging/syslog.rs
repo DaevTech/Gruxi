@@ -118,43 +118,74 @@ impl SysLog {
             _ => {}
         }
 
-        self.buffered_log.buffered_log.lock().unwrap().push(log_entry);
+        match self.buffered_log.buffered_log.lock() {
+            Err(_) => {}
+            Ok(mut guard) => guard.push(log_entry),
+        }
     }
 
     pub async fn start_flushing_thread() {
         let triggers = crate::core::triggers::get_trigger_handler();
-        let mut operation_mode_changed_token = triggers
-            .get_trigger("operation_mode_changed")
-            .expect("Failed to get operation_mode_changed trigger")
-            .read()
-            .await
-            .clone();
-        let shutdown_token = triggers.get_trigger("shutdown").expect("Failed to get shutdown trigger").read().await.clone();
+
+        let operation_mode_changed_token_option = triggers.get_token("operation_mode_changed").await;
+        let mut operation_mode_changed_token = match operation_mode_changed_token_option {
+            Some(token) => token,
+            None => {
+                error("Failed to get operation_mode_changed token - Could not start flushing thread for syslog. Please report a bug".to_string());
+                return;
+            }
+        };
+
+        let shutdown_token_option = triggers.get_token("shutdown").await;
+        let shutdown_token = match shutdown_token_option {
+            Some(token) => token,
+            None => {
+                error("Failed to get shutdown token - Could not start flushing thread for syslog. Please report a bug".to_string());
+                return;
+            }
+        };
 
         loop {
             select! {
                 // Ideally, this would be adjustable according to the work load (such as elapsed time to do a flush in average)
                 _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                    SYS_LOG.read().unwrap().buffered_log.consider_flush(false);
+                    match SYS_LOG.read() {
+                        Err(_) => {
+                            debug("Failed to acquire read lock for syslog during flushing task".to_string());
+                            continue;
+                        },
+                        Ok(sys_log) => {
+                            sys_log.buffered_log.consider_flush(false);
+                        }
+                    }
                 },
                 _ = operation_mode_changed_token.cancelled() => {
                     // Get new operation mode
                     let operation_mode = crate::core::operation_mode::get_operation_mode();
                     let new_log_level = Self::get_log_level_based_on_operation_mode(operation_mode);
                     SysLog::set_new_log_level(new_log_level);
+
                     // Get new token for next time
-                    operation_mode_changed_token = triggers
-                        .get_trigger("operation_mode_changed")
-                        .expect("Failed to get operation_mode_changed trigger")
-                        .read()
-                        .await
-                        .clone();
+                    let operation_mode_changed_token_option = triggers.get_token("operation_mode_changed").await;
+                    operation_mode_changed_token = match operation_mode_changed_token_option {
+                        Some(token) => token,
+                        None => {
+                            error("Failed to get operation_mode_changed token - Could not start flushing thread for syslog. Please report a bug".to_string());
+                            return;
+                        }
+                    };
 
                 },
                 _ = shutdown_token.cancelled() => {
                     // Shutdown in progress, we force flush the logs
-                    let sys_log = SYS_LOG.read().unwrap();
-                    sys_log.buffered_log.consider_flush(true);
+                    match SYS_LOG.read() {
+                        Err(_) => {
+                            debug("Failed to acquire read lock for syslog during flushing task".to_string());
+                        },
+                        Ok(sys_log) => {
+                            sys_log.buffered_log.consider_flush(true);
+                        }
+                    }
                     break;
                 },
             }
@@ -162,14 +193,30 @@ impl SysLog {
     }
 
     fn set_new_log_level(new_log_level: LogType) {
-        SYS_LOG.write().unwrap().buffered_log.consider_flush(true);
-        SYS_LOG.write().unwrap().log_level = new_log_level;
-        SYS_LOG.write().unwrap().calculate_enabled_levels();
+        match SYS_LOG.write() {
+            Err(_) => {
+                error("Failed to acquire write lock for syslog when setting new log level".to_string());
+                return;
+            }
+            Ok(mut guard) => {
+                guard.buffered_log.consider_flush(true);
+                guard.log_level = new_log_level;
+                guard.calculate_enabled_levels();
+            }
+        }
     }
 
     pub fn set_new_stdout_log_level(new_log_level: LogType) {
-        SYS_LOG.write().unwrap().stdout_log_level = new_log_level;
-        SYS_LOG.write().unwrap().calculate_enabled_levels();
+        match SYS_LOG.write() {
+            Err(_) => {
+                error("Failed to acquire write lock for syslog when setting new stdout log level".to_string());
+                return;
+            }
+            Ok(mut guard) => {
+                guard.stdout_log_level = new_log_level;
+                guard.calculate_enabled_levels();
+            }
+        }
     }
 
     fn get_log_level_based_on_operation_mode(operation_mode: OperationMode) -> LogType {
@@ -177,7 +224,7 @@ impl SysLog {
             OperationMode::DEV => LogType::Trace,
             OperationMode::DEBUG => LogType::Debug,
             OperationMode::PRODUCTION => LogType::Info,
-            OperationMode::ULTIMATE => LogType::Warn,
+            OperationMode::ULTIMATE => LogType::Error,
         }
     }
 }
@@ -193,7 +240,7 @@ fn init_log() -> SysLog {
         OperationMode::DEV => LogType::Trace,
         OperationMode::DEBUG => LogType::Debug,
         OperationMode::PRODUCTION => LogType::Info,
-        OperationMode::ULTIMATE => LogType::Warn,
+        OperationMode::ULTIMATE => LogType::Error,
     };
 
     let sys_log = SysLog::new(log_level, LogType::Info);
@@ -202,21 +249,46 @@ fn init_log() -> SysLog {
 }
 
 pub fn error<S: Into<String>>(log: S) {
-    SYS_LOG.read().unwrap().add_log(LogType::Error, log.into());
+    match SYS_LOG.read() {
+        Err(_) => {}
+        Ok(sys_log) => {
+            sys_log.add_log(LogType::Error, log.into());
+        }
+    }
 }
 
 pub fn warn<S: Into<String>>(log: S) {
-    SYS_LOG.read().unwrap().add_log(LogType::Warn, log.into());
+    match SYS_LOG.read() {
+        Err(_) => {}
+        Ok(sys_log) => {
+            sys_log.add_log(LogType::Warn, log.into());
+        }
+    }
 }
 
 pub fn info<S: Into<String>>(log: S) {
-    SYS_LOG.read().unwrap().add_log(LogType::Info, log.into());
+    match SYS_LOG.read() {
+        Err(_) => {}
+        Ok(sys_log) => {
+            sys_log.add_log(LogType::Info, log.into());
+        }
+    }
 }
 
 pub fn debug<S: Into<String>>(log: S) {
-    SYS_LOG.read().unwrap().add_log(LogType::Debug, log.into());
+    match SYS_LOG.read() {
+        Err(_) => {}
+        Ok(sys_log) => {
+            sys_log.add_log(LogType::Debug, log.into());
+        }
+    }
 }
 
 pub fn trace<S: Into<String>>(log: S) {
-    SYS_LOG.read().unwrap().add_log(LogType::Trace, log.into());
+    match SYS_LOG.read() {
+        Err(_) => {}
+        Ok(sys_log) => {
+            sys_log.add_log(LogType::Trace, log.into());
+        }
+    }
 }

@@ -42,7 +42,14 @@ impl MonitoringState {
         let update_interval = tokio::time::Duration::from_secs(update_interval_seconds as u64);
 
         let triggers = get_trigger_handler();
-        let configuration_trigger = triggers.get_trigger("reload_configuration").expect("Failed to get reload_configuration trigger");
+        let configuration_trigger_result = triggers.get_trigger("reload_configuration");
+        let configuration_trigger = match configuration_trigger_result {
+            Some(trigger) => trigger,
+            None => {
+                panic!("Failed to get reload_configuration trigger - Monitoring task exiting - Please report a bug");
+            }
+        };
+
         let mut configuration_token = configuration_trigger.read().await.clone();
 
         loop {
@@ -79,7 +86,14 @@ impl MonitoringState {
             select! {
                 _ = configuration_token.cancelled() => {
                     // Get a new token
-                    let configuration_trigger = triggers.get_trigger("reload_configuration").expect("Failed to get reload_configuration trigger");
+                    let configuration_trigger_result = triggers.get_trigger("reload_configuration");
+                    let configuration_trigger = match configuration_trigger_result {
+                        Some(trigger) => trigger,
+                        None => {
+                            debug("Failed to get reload_configuration trigger - Monitoring task exiting");
+                            return;
+                        }
+                    };
                     configuration_token = configuration_trigger.read().await.clone();
                 },
                 _ = tokio::time::sleep(update_interval) => {}

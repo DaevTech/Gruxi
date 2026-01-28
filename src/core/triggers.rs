@@ -21,6 +21,18 @@ impl Triggers {
         Triggers { triggers }
     }
 
+    pub async fn get_token(&self, name: &str) -> Option<CancellationToken> {
+        let trigger_option = self.triggers.get(name);
+        match trigger_option {
+            Some(token_lock) => {
+                let token_clone = token_lock.clone();
+                let token = token_clone.read().await;
+                Some(token.clone())
+            }
+            None => None,
+        }
+    }
+
     pub fn get_trigger(&self, name: &str) -> Option<Arc<RwLock<CancellationToken>>> {
         self.triggers.get(name).cloned()
     }

@@ -164,73 +164,79 @@ impl Default for PortManager {
     }
 }
 
-#[tokio::test]
-async fn test_port_allocation() {
-    let manager = PortManager::new(9000, 9002);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // Test basic allocation
-    let port1 = manager.allocate_port("service1".to_string()).await;
-    assert_eq!(port1, Some(9000));
+    #[tokio::test]
+    async fn test_port_allocation() {
+        let manager = PortManager::new(9000, 9002);
 
-    let port2 = manager.allocate_port("service2".to_string()).await;
-    assert_eq!(port2, Some(9001));
+        // Test basic allocation
+        let port1 = manager.allocate_port("service1".to_string()).await;
+        assert_eq!(port1, Some(9000));
 
-    let port3 = manager.allocate_port("service3".to_string()).await;
-    assert_eq!(port3, Some(9002));
+        let port2 = manager.allocate_port("service2".to_string()).await;
+        assert_eq!(port2, Some(9001));
 
-    // Should return None when no more ports available
-    let port4 = manager.allocate_port("service4".to_string()).await;
-    assert_eq!(port4, None);
-}
+        let port3 = manager.allocate_port("service3".to_string()).await;
+        assert_eq!(port3, Some(9002));
 
-#[tokio::test]
-async fn test_port_release_and_reuse() {
-    let manager = PortManager::new(9000, 9001);
+        // Should return None when no more ports available
+        let port4 = manager.allocate_port("service4".to_string()).await;
+        assert_eq!(port4, None);
+    }
 
-    // Allocate all ports
-    let port1 = manager.allocate_port("service1".to_string()).await;
-    let port2 = manager.allocate_port("service2".to_string()).await;
-    assert_eq!(port1, Some(9000));
-    assert_eq!(port2, Some(9001));
+    #[tokio::test]
+    async fn test_port_release_and_reuse() {
+        let manager = PortManager::new(9000, 9001);
 
-    // No more ports available
-    let port3 = manager.allocate_port("service3".to_string()).await;
-    assert_eq!(port3, None);
+        // Allocate all ports
+        let port1 = manager.allocate_port("service1".to_string()).await;
+        let port2 = manager.allocate_port("service2".to_string()).await;
+        assert_eq!(port1, Some(9000));
+        assert_eq!(port2, Some(9001));
 
-    // Release a port
-    manager.release_port(9000).await;
+        // No more ports available
+        let port3 = manager.allocate_port("service3".to_string()).await;
+        assert_eq!(port3, None);
 
-    // Should be able to reuse the released port
-    let port4 = manager.allocate_port("service4".to_string()).await;
-    assert_eq!(port4, Some(9000));
-}
+        // Release a port
+        manager.release_port(9000).await;
 
-#[tokio::test]
-async fn test_release_all_ports_for_service() {
-    let manager = PortManager::new(9000, 9002);
+        // Should be able to reuse the released port
+        let port4 = manager.allocate_port("service4".to_string()).await;
+        assert_eq!(port4, Some(9000));
+    }
 
-    // Allocate ports to different services
-    manager.allocate_port("service1".to_string()).await;
-    manager.allocate_port("service1".to_string()).await;
-    manager.allocate_port("service2".to_string()).await;
+    #[tokio::test]
+    async fn test_release_all_ports_for_service() {
+        let manager = PortManager::new(9000, 9002);
 
-    // Release all ports for service1
-    let released = manager.release_all_ports_for_service("service1").await;
-    assert_eq!(released.len(), 2);
+        // Allocate ports to different services
+        manager.allocate_port("service1".to_string()).await;
+        manager.allocate_port("service1".to_string()).await;
+        manager.allocate_port("service2".to_string()).await;
 
-    // Should be able to allocate new ports now
-    let port = manager.allocate_port("service3".to_string()).await;
-    assert!(port.is_some());
-}
+        // Release all ports for service1
+        let released = manager.release_all_ports_for_service("service1").await;
+        assert_eq!(released.len(), 2);
 
-#[tokio::test]
-async fn test_singleton_manager() {
-    let manager = get_port_manager();
+        // Should be able to allocate new ports now
+        let port = manager.allocate_port("service3".to_string()).await;
+        assert!(port.is_some());
+    }
 
-    let port = manager.allocate_port("php-worker-1".to_string()).await;
-    let port = port.expect("expected a port to be allocated");
-    assert!(port >= 9000 && port <= 10000);
+    #[tokio::test]
+    async fn test_singleton_manager() {
+        let manager = get_port_manager();
 
-    let available_count = manager.available_port_count().await;
-    assert!(available_count >= 1 && available_count <= 1000);
+        let port = manager.allocate_port("php-worker-1".to_string()).await;
+        assert!(port.is_some());
+        let port = port.unwrap_or_default();
+        assert!(port >= 9000 && port <= 10000);
+
+        let available_count = manager.available_port_count().await;
+        assert!(available_count >= 1 && available_count <= 1000);
+    }
 }

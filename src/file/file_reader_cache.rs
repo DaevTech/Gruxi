@@ -8,8 +8,11 @@ use crate::{
     configuration::cached_configuration::get_cached_configuration,
     core::triggers::get_trigger_handler,
     file::file_reader_structs::*,
-    http::request_response::{body_error::{BodyError, box_err}, gruxi_request::GruxiRequest},
-    logging::syslog::{debug, trace, warn},
+    http::request_response::{
+        body_error::{BodyError, box_err},
+        gruxi_request::GruxiRequest,
+    },
+    logging::syslog::{debug, error, trace, warn},
 };
 
 use dashmap::DashMap;
@@ -125,17 +128,30 @@ impl FileReaderCache {
                     file_entry.content.raw = Some(raw_bytes);
 
                     if should_compress {
-                        let raw_content = file_entry.content.raw.as_ref().unwrap().as_ref();
-                        let mut gzip_content = Vec::new();
-
-                        match Compression::compress_content(raw_content, &mut gzip_content) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                warn(format!("Failed to compress file {}: {}", file_path, e));
+                        let raw_content_result = file_entry.content.raw.as_ref();
+                        let mut content_found = false;
+                        let raw_content = match raw_content_result {
+                            Some(content) => content.as_ref(),
+                            None => {
+                                warn(format!("Raw content is missing for file: {}", file_path));
+                                content_found = false;
+                                &Arc::new(Bytes::new())
                             }
+                        };
+
+                        // Content should be found, but for safety we check
+                        if content_found {
+                            let mut gzip_content = Vec::new();
+
+                            match Compression::compress_content(raw_content, &mut gzip_content) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    warn(format!("Failed to compress file {}: {}", file_path, e));
+                                }
+                            }
+                            let gzip_bytes = Arc::new(Bytes::from(gzip_content));
+                            file_entry.content.gzip = Some(gzip_bytes);
                         }
-                        let gzip_bytes = Arc::new(Bytes::from(gzip_content));
-                        file_entry.content.gzip = Some(gzip_bytes);
                     }
 
                     trace(format!("File content cached for file: {}", file_path));
@@ -188,8 +204,15 @@ impl FileReaderCache {
         let lifetime_before_check_duration = Duration::from_secs(lifetime_before_check as u64);
 
         let triggers = get_trigger_handler();
-        let configuration_trigger = triggers.get_trigger("reload_configuration").expect("Failed to get reload_configuration trigger");
-        let configuration_token = configuration_trigger.read().await.clone();
+
+        let configuration_token_option = triggers.get_token("reload_configuration").await;
+        let configuration_token = match configuration_token_option {
+            Some(token) => token,
+            None => {
+                error("Failed to get reload_configuration token - File cache update thread exiting - Please report a bug".to_string());
+                return;
+            }
+        };
 
         loop {
             select! {

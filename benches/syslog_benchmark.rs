@@ -20,11 +20,25 @@ pub fn syslog_benchmark_internal(c: &mut Criterion) {
 }
 
 pub fn syslog_benchmark_without_stdout_single(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt = match Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            panic!("Failed to create Tokio runtime: {}", e);
+        }
+    };
+
     rt.block_on(async {
         // Initialize the syslog
         SysLog::set_new_stdout_log_level(LogType::Warn);
-        SYS_LOG.write().unwrap().calculate_enabled_levels();
+
+        match SYS_LOG.write() {
+            Ok(mut syslog) => {
+                syslog.calculate_enabled_levels();
+            }
+            Err(e) => {
+                panic!("Failed to acquire write lock on SYS_LOG: {}", e);
+            }
+        }
     });
 
     c.bench_function("syslog_error", |b| {
@@ -40,11 +54,23 @@ async fn syslog_benchmark_concurrency() {
 }
 
 pub fn syslog_benchmark_without_stdout_high_concurrency(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt = match Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            panic!("Failed to create Tokio runtime: {}", e);
+        }
+    };
     rt.block_on(async {
         // Initialize the syslog
         SysLog::set_new_stdout_log_level(LogType::Warn);
-        SYS_LOG.write().unwrap().calculate_enabled_levels();
+        match SYS_LOG.write() {
+            Ok(mut syslog) => {
+                syslog.calculate_enabled_levels();
+            }
+            Err(e) => {
+                panic!("Failed to acquire write lock on SYS_LOG: {}", e);
+            }
+        }
     });
 
     c.bench_function("syslog_error", |b| {
