@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
+import TagInput from './TagInput.vue';
 
 // Define props
 const props = defineProps({
@@ -470,36 +471,7 @@ const removePhpCgiHandler = (index) => {
     }
 };
 
-// Add hostname to site
-const addHostname = (siteIndex) => {
-    if (config.value.sites && config.value.sites[siteIndex]) {
-        config.value.sites[siteIndex].hostnames.push('example.com');
-    }
-};
-
-// Remove hostname from site
-const removeHostname = (siteIndex, hostnameIndex) => {
-    if (config.value.sites && config.value.sites[siteIndex] && config.value.sites[siteIndex].hostnames.length > hostnameIndex) {
-        config.value.sites[siteIndex].hostnames.splice(hostnameIndex, 1);
-    }
-};
-
 // ========== Core -> Server Settings ==========
-
-const addBlockedFilePattern = () => {
-    if (!config.value?.core?.server_settings) return;
-    if (!Array.isArray(config.value.core.server_settings.blocked_file_patterns)) {
-        config.value.core.server_settings.blocked_file_patterns = [];
-    }
-    config.value.core.server_settings.blocked_file_patterns.push('.tmp');
-};
-
-const removeBlockedFilePattern = (patternIndex) => {
-    if (!config.value?.core?.server_settings?.blocked_file_patterns) return;
-    if (config.value.core.server_settings.blocked_file_patterns.length > patternIndex) {
-        config.value.core.server_settings.blocked_file_patterns.splice(patternIndex, 1);
-    }
-};
 
 // Add enabled handler to site
 const addEnabledHandler = (siteIndex) => {
@@ -598,20 +570,6 @@ const associateSiteWithBinding = (siteId, bindingId) => {
 const disassociateSiteFromBinding = (siteId, bindingId) => {
     if (!config.value.binding_sites) return;
     config.value.binding_sites = config.value.binding_sites.filter((bs) => !(bs.site_id === siteId && bs.binding_id === bindingId));
-};
-
-// Add gzip content type
-const addGzipContentType = () => {
-    if (config.value.core && config.value.core.gzip) {
-        config.value.core.gzip.compressible_content_types.push('text/plain');
-    }
-};
-
-// Remove gzip content type
-const removeGzipContentType = (index) => {
-    if (config.value.core && config.value.core.gzip && config.value.core.gzip.compressible_content_types.length > index) {
-        config.value.core.gzip.compressible_content_types.splice(index, 1);
-    }
 };
 
 // ========== Site Processor Management Functions ==========
@@ -731,22 +689,6 @@ const removeProcessorFromSite = (siteIndex, processorIndex) => {
     const rhIndex = config.value.request_handlers.findIndex((h) => h.id === requestHandler.id);
     if (rhIndex !== -1) {
         config.value.request_handlers.splice(rhIndex, 1);
-    }
-};
-
-// Add URL match pattern to processor
-const addUrlMatchToProcessor = (siteIndex, processorIndex, value = '*') => {
-    const processors = getSiteProcessors(siteIndex);
-    if (processors && processors[processorIndex] && value.trim()) {
-        processors[processorIndex].url_match.push(value.trim());
-    }
-};
-
-// Remove URL match pattern from processor
-const removeUrlMatchFromProcessor = (siteIndex, processorIndex, matchIndex) => {
-    const processors = getSiteProcessors(siteIndex);
-    if (processors && processors[processorIndex]) {
-        processors[processorIndex].url_match.splice(matchIndex, 1);
     }
 };
 
@@ -1038,26 +980,10 @@ onMounted(() => {
                                     <div class="form-field">
                                         <div class="list-field compact">
                                             <label>Hostnames (use * to match all hostnames)</label>
-                                            <div class="tag-field">
-                                                <span v-for="(hostname, hostnameIndex) in site.hostnames" :key="hostnameIndex" class="tag-item">
-                                                    {{ hostname }}
-                                                    <button @click="removeHostname(siteIndex, hostnameIndex)" class="tag-remove-button" type="button">×</button>
-                                                </span>
-                                                <input
-                                                    type="text"
-                                                    class="tag-input"
-                                                    placeholder="Add hostname and hit enter..."
-                                                    @keydown.enter.prevent="
-                                                        (e) => {
-                                                            if (e.target.value.trim()) {
-                                                                addHostname(siteIndex);
-                                                                site.hostnames[site.hostnames.length - 1] = e.target.value.trim();
-                                                                e.target.value = '';
-                                                            }
-                                                        }
-                                                    "
-                                                />
-                                            </div>
+                                            <TagInput
+                                                v-model="site.hostnames"
+                                                placeholder="Add hostname and press Enter..."
+                                            />
                                         </div>
                                     </div>
 
@@ -1166,21 +1092,10 @@ onMounted(() => {
 
                                                     <div class="form-field">
                                                         <label>URL Match Patterns <span class="help-icon" data-tooltip="List of url match patterns. * is used to match on all urls and means that this processor will try to serve all urls, if possible. You can add multiple patterns to match for this processor, such as '/assets' and '/static'.">?</span></label>
-                                                        <div class="tag-field">
-                                                            <div v-for="(pattern, patternIndex) in processor.handler.url_match" :key="patternIndex" class="tag-item">
-                                                                {{ pattern }}
-                                                                <button @click="removeUrlMatchFromProcessor(siteIndex, processorIndex, patternIndex)" class="tag-remove-button">×</button>
-                                                            </div>
-                                                            <input
-                                                                @keydown.enter.prevent="
-                                                                    addUrlMatchToProcessor(siteIndex, processorIndex, $event.target.value);
-                                                                    $event.target.value = '';
-                                                                "
-                                                                type="text"
-                                                                placeholder="Enter pattern and press Enter"
-                                                                class="tag-input"
-                                                            />
-                                                        </div>
+                                                        <TagInput
+                                                            v-model="processor.handler.url_match"
+                                                            placeholder="Enter pattern and press Enter"
+                                                        />
                                                     </div>
 
                                                     <!-- Processor type-specific configuration -->
@@ -1512,26 +1427,10 @@ onMounted(() => {
                                             Blocked File Patterns
                                             <span class="help-icon" data-tooltip="File extensions to block from being served by static file handlers (e.g. .php, .sql). Each value must start with a dot. When a client requests a blocked file they will see a HTTP 404 error, so it just seems like it is not found.">?</span>
                                         </label>
-                                        <div class="tag-field">
-                                            <span v-for="(pattern, patternIndex) in config.core.server_settings.blocked_file_patterns || []" :key="patternIndex" class="tag-item">
-                                                {{ pattern }}
-                                                <button @click="removeBlockedFilePattern(patternIndex)" class="tag-remove-button" type="button">×</button>
-                                            </span>
-                                            <input
-                                                type="text"
-                                                class="tag-input"
-                                                placeholder="Add pattern... (e.g. .bak)"
-                                                @keydown.enter.prevent="
-                                                    (e) => {
-                                                        if (e.target.value.trim()) {
-                                                            addBlockedFilePattern();
-                                                            config.core.server_settings.blocked_file_patterns[config.core.server_settings.blocked_file_patterns.length - 1] = e.target.value.trim();
-                                                            e.target.value = '';
-                                                        }
-                                                    }
-                                                "
-                                            />
-                                        </div>
+                                        <TagInput
+                                            v-model="config.core.server_settings.blocked_file_patterns"
+                                            placeholder="Add pattern and press Enter... (e.g. .bak)"
+                                        />
                                     </div>
                                 </div>
                             </div>
@@ -1645,13 +1544,10 @@ onMounted(() => {
                                 </div>
                                 <div class="form-field full-width">
                                     <label>Compressible Content Types</label>
-                                    <div class="array-field">
-                                        <div v-for="(contentType, index) in config.core.gzip.compressible_content_types" :key="index" class="array-item">
-                                            <input v-model="config.core.gzip.compressible_content_types[index]" type="text" />
-                                            <button @click="removeGzipContentType(index)" type="button" class="remove-button" title="Remove Content Type">✕</button>
-                                        </div>
-                                        <button @click="addGzipContentType" type="button" class="add-button">+ Add Content Type</button>
-                                    </div>
+                                    <TagInput
+                                        v-model="config.core.gzip.compressible_content_types"
+                                        placeholder="Add content type and press Enter... (e.g. text/html)"
+                                    />
                                 </div>
                             </div>
                         </div>
