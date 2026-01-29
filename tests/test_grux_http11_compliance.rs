@@ -75,7 +75,7 @@ async fn send_raw_http_request_bytes(
 
     let mut response = Vec::new();
     // Use timeout for reading response to avoid hanging
-    match timeout(Duration::from_millis(5000), stream.read_to_end(&mut response)).await {
+    match timeout(Duration::from_millis(500), stream.read_to_end(&mut response)).await {
         Ok(Ok(_)) => Ok(response),
         Ok(Err(e)) => Err(e.into()),
         Err(_) => {

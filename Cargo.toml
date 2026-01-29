@@ -47,6 +47,7 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports", "cargo_bench_support"] }
+tokio-rustls = "0.26"
 
 #[[bench]]
 #name = "gruxi"

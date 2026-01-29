@@ -1012,6 +1012,7 @@ dependencies = [
  "sqlite",
  "tls-listener",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tokio-util",
  "unicode-general-category",
