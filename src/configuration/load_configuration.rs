@@ -290,22 +290,19 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
                 core.file_cache.is_enabled = value.parse::<bool>().map_err(|e| format!("Failed to parse file_cache_is_enabled: {}", e))?;
             }
             "file_cache_cache_item_size" => {
-                core.file_cache.cache_item_size = value.parse::<usize>().map_err(|e| format!("Failed to parse file_cache_cache_item_size: {}", e))?;
+                core.file_cache.cache_item_size = value.parse::<u64>().map_err(|e| format!("Failed to parse file_cache_cache_item_size: {}", e))?;
             }
             "file_cache_cache_max_size_per_file" => {
-                core.file_cache.cache_max_size_per_file = value.parse::<usize>().map_err(|e| format!("Failed to parse file_cache_cache_max_size_per_file: {}", e))?;
+                core.file_cache.cache_max_size_per_file = value.parse::<u64>().map_err(|e| format!("Failed to parse file_cache_cache_max_size_per_file: {}", e))?;
             }
-            "file_cache_cache_item_time_between_checks" => {
-                core.file_cache.cache_item_time_between_checks = value.parse::<usize>().map_err(|e| format!("Failed to parse file_cache_cache_item_time_between_checks: {}", e))?;
-            }
-            "file_cache_cleanup_thread_interval" => {
-                core.file_cache.cleanup_thread_interval = value.parse::<usize>().map_err(|e| format!("Failed to parse file_cache_cleanup_thread_interval: {}", e))?;
+            "file_cache_update_thread_interval" => {
+                core.file_cache.cache_update_thread_interval = value.parse::<u64>().map_err(|e| format!("Failed to parse file_cache_update_thread_interval: {}", e))?;
             }
             "file_cache_max_item_lifetime" => {
-                core.file_cache.max_item_lifetime = value.parse::<usize>().map_err(|e| format!("Failed to parse file_cache_max_item_lifetime: {}", e))?;
+                core.file_cache.max_item_lifetime = value.parse::<u64>().map_err(|e| format!("Failed to parse file_cache_max_item_lifetime: {}", e))?;
             }
             "file_cache_forced_eviction_threshold" => {
-                core.file_cache.forced_eviction_threshold = value.parse::<usize>().map_err(|e| format!("Failed to parse file_cache_forced_eviction_threshold: {}", e))?;
+                core.file_cache.forced_eviction_threshold = value.parse::<u64>().map_err(|e| format!("Failed to parse file_cache_forced_eviction_threshold: {}", e))?;
             }
             // Gzip
             "gzip_is_enabled" => {

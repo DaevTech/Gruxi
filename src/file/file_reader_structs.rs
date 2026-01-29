@@ -6,7 +6,7 @@ use hyper::body::Bytes;
 pub struct FileReaderCache {
     pub(crate) cache: Arc<DashMap<String, Arc<FileEntry>>>,
     pub(crate) is_caching_enabled: bool,
-    pub(crate) cached_items_last_checked: Arc<DashMap<String, (Instant, Instant, SystemTime)>>,
+    pub(crate) cached_items_last_checked: Arc<DashMap<String, (Instant, Instant, SystemTime)>>, // key:filepath, value:(added time, last checked time, last modified time)
     pub(crate) max_file_size: u64,
     pub(crate) gzip_enabled: bool,
     pub(crate) compressible_content_types: Vec<String>,

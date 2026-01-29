@@ -7,6 +7,26 @@ pub struct ServerSettings {
 }
 
 impl ServerSettings {
+    pub fn new() -> Self {
+        ServerSettings {
+            max_body_size: 10 * 1024 * 1024, // 10 MB
+            blocked_file_patterns: vec![
+                ".tmp".to_string(),
+                ".config".to_string(),
+                ".php".to_string(),
+                ".sql".to_string(),
+                ".bak".to_string(),
+                ".old".to_string(),
+                ".orig".to_string(),
+                ".conf".to_string(),
+                ".ini".to_string(),
+                ".log".to_string(),
+                ".key".to_string(),
+                ".pem".to_string(),
+            ],
+        }
+    }
+
     pub fn sanitize(&mut self) {
         // Ensure blocked file patterns are lowercase for consistent matching and remove any asterisk before extension
         self.blocked_file_patterns = self.blocked_file_patterns.iter().map(|p| p.to_lowercase().replace("*", "")).collect();

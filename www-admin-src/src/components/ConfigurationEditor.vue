@@ -1502,12 +1502,8 @@ onMounted(() => {
                                     <input v-model.number="fileCacheMaxSizePerFileMb" type="number" min="0" step="0.01" />
                                 </div>
                                 <div class="form-field">
-                                    <label>How often to check files for changes (seconds) <span class="help-icon" data-tooltip="Interval in seconds to check cached files for changes.">?</span></label>
-                                    <input v-model.number="config.core.file_cache.cache_item_time_between_checks" type="number" min="1" />
-                                </div>
-                                <div class="form-field">
-                                    <label>Cleanup Thread Interval (seconds) <span class="help-icon" data-tooltip="Interval in seconds for the cleanup thread to run, which periodically cleans up expired cache items.">?</span></label>
-                                    <input v-model.number="config.core.file_cache.cleanup_thread_interval" type="number" min="1" />
+                                    <label>Cache Update Thread Interval (seconds) <span class="help-icon" data-tooltip="Interval in seconds for the cache update thread to run, which periodically cleans up expired cache items and check for file updates.">?</span></label>
+                                    <input v-model.number="config.core.file_cache.cache_update_thread_interval" type="number" min="1" />
                                 </div>
                                 <div class="form-field">
                                     <label>Max Time To Keep a File (seconds) <span class="help-icon" data-tooltip="Maximum time in seconds to keep a file in the cache before it is eligible for eviction. Will be applied when the cache reaches its maximum size or over the percentage threshold.">?</span></label>

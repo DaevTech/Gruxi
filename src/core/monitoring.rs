@@ -27,7 +27,7 @@ impl MonitoringState {
             server_start_time: std::time::Instant::now(),
             file_cache_enabled: AtomicBool::new(configuration.core.file_cache.is_enabled),
             file_cache_current_items: AtomicUsize::new(0), // Updated from monitoring thread
-            file_cache_max_items: AtomicUsize::new(configuration.core.file_cache.cache_item_size),
+            file_cache_max_items: AtomicUsize::new(configuration.core.file_cache.cache_item_size as usize),
         }
     }
 
@@ -75,7 +75,7 @@ impl MonitoringState {
                 let (file_cache_enabled, file_cache_max_items) = {
                     let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
                     let configuration = cached_configuration.get_configuration().await;
-                    (configuration.core.file_cache.is_enabled, configuration.core.file_cache.cache_item_size)
+                    (configuration.core.file_cache.is_enabled, configuration.core.file_cache.cache_item_size as usize)
                 };
                 monitoring_state.file_cache_enabled.store(file_cache_enabled, Ordering::Relaxed);
                 monitoring_state.file_cache_max_items.store(file_cache_max_items, Ordering::Relaxed);

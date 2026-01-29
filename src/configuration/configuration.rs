@@ -41,50 +41,9 @@ impl Configuration {
             sites: vec![],
             binding_sites: vec![],
             core: Core {
-                file_cache: FileCache {
-                    is_enabled: true,
-                    cache_item_size: 1000,
-                    cache_max_size_per_file: 1024 * 1024 * 1,
-                    cache_item_time_between_checks: 30, // seconds
-                    cleanup_thread_interval: 10,        // seconds
-                    max_item_lifetime: 60,              // seconds
-                    forced_eviction_threshold: 70,      // 1-99 %
-                },
-                gzip: Gzip {
-                    is_enabled: false,
-                    compressible_content_types: vec![
-                        "text/".to_string(),
-                        "application/javascript".to_string(),
-                        "application/json".to_string(),
-                        "application/xml".to_string(),
-                        "application/xhtml+xml".to_string(),
-                        "application/x-javascript".to_string(),
-                        "text/css".to_string(),
-                        "text/html".to_string(),
-                        "text/javascript".to_string(),
-                        "application/x-yaml".to_string(),
-                        "image/svg+xml".to_string(),
-                        "application/font-woff".to_string(),
-                        "application/font-woff2".to_string(),
-                    ],
-                },
-                server_settings: ServerSettings {
-                    max_body_size: 10 * 1024 * 1024, // 10 MB
-                    blocked_file_patterns: vec![
-                        ".tmp".to_string(),
-                        ".config".to_string(),
-                        ".php".to_string(),
-                        ".sql".to_string(),
-                        ".bak".to_string(),
-                        ".old".to_string(),
-                        ".orig".to_string(),
-                        ".conf".to_string(),
-                        ".ini".to_string(),
-                        ".log".to_string(),
-                        ".key".to_string(),
-                        ".pem".to_string(),
-                    ]
-                },
+                file_cache: FileCache::new(),
+                gzip: Gzip::new(),
+                server_settings: ServerSettings::new(),
                 admin_portal: AdminPortal::new(),
                 tls_settings: TlsSettings::new(),
             },

@@ -1,9 +1,6 @@
 use sqlite::Connection;
 
-use crate::{
-    core::database_connection::get_database_connection,
-    database::database_schema::{get_schema_version},
-};
+use crate::{core::database_connection::get_database_connection, database::database_schema::get_schema_version};
 
 pub fn migrate_database() -> i32 {
     // Get our current schema version from db
@@ -92,5 +89,10 @@ fn migrate_db_3_to_4(connection: &Connection) -> Result<(), sqlite::Error> {
 fn migrate_db_4_to_5(connection: &Connection) -> Result<(), sqlite::Error> {
     // Remove "tls_certificate_cache_path" from "server_settings" table
     connection.execute("DELETE from server_settings WHERE setting_key = 'tls_certificate_cache_path';")?;
+    // Remove "file_cache_cache_item_time_between_checks" from "server_settings" table
+    connection.execute("DELETE from server_settings WHERE setting_key = 'file_cache_cache_item_time_between_checks';")?;
+    // Update "file_cache_cleanup_thread_interval" to be "file_cache_update_thread_interval" in "server_settings" table
+    connection.execute("UPDATE server_settings SET setting_key = 'file_cache_update_thread_interval' WHERE setting_key = 'file_cache_cleanup_thread_interval';")?;
+
     Ok(())
 }

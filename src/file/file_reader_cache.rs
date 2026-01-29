@@ -37,10 +37,10 @@ impl FileReaderCache {
         let file_data_config = &config.core.file_cache;
 
         let is_caching_enabled = file_data_config.is_enabled;
-        let max_file_size = file_data_config.cache_max_size_per_file as u64;
+        let max_file_size = file_data_config.cache_max_size_per_file;
         let capacity = file_data_config.cache_item_size;
         let max_item_lifetime = file_data_config.max_item_lifetime;
-        let cleanup_thread_interval = file_data_config.cleanup_thread_interval;
+        let cache_update_thread_interval = file_data_config.cache_update_thread_interval;
         let forced_eviction_threshold = file_data_config.forced_eviction_threshold;
 
         let compressible_content_types = &config.core.gzip.compressible_content_types;
@@ -49,9 +49,9 @@ impl FileReaderCache {
         let cache = Arc::new(DashMap::new());
         let cached_items_last_checked = Arc::new(DashMap::new());
 
-        // Start the cleanup thread
+        // Start the cache update thread
         if is_caching_enabled {
-            // Update/cleanup cache thread
+            // Update/cache cache thread
             let cache_clone_update = cache.clone();
             let last_checked_clone = cached_items_last_checked.clone();
             let eviction_threshold: f64 = (capacity as f64 * (forced_eviction_threshold as f64 / 100.0)).round();
@@ -60,8 +60,8 @@ impl FileReaderCache {
                 Self::update_cache(
                     cache_clone_update,
                     last_checked_clone,
-                    cleanup_thread_interval as u64,
-                    max_item_lifetime as u64,
+                    cache_update_thread_interval,
+                    max_item_lifetime,
                     eviction_threshold as u64,
                 )
                 .await;
@@ -194,17 +194,17 @@ impl FileReaderCache {
     async fn update_cache(
         cache: Arc<DashMap<String, Arc<FileEntry>>>,
         cached_items_last_checked: Arc<DashMap<String, (Instant, Instant, SystemTime)>>,
-        lifetime_before_check: u64,
+        cache_update_thread_interval: u64,
         max_item_lifetime: u64,
         eviction_threshold: u64,
     ) {
-        let mut interval = interval(Duration::from_secs(10));
-
+        // Time interval for checking cache
+        let mut interval = interval(Duration::from_secs(cache_update_thread_interval));
+        // Each items max lifetime
         let max_item_lifetime_duration = Duration::from_secs(max_item_lifetime as u64);
-        let lifetime_before_check_duration = Duration::from_secs(lifetime_before_check as u64);
 
+        // Get configuration reload trigger
         let triggers = get_trigger_handler();
-
         let configuration_token_option = triggers.get_token("reload_configuration").await;
         let configuration_token = match configuration_token_option {
             Some(token) => token,
@@ -228,36 +228,34 @@ impl FileReaderCache {
             trace("[FileCacheUpdate] Checking if we are above the eviction threshold, so we can delete files in cache that have been in cache for too long".to_string());
             let current_cache_size = cache.len() as u64;
             if current_cache_size > eviction_threshold {
-                trace("[FileCacheUpdate] Eviction threshold exceeded, triggering cleanup of items older than max".to_string());
+                trace("[FileCacheUpdate] Eviction threshold exceeded, triggering clean-up of items older than max item lifetime".to_string());
                 let files_to_remove: Vec<_> = cached_items_last_checked
                     .iter()
-                    .filter(|entry| entry.value().1.elapsed() > max_item_lifetime_duration)
+                    .filter(|entry| entry.value().0.elapsed() > max_item_lifetime_duration)
                     .map(|entry| entry.key().clone())
                     .collect();
 
                 trace(format!("[FileCacheUpdate] Removing {} files from cache due to eviction threshold", files_to_remove.len()));
 
                 // Remove item from cache
+                let files_to_remove_len = files_to_remove.len();
                 for path in files_to_remove {
                     cache.remove(&path);
                     cached_items_last_checked.remove(&path);
                 }
+                trace(format!("[FileCacheUpdate] Eviction cleanup completed - Removed {} files", files_to_remove_len));
             } else {
-                trace("[FileCacheUpdate] Cache size is below eviction threshold, no action taken".to_string());
+                trace("[FileCacheUpdate] Cache size is below eviction threshold - No delete action taken".to_string());
             }
 
             trace("[FileCacheUpdate] Checking for modified timestamps and if known files still exist".to_string());
-
-            // Start by grapping a list of file we want to check on, up to 100
+            // Get a list of files to check
             let files_to_check: Vec<(String, (Instant, Instant, SystemTime))> = cached_items_last_checked
                 .iter()
-                .filter(|entry| entry.value().1.elapsed() > lifetime_before_check_duration)
-                .take(100)
                 .map(|entry| (entry.key().clone(), entry.value().clone()))
                 .collect();
 
             trace(format!("[FileCacheUpdate] Files found to check for modified timestamps: {}", files_to_check.len()));
-
             // Now we go through the list, to check if the file was modified since last known timestamp
             for (path, (added, _last_checked, last_modified)) in files_to_check {
                 let metadata = match std::fs::metadata(&path) {

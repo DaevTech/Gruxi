@@ -310,7 +310,7 @@ onMounted(() => {
                                     <h3>File Cache</h3>
                                 </div>
                                 <div class="stat-value">
-                                    {{ stats.fileCache.enabled ? `${stats.fileCache.currentItems} / ${stats.fileCache.maxItems}` : 'Disabled' }}
+                                    {{ stats.fileCache.enabled ? `${stats.fileCache.currentItems}` : 'Disabled' }}
                                 </div>
                                 <div class="stat-subtitle">
                                     {{ stats.fileCache.enabled ? 'files cached' : '' }}

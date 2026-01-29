@@ -3,15 +3,25 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileCache {
     pub is_enabled: bool,
-    pub cache_item_size: usize,
-    pub cache_max_size_per_file: usize,
-    pub cache_item_time_between_checks: usize,
-    pub cleanup_thread_interval: usize,
-    pub max_item_lifetime: usize,         // in seconds
-    pub forced_eviction_threshold: usize, // 1-99 %
+    pub cache_item_size: u64,              // in number of items, to aim for, not a hard limit
+    pub cache_max_size_per_file: u64,      // Max size per file in bytes
+    pub cache_update_thread_interval: u64, // in seconds
+    pub max_item_lifetime: u64,            // in seconds
+    pub forced_eviction_threshold: u64,    // 1-99 %
 }
 
 impl FileCache {
+    pub fn new() -> Self {
+        FileCache {
+            is_enabled: true,
+            cache_item_size: 1000,
+            cache_max_size_per_file: 1 * 1024 * 1024, // bytes
+            cache_update_thread_interval: 30,         // seconds
+            max_item_lifetime: 60,                    // seconds
+            forced_eviction_threshold: 80,            // 1-99%
+        }
+    }
+
     pub fn sanitize(&mut self) {}
 
     pub fn validate(&self) -> Result<(), Vec<String>> {
@@ -27,14 +37,9 @@ impl FileCache {
             errors.push("Max size per file cannot be 0 bytes".to_string());
         }
 
-        // Validate cache_item_time_between_checks
-        if self.cache_item_time_between_checks == 0 {
-            errors.push("Cache item time between checks cannot be 0".to_string());
-        }
-
-        // Validate cleanup_thread_interval
-        if self.cleanup_thread_interval == 0 {
-            errors.push("Cleanup thread interval cannot be 0".to_string());
+        // Validate cache_update_thread_interval
+        if self.cache_update_thread_interval == 0 {
+            errors.push("Cache update thread interval cannot be 0".to_string());
         }
 
         // Validate max_item_lifetime

@@ -207,8 +207,7 @@ fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> 
     save_server_settings(connection, "file_cache_is_enabled", &core.file_cache.is_enabled.to_string())?;
     save_server_settings(connection, "file_cache_cache_item_size", &core.file_cache.cache_item_size.to_string())?;
     save_server_settings(connection, "file_cache_cache_max_size_per_file", &core.file_cache.cache_max_size_per_file.to_string())?;
-    save_server_settings(connection, "file_cache_cache_item_time_between_checks", &core.file_cache.cache_item_time_between_checks.to_string())?;
-    save_server_settings(connection, "file_cache_cleanup_thread_interval", &core.file_cache.cleanup_thread_interval.to_string())?;
+    save_server_settings(connection, "file_cache_update_thread_interval", &core.file_cache.cache_update_thread_interval.to_string())?;
     save_server_settings(connection, "file_cache_max_item_lifetime", &core.file_cache.max_item_lifetime.to_string())?;
     save_server_settings(connection, "file_cache_forced_eviction_threshold", &core.file_cache.forced_eviction_threshold.to_string())?;
 

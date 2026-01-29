@@ -7,6 +7,27 @@ pub struct Gzip {
 }
 
 impl Gzip {
+    pub fn new() -> Self {
+        Gzip {
+            is_enabled: false,
+            compressible_content_types: vec![
+                "text/".to_string(),
+                "application/javascript".to_string(),
+                "application/json".to_string(),
+                "application/xml".to_string(),
+                "application/xhtml+xml".to_string(),
+                "application/x-javascript".to_string(),
+                "text/css".to_string(),
+                "text/html".to_string(),
+                "text/javascript".to_string(),
+                "application/x-yaml".to_string(),
+                "image/svg+xml".to_string(),
+                "application/font-woff".to_string(),
+                "application/font-woff2".to_string(),
+            ],
+        }
+    }
+
     pub fn sanitize(&mut self) {
         // Clean compressible_content_types: trim, remove empty
         self.compressible_content_types = self.compressible_content_types.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
