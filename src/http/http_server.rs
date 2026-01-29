@@ -157,7 +157,7 @@ async fn start_server_binding(binding: Binding) {
                                         monitoring_state.increment_requests_in_queue();
 
                                         if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token)).catch_unwind().await {
-                                            debug(format!("Panic occurred while serving TLS connection: {:?}", panic));
+                                            handle_connection_panic(panic);
                                         }
 
                                         // Decrement when connection is fully handled
@@ -205,7 +205,7 @@ async fn start_server_binding(binding: Binding) {
                                 monitoring_state.increment_requests_in_queue();
 
                                 if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token)).catch_unwind().await {
-                                    debug(format!("Panic occurred while serving connection: {:?}", panic));
+                                    handle_connection_panic(panic);
                                 }
 
                                 // Decrement when connection is fully handled
@@ -220,6 +220,20 @@ async fn start_server_binding(binding: Binding) {
             };
         }
     }
+}
+
+fn handle_connection_panic(panic: Box<dyn std::any::Any + Send>) {
+    let message = if let Some(s) = panic.downcast_ref::<&str>() {
+        *s
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        "Panic occured but payload is not a string"
+    };
+    error(format!(
+        "Panic occurred in request handling while serving connection: {:?} - Please submit a bug with this information and message",
+        message
+    ));
 }
 
 // Helper function to serve a connection (works for both TLS and non-TLS)

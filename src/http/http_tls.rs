@@ -1,9 +1,9 @@
 use crate::core::running_state_manager::get_running_state_manager;
-use crate::logging::syslog::{debug, warn};
+use crate::logging::syslog::{debug, error, info, warn};
 use crate::tls::shared_acme_manager::{get_shared_acme_domains, get_shared_acme_manager_async};
 use rand;
-use rustls_acme::ResolvesServerCertAcme;
 use rustls::crypto::aws_lc_rs;
+use rustls_acme::ResolvesServerCertAcme;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::BufReader;
 use tls_listener::rustls as tokio_rustls;
@@ -171,36 +171,6 @@ impl ResolvesServerCert for UnifiedCertResolver {
     }
 }
 
-// Legacy FallbackCertResolver kept for backward compatibility (non-ACME path)
-#[derive(Debug)]
-struct FallbackCertResolver {
-    sni_resolver: ResolvesServerCertUsingSni,
-    fallback_cert: Option<std::sync::Arc<RustlsCertifiedKey>>,
-}
-
-impl FallbackCertResolver {
-    fn new(sni_resolver: ResolvesServerCertUsingSni) -> Self {
-        Self { sni_resolver, fallback_cert: None }
-    }
-
-    fn with_fallback(mut self, cert: std::sync::Arc<RustlsCertifiedKey>) -> Self {
-        self.fallback_cert = Some(cert);
-        self
-    }
-}
-
-impl ResolvesServerCert for FallbackCertResolver {
-    fn resolve(&self, client_hello: ClientHello) -> Option<std::sync::Arc<RustlsCertifiedKey>> {
-        // First try the SNI resolver
-        if let Some(cert) = self.sni_resolver.resolve(client_hello) {
-            return Some(cert);
-        }
-
-        // If SNI doesn't match, use fallback certificate
-        self.fallback_cert.clone()
-    }
-}
-
 /// Helper function to get domains that are ACME-enabled for a binding
 pub async fn get_acme_domains_for_binding(binding: &Binding) -> std::collections::HashSet<String> {
     let mut domains = std::collections::HashSet::new();
@@ -228,10 +198,7 @@ pub async fn get_acme_domains_for_binding(binding: &Binding) -> std::collections
 
 /// Build a unified certificate resolver that handles both ACME and manual certificates.
 /// Uses the shared ACME manager if available.
-pub async fn build_unified_cert_resolver(
-    binding: &Binding,
-    acme_resolver: Option<std::sync::Arc<ResolvesServerCertAcme>>,
-) -> Result<UnifiedCertResolver, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Option<std::sync::Arc<ResolvesServerCertAcme>>) -> Result<UnifiedCertResolver, Box<dyn std::error::Error + Send + Sync>> {
     // Get ACME domains from the shared manager if available, otherwise use binding-specific lookup
     let acme_domains = {
         let shared_domains = get_shared_acme_domains().await;
@@ -242,10 +209,7 @@ pub async fn build_unified_cert_resolver(
         }
     };
 
-    debug(format!(
-        "Building unified cert resolver for {}:{} with {} ACME domains",
-        binding.ip, binding.port, acme_domains.len()
-    ));
+    debug(format!("Building unified cert resolver for {}:{} with {} ACME domains", binding.ip, binding.port, acme_domains.len()));
 
     let mut resolver = UnifiedCertResolver::new(acme_resolver, acme_domains.clone());
     let mut fallback_certificate: Option<std::sync::Arc<RustlsCertifiedKey>> = None;
@@ -256,23 +220,10 @@ pub async fn build_unified_cert_resolver(
     let binding_site_cache = running_state.get_binding_site_cache();
     let sites = binding_site_cache.get_sites_for_binding(&binding.id);
 
-    for site in sites.iter().filter(|s| s.is_enabled) {
-        // Skip sites that have ACME enabled - they'll be handled by the ACME resolver
-        if site.tls_automatic_enabled {
-            // For ACME-enabled sites with no manual cert, we still need to log it
-            debug(format!(
-                "Site '{}' has ACME enabled, will use ACME resolver for its domains",
-                site.id
-            ));
-            continue;
-        }
-
+    // Skip sites that are disabled or have ACME enabled - they'll be handled by the ACME resolver
+    for site in sites.iter().filter(|s| s.is_enabled && !s.tls_automatic_enabled) {
         // Determine SANs for this site
-        let mut sans: Vec<String> = site.hostnames
-            .iter()
-            .cloned()
-            .filter(|h| !h.trim().is_empty() && h != "*")
-            .collect();
+        let mut sans: Vec<String> = site.hostnames.iter().cloned().filter(|h| !h.trim().is_empty() && h != "*").collect();
         let has_wildcard = site.hostnames.contains(&"*".to_string());
 
         if sans.is_empty() || has_wildcard {
@@ -288,77 +239,74 @@ pub async fn build_unified_cert_resolver(
             }
         }
 
-        // Load or generate certificate
-        let (cert_chain, priv_key) = if !site.tls_cert_path.is_empty() && !site.tls_key_path.is_empty() {
-            // Load from PEM files
-            let cert_file = std::fs::File::open(&site.tls_cert_path)
-                .map_err(|e| format!("Failed to open TLS cert file {}: {}", site.tls_cert_path, e))?;
-            let key_file = std::fs::File::open(&site.tls_key_path)
-                .map_err(|e| format!("Failed to open TLS key file {}: {}", site.tls_key_path, e))?;
+        // Load or generate certificate, if possible
+        let mut certificates = None;
 
-            let mut cert_reader = BufReader::new(cert_file);
-            let mut key_reader = BufReader::new(key_file);
-
-            let certs: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_reader).collect();
-            let cert_chain = certs.map_err(|e| format!("Failed to parse TLS cert file {}: {}", site.tls_cert_path, e))?;
-
-            let key_result = rustls_pemfile::private_key(&mut key_reader)
-                .map_err(|e| format!("Failed to parse TLS key file {}: {}", site.tls_key_path, e))?;
-            let priv_key = key_result.ok_or_else(|| format!("No private key found in {}", site.tls_key_path))?;
-
-            (cert_chain, priv_key)
-        } else if !site.tls_cert_content.is_empty() && !site.tls_key_content.is_empty() {
-            // Parse from content strings
-            let mut cert_cursor = std::io::Cursor::new(site.tls_cert_content.as_bytes());
-            let mut key_cursor = std::io::Cursor::new(site.tls_key_content.as_bytes());
-
-            let certs: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_cursor).collect();
-            let cert_chain = certs.map_err(|e| format!("Failed to parse TLS cert PEM content: {}", e))?;
-
-            let key_result = rustls_pemfile::private_key(&mut key_cursor)
-                .map_err(|e| format!("Failed to parse TLS key PEM content: {}", e))?;
-            let priv_key = key_result.ok_or_else(|| "No private key found in PEM content".to_string())?;
-
-            (cert_chain, priv_key)
-        } else {
-            // Generate self-signed certificate
-            debug(format!("Generating self-signed certificate for site with hostnames: {:?}", sans));
-            let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(sans.clone())
-                .map_err(|e| format!("Failed to generate self-signed cert: {}", e))?;
-            let cert_pem = cert.pem();
-            let key_pem = signing_key.serialize_pem();
-
-            let mut cert_cursor = std::io::Cursor::new(cert_pem.as_bytes());
-            let mut key_cursor = std::io::Cursor::new(key_pem.as_bytes());
-
-            let certs: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_cursor).collect();
-            let cert_chain = certs.map_err(|e| format!("Failed to parse generated TLS cert PEM content: {}", e))?;
-
-            let key_result = rustls_pemfile::private_key(&mut key_cursor)
-                .map_err(|e| format!("Failed to parse generated TLS key PEM content: {}", e))?;
-            let priv_key = key_result.ok_or_else(|| "No private key found in generated PEM content".to_string())?;
-
-            // Persist generated cert/key to disk
-            match persist_generated_tls_for_site(site, &cert_pem, &key_pem, binding.is_admin).await {
-                Ok(cert_paths) => {
-                    debug(format!("Successfully persisted generated certificate to: {:?}", cert_paths));
+        // Try to load from disk first
+        if certificates.is_none() {
+            let certificates_from_disk = get_certificates_from_disk(site);
+            certificates = match certificates_from_disk {
+                Some(certificates) => Some(certificates),
+                None => {
+                    // If paths were specified but loading failed, log as error and ignore site
+                    // We dont want to fallback to other methods if user explicitly set paths
+                    // And also, we dont want to overwrite it with a self signed cert
+                    if !site.tls_cert_path.is_empty() && !site.tls_key_path.is_empty() {
+                        error(format!(
+                            "Site: '{}' with hostnames '{:?}' Failed to load TLS certificates from disk paths - Administrator is needed to fix this issue",
+                            site.id, site.hostnames
+                        ));
+                        continue;
+                    }
+                    None
                 }
-                Err(e) => {
-                    warn(format!("Failed to persist generated certificate (will continue with in-memory cert): {}", e));
-                }
-            }
-
-            (cert_chain, priv_key)
-        };
-
-        if cert_chain.is_empty() {
-            warn(format!("No valid certificates found in TLS cert for site with hostnames {:?}", site.hostnames));
-            continue;
+            };
         }
 
+        // Secondary, we try to load content from config
+        if certificates.is_none() {
+            let certificates_from_config = get_certificates_from_config(site);
+            certificates = match certificates_from_config {
+                Some(certificates) => Some(certificates),
+                None => {
+                    // If cert content were specified but loading failed, log as error and ignore site
+                    // We dont want to fallback to other methods if user explicitly set content of certificates
+                    // And also, we dont want to overwrite it with a self signed cert
+                    if !site.tls_cert_content.is_empty() && !site.tls_key_content.is_empty() {
+                        error(format!(
+                            "Site: '{}' with hostnames '{:?}' Failed to load TLS certificates from content fields - Administrator is needed to fix this issue",
+                            site.id, site.hostnames
+                        ));
+                        continue;
+                    }
+                    None
+                }
+            };
+        }
+
+        // Final attempt is to create self-signed certificates
+        if certificates.is_none() {
+            let generated_certs = generate_self_signed_certificate_and_persist(site, sans.clone(), binding.is_admin).await;
+            if let Some(certs) = generated_certs {
+                info(format!(
+                    "Generated self-signed certificate, because of missing certificates, for site '{}' with hostnames: {:?}",
+                    site.id, sans
+                ));
+                certificates = Some(certs);
+            }
+        }
+
+        // Extract cert chain and private key, if any could be found/created
+        let (cert_chain, priv_key) = match certificates {
+            Some(certs) => certs,
+            None => {
+                warn(format!("No valid TLS certificate could be obtained for site '{}' with hostnames {:?}", site.id, site.hostnames));
+                continue;
+            }
+        };
+
         // Build certified key
-        let signing_key = aws_lc_rs::sign::any_supported_type(&priv_key)
-            .map_err(|e| format!("Unsupported private key type: {}", e))?;
+        let signing_key = aws_lc_rs::sign::any_supported_type(&priv_key).map_err(|e| format!("Unsupported private key type: {}", e))?;
         let certified = RustlsCertifiedKey::new(cert_chain, signing_key);
         let certified_arc = std::sync::Arc::new(certified);
 
@@ -371,8 +319,8 @@ pub async fn build_unified_cert_resolver(
         for name in &sans {
             match resolver.add_manual_cert(name, certified_arc.as_ref().clone()) {
                 Ok(()) => {
-                    cert_added = true;
                     debug(format!("Added manual cert for hostname '{}'", name));
+                    cert_added = true;
                 }
                 Err(e) => {
                     debug(format!("Failed to add SNI name '{}': {:?}", name, e));
@@ -397,13 +345,10 @@ pub async fn build_unified_cert_resolver(
     if !cert_added && acme_domains.is_empty() {
         // Generate a fallback self-signed cert
         let rcgen::CertifiedKey { cert, signing_key } =
-            rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
-                .map_err(|e| format!("Failed to generate fallback self-signed cert: {}", e))?;
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).map_err(|e| format!("Failed to generate fallback self-signed cert: {}", e))?;
         let cert_der = CertificateDer::from(cert.der().to_vec());
-        let key_der = PrivateKeyDer::try_from(signing_key.serialize_der())
-            .map_err(|e| format!("Invalid key DER: {}", e))?;
-        let signing_key = aws_lc_rs::sign::any_supported_type(&key_der)
-            .map_err(|e| format!("Unsupported private key type: {}", e))?;
+        let key_der = PrivateKeyDer::try_from(signing_key.serialize_der()).map_err(|e| format!("Invalid key DER: {}", e))?;
+        let signing_key = aws_lc_rs::sign::any_supported_type(&key_der).map_err(|e| format!("Unsupported private key type: {}", e))?;
         let certified = RustlsCertifiedKey::new(vec![cert_der], signing_key);
         let certified_arc = std::sync::Arc::new(certified);
 
@@ -424,12 +369,163 @@ pub async fn build_unified_cert_resolver(
     Ok(resolver)
 }
 
+fn generate_self_signed_certificate(sans: Vec<String>) -> Option<(Vec<CertificateDer<'static>>, String, PrivateKeyDer<'static>, String)> {
+    // Generate self-signed certificate
+    debug(format!("Generating self-signed certificate for site with hostnames: {:?}", sans));
+    let gen_key_result = rcgen::generate_simple_self_signed(sans);
+    let gen_key = match gen_key_result {
+        Ok(k) => k,
+        Err(e) => {
+            warn(format!("Failed to generate self-signed cert: {}", e));
+            return None;
+        }
+    };
+    let cert = gen_key.cert;
+    let signing_key = gen_key.signing_key;
+
+    let cert_pem = cert.pem();
+    let key_pem = signing_key.serialize_pem();
+
+    let mut cert_cursor = std::io::Cursor::new(cert_pem.as_bytes());
+    let mut key_cursor = std::io::Cursor::new(key_pem.as_bytes());
+
+    let certs_result: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_cursor).collect();
+    let cert_chain = match certs_result {
+        Ok(certs) => certs,
+        Err(e) => {
+            warn(format!("Failed to parse generated TLS cert PEM content: {}", e));
+            return None;
+        }
+    };
+
+    let key_result = rustls_pemfile::private_key(&mut key_cursor);
+    let priv_key = match key_result {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            warn("No private key found in generated PEM content".to_string());
+            return None;
+        }
+        Err(e) => {
+            warn(format!("Failed to parse generated TLS key PEM content: {}", e));
+            return None;
+        }
+    };
+
+    Some((cert_chain, cert_pem, priv_key, key_pem))
+}
+
+async fn generate_self_signed_certificate_and_persist(site: &Site, sans: Vec<String>, is_admin: bool) -> Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    let (cert_chain, cert_pem, priv_key, key_pem) = match generate_self_signed_certificate(sans) {
+        Some(certs) => certs,
+        None => {
+            return None;
+        }
+    };
+
+    // Persist generated cert/key to disk
+    match persist_generated_tls_for_site(site, &cert_pem, &key_pem, is_admin).await {
+        Ok(cert_paths) => {
+            debug(format!("Successfully persisted generated certificate to: {:?}", cert_paths));
+        }
+        Err(e) => {
+            warn(format!("Failed to persist generated certificate (will continue with in-memory cert): {}", e));
+        }
+    }
+
+    Some((cert_chain, priv_key))
+}
+
+fn get_certificates_from_config(site: &Site) -> Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    // Check if fields are filled out
+    if site.tls_cert_content.is_empty() || site.tls_key_content.is_empty() {
+        return None;
+    }
+
+    // Parse from content strings
+    let mut cert_cursor = std::io::Cursor::new(site.tls_cert_content.as_bytes());
+    let mut key_cursor = std::io::Cursor::new(site.tls_key_content.as_bytes());
+
+    let certs_result: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_cursor).collect();
+    let cert_chain = match certs_result {
+        Ok(certs) => certs,
+        Err(e) => {
+            warn(format!("Site: '{}' Failed to parse TLS cert PEM content: {}", site.id, e));
+            return None;
+        }
+    };
+
+    let key_result = rustls_pemfile::private_key(&mut key_cursor);
+    let priv_key = match key_result {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            warn(format!("Site: '{}' No private key found in PEM content", site.id));
+            return None;
+        }
+        Err(e) => {
+            warn(format!("Site: '{}' Failed to parse TLS key PEM content: {}", site.id, e));
+            return None;
+        }
+    };
+
+    Some((cert_chain, priv_key))
+}
+
+fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    // Load certificates from disk if paths are provided
+    if site.tls_cert_path.is_empty() || site.tls_key_path.is_empty() {
+        return None;
+    }
+
+    // Load from PEM files
+    let cert_file_result = std::fs::File::open(&site.tls_cert_path);
+    let cert_file = match cert_file_result {
+        Ok(f) => f,
+        Err(e) => {
+            warn(format!("Site: '{}' Failed to open TLS cert file {}: {}", site.id, site.tls_cert_path, e));
+            return None;
+        }
+    };
+    let key_file_result = std::fs::File::open(&site.tls_key_path);
+    let key_file = match key_file_result {
+        Ok(f) => f,
+        Err(e) => {
+            warn(format!("Site: '{}' Failed to open TLS key file {}: {}", site.id, site.tls_key_path, e));
+            return None;
+        }
+    };
+
+    let mut cert_reader = BufReader::new(cert_file);
+    let mut key_reader = BufReader::new(key_file);
+
+    let certs_result: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_reader).collect();
+    let cert_chain = match certs_result {
+        Ok(certs) => certs,
+        Err(e) => {
+            warn(format!("Site: '{}' Failed to parse TLS cert file {}: {}", site.id, site.tls_cert_path, e));
+            return None;
+        }
+    };
+
+    let key_result = rustls_pemfile::private_key(&mut key_reader);
+    let priv_key = match key_result {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            warn(format!("Site: '{}' No private key found in {}", site.id, site.tls_key_path));
+            return None;
+        }
+        Err(e) => {
+            warn(format!("Site: '{}' Failed to parse TLS key file {}: {}", site.id, site.tls_key_path, e));
+            return None;
+        }
+    };
+
+    return Some((cert_chain, priv_key));
+}
+
 /// Build a unified TLS acceptor that handles both ACME and manual certificates.
 /// Uses the shared ACME manager if available, ensuring only one ACME client exists globally.
 /// Returns the TlsAcceptor only (ACME polling is handled by the shared manager).
-pub async fn build_unified_tls_acceptor(
-    binding: &Binding,
-) -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn build_unified_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
     let provider = rustls::crypto::aws_lc_rs::default_provider();
 
     // Get the shared ACME resolver if available (already initialized during server startup)
@@ -456,198 +552,4 @@ pub async fn build_unified_tls_acceptor(
     let tls_acceptor = TlsAcceptor::from(std::sync::Arc::new(server_config));
 
     Ok(tls_acceptor)
-}
-
-// Build a TLS acceptor that selects certificates per-site using SNI
-pub async fn build_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
-
-    // Create SNI resolver
-    let mut resolver = ResolvesServerCertUsingSni::new();
-    let mut have_default = false;
-    let mut site_added = false;
-    let mut fallback_certificate: Option<std::sync::Arc<RustlsCertifiedKey>> = None;
-
-    // Get the running state
-    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
-    let binding_site_cache = running_state.get_binding_site_cache();
-    let sites = binding_site_cache.get_sites_for_binding(&binding.id);
-
-    for site in sites.iter().filter(|s| s.is_enabled) {
-        // Determine SANs: handle wildcard sites specially
-        let mut sans: Vec<String> = site.hostnames.iter().cloned().filter(|h| !h.trim().is_empty() && h != "*").collect();
-        let has_wildcard = site.hostnames.contains(&"*".to_string());
-
-        if sans.is_empty() || has_wildcard {
-            // For wildcard sites or empty hostnames, generate a cert that works with common local addresses
-            sans.clear();
-            sans.extend(vec![
-                "localhost".to_string(),
-                //     "127.0.0.1".to_string(),
-                //     "::1".to_string(),
-            ]);
-
-            // Add the machine's hostname if available
-            if let Ok(hostname) = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")) {
-                if !hostname.is_empty() && !sans.contains(&hostname) {
-                    sans.push(hostname.to_lowercase());
-                }
-            }
-        }
-
-        let (cert_chain, priv_key) = if site.tls_cert_path.len() > 0 && site.tls_key_path.len() > 0 {
-            // Load from PEM files
-            let cert_file = std::fs::File::open(&site.tls_cert_path).map_err(|e| format!("Failed to open TLS cert file {}: {}", site.tls_cert_path, e))?;
-            let key_file = std::fs::File::open(&site.tls_key_path).map_err(|e| format!("Failed to open TLS key file {}: {}", site.tls_key_path, e))?;
-
-            let mut cert_reader = BufReader::new(cert_file);
-            let mut key_reader = BufReader::new(key_file);
-
-            let certs: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_reader).collect();
-            let cert_chain = certs.map_err(|e| format!("Failed to parse TLS cert file {}: {}", site.tls_cert_path, e))?;
-
-            let key_result = rustls_pemfile::private_key(&mut key_reader).map_err(|e| format!("Failed to parse TLS key file {}: {}", site.tls_key_path, e))?;
-            let priv_key = key_result.ok_or_else(|| format!("No private key found in {}", site.tls_key_path))?;
-
-            (cert_chain, priv_key)
-        } else if site.tls_cert_content.len() > 0 && site.tls_key_content.len() > 0 {
-            // Parse from content strings
-            let mut cert_cursor = std::io::Cursor::new(site.tls_cert_content.as_bytes());
-            let mut key_cursor = std::io::Cursor::new(site.tls_key_content.as_bytes());
-
-            let certs: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_cursor).collect();
-            let cert_chain = certs.map_err(|e| format!("Failed to parse TLS cert PEM content: {}", e))?;
-
-            let key_result = rustls_pemfile::private_key(&mut key_cursor).map_err(|e| format!("Failed to parse TLS key PEM content: {}", e))?;
-            let priv_key = key_result.ok_or_else(|| "No private key found in PEM content".to_string())?;
-
-            (cert_chain, priv_key)
-        } else {
-            // Generate self-signed cert with comprehensive SAN list
-            debug(format!("Generating self-signed certificate for site with hostnames: {:?}", sans));
-            let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(sans.clone()).map_err(|e| format!("Failed to generate self-signed cert: {}", e))?;
-            let cert_pem = cert.pem();
-            let key_pem = signing_key.serialize_pem();
-
-            let mut cert_cursor = std::io::Cursor::new(cert_pem.as_bytes());
-            let mut key_cursor = std::io::Cursor::new(key_pem.as_bytes());
-
-            let certs: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_cursor).collect();
-            let cert_chain = certs.map_err(|e| format!("Failed to parse generated TLS cert PEM content: {}", e))?;
-
-            let key_result = rustls_pemfile::private_key(&mut key_cursor).map_err(|e| format!("Failed to parse generated TLS key PEM content: {}", e))?;
-            let priv_key = key_result.ok_or_else(|| "No private key found in generated PEM content".to_string())?;
-
-            // Persist generated cert/key to disk and update the site configuration
-            match persist_generated_tls_for_site(site, &cert_pem, &key_pem, binding.is_admin).await {
-                Ok(cert_paths) => {
-                    debug(format!("Successfully persisted generated certificate to: {:?}", cert_paths));
-                }
-                Err(e) => {
-                    warn(format!("Failed to persist generated certificate (will continue with in-memory cert): {}", e));
-                }
-            }
-
-            (cert_chain, priv_key)
-        };
-
-        if cert_chain.is_empty() {
-            warn(format!("No valid certificates found in TLS cert for site with hostnames {:?}", site.hostnames));
-            continue;
-        }
-
-        // Build a signing key and certified key for rustls
-        let signing_key = aws_lc_rs::sign::any_supported_type(&priv_key).map_err(|e| format!("Unsupported private key type for: {}", e))?;
-        let certified = RustlsCertifiedKey::new(cert_chain.clone(), signing_key);
-        let certified_arc = std::sync::Arc::new(certified);
-
-        // Use the first certificate as fallback for cases where SNI doesn't match
-        if fallback_certificate.is_none() {
-            fallback_certificate = Some(certified_arc.clone());
-        }
-
-        // Add each SAN as a mapping
-        for name in &sans {
-            // Accept wildcard names like "*.example.com" if provided
-            match resolver.add(name, certified_arc.as_ref().clone()) {
-                Ok(()) => {
-                    site_added = true;
-                }
-                Err(e) => {
-                    debug(format!("Failed to add SNI name '{}': {:?}", name, e));
-                }
-            }
-        }
-
-        // For wildcard sites, also add some common IP addresses and variations
-        if has_wildcard {
-            let additional_names = vec![
-                //   "127.0.0.1",
-                //   "::1",
-                "localhost",
-            ];
-
-            for name in additional_names {
-                if !sans.contains(&name.to_string()) {
-                    match resolver.add(name, certified_arc.as_ref().clone()) {
-                        Ok(()) => {
-                            site_added = true;
-                        }
-                        Err(e) => {
-                            debug(format!("Failed to add additional SNI name '{}': {:?}", name, e));
-                        }
-                    }
-                }
-            }
-        } // If site is default or hostname includes wildcard "*", set as default cert
-        if site.is_default && !have_default {
-            // No explicit default setter; rely on SNI match. Keep note to add a fallback later.
-            have_default = true;
-        }
-    }
-
-    if !site_added {
-        // As a last resort, generate a single default cert
-        let rcgen::CertifiedKey { cert, signing_key } =
-            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).map_err(|e| format!("Failed to generate fallback self-signed cert: {}", e))?;
-        let cert_der = CertificateDer::from(cert.der().to_vec());
-        let key_der = PrivateKeyDer::try_from(signing_key.serialize_der()).map_err(|e| format!("Invalid key DER: {}", e))?;
-        let signing_key = aws_lc_rs::sign::any_supported_type(&key_der).map_err(|e| format!("Unsupported private key type for rustls: {}", e))?;
-        let certified = RustlsCertifiedKey::new(vec![cert_der], signing_key);
-
-        let certified_arc = std::sync::Arc::new(certified);
-
-        // Use this as fallback if we don't have one yet
-        if fallback_certificate.is_none() {
-            fallback_certificate = Some(certified_arc.clone());
-        }
-
-        // Add the fallback certificate to the resolver
-        if let Err(e) = resolver.add("localhost", certified_arc.as_ref().clone()) {
-            warn(format!("Failed to add fallback certificate for localhost: {:?}", e));
-        } else {
-            site_added = true;
-        }
-    }
-
-    if !site_added {
-        return Err("No valid TLS certificates could be configured for this binding".into());
-    }
-
-    // Create a fallback certificate resolver that can handle cases where SNI doesn't match
-    let mut fallback_resolver = FallbackCertResolver::new(resolver);
-    if let Some(fallback_cert) = fallback_certificate {
-        fallback_resolver = fallback_resolver.with_fallback(fallback_cert);
-    }
-
-    let mut server_config = RustlsServerConfig::builder_with_provider(provider.into())
-        .with_safe_default_protocol_versions()
-        .map_err(|_| "Protocol versions unavailable")?
-        .with_no_client_auth()
-        .with_cert_resolver(std::sync::Arc::new(fallback_resolver));
-
-    // Enable ALPN for HTTP/2 and HTTP/1.1 (prefer h2)
-    server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-
-    Ok(TlsAcceptor::from(std::sync::Arc::new(server_config)))
 }
