@@ -344,9 +344,6 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             "tls_use_staging_server" => {
                 core.tls_settings.use_staging_server = value.parse::<bool>().map_err(|e| format!("Failed to parse tls_use_staging_server: {}", e))?;
             }
-            "tls_certificate_cache_path" => {
-                core.tls_settings.certificate_cache_path = value;
-            }
             _ => continue,
         }
     }

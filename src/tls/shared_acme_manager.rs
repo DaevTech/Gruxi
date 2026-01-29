@@ -154,11 +154,7 @@ async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<d
         return Ok(None);
     }
 
-    let cache_dir = if tls_settings.certificate_cache_path.trim().is_empty() {
-        "certs/cache".to_string()
-    } else {
-        tls_settings.certificate_cache_path.trim().to_string()
-    };
+    let cache_dir ="certs/cache".to_string();
 
     // Ensure cache directory exists.
     fs::create_dir_all(&cache_dir)

@@ -36,6 +36,13 @@ pub fn migrate_database() -> i32 {
         }
         schema_version = 4;
     }
+    if schema_version == 4 {
+        let result = migrate_db_helper(&connection, 4, 5, migrate_db_4_to_5);
+        if let Err(e) = result {
+            panic!("Database migration from version 4 to 5 failed: {}", e);
+        }
+        schema_version = 5;
+    }
 
     schema_version
 }
@@ -79,5 +86,11 @@ fn migrate_db_2_to_3(connection: &Connection) -> Result<(), sqlite::Error> {
 fn migrate_db_3_to_4(connection: &Connection) -> Result<(), sqlite::Error> {
     // Add "tls_automatic_enabled" to "sites" table
     connection.execute("ALTER TABLE sites ADD COLUMN tls_automatic_enabled BOOLEAN NOT NULL DEFAULT 0;")?;
+    Ok(())
+}
+
+fn migrate_db_4_to_5(connection: &Connection) -> Result<(), sqlite::Error> {
+    // Remove "tls_certificate_cache_path" from "server_settings" table
+    connection.execute("DELETE from server_settings WHERE setting_key = 'tls_certificate_cache_path';")?;
     Ok(())
 }

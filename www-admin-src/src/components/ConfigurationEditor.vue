@@ -1679,14 +1679,6 @@ onMounted(() => {
                                     <input v-model="config.core.tls_settings.account_email" type="text" placeholder="admin@example.com" />
                                 </div>
 
-                                <div class="form-field">
-                                    <label>
-                                        Alternative Certificate Cache Path
-                                        <span class="help-icon" data-tooltip="Choose alternative directory where obtained certificates and renewal state can be cached. Absolute or relative to the Gruxi server base directory. This is ONLY if you want to use another location than the default, which is ./certs/cache">?</span>
-                                    </label>
-                                    <input v-model="config.core.tls_settings.certificate_cache_path" type="text" placeholder="./certs/cache - Only set this field if needed" />
-                                </div>
-
                                 <div class="form-field full-width">
                                     <label>
                                         <input v-model="config.core.tls_settings.use_staging_server" type="checkbox" />
