@@ -236,7 +236,17 @@ If you require commercial support, consulting, or wish to sponsor development, p
 
 ---
 
-## Author
+## Copyright and Trademark Notice
 
-Brian Søgård Jensen
-[https://github.com/briansjensen](https://github.com/briansjensen)
+The source code in this repository is licensed under the [MIT License](LICENSE). You are free to use, modify, and distribute the code in accordance with that license.
+
+However, the following are **not** covered by the MIT License and remain the exclusive property of the Gruxi project and its author:
+
+* The **Gruxi** name and brand
+* Logos, icons, and other graphical assets (including files in the `assets/` directory)
+* Screenshots and promotional images
+* Documentation content and website design at [gruxi.org](https://gruxi.org)
+
+You may not use the Gruxi name, logo, or branding to imply endorsement of or affiliation with your own projects without prior written permission. If you fork or redistribute this software, please rename it and use your own branding.
+
+For licensing inquiries or permission requests, contact: [contact@gruxi.org](mailto:contact@gruxi.org)
