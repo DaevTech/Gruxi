@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
@@ -15,7 +17,6 @@ use rustls::{
     crypto::CryptoProvider,
 };
 
-#[allow(dead_code)]
 /// HTTP/2 Compliance Test Suite for Gruxi Web Server
 ///
 /// This comprehensive test suite validates Gruxi's compliance with HTTP/2 specifications

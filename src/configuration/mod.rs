@@ -13,3 +13,4 @@ pub mod cached_configuration;
 pub mod import_export;
 pub mod admin_portal;
 pub mod tls_settings;
+pub mod http_caching;

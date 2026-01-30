@@ -8,9 +8,12 @@ use crate::{
     configuration::cached_configuration::get_cached_configuration,
     core::triggers::get_trigger_handler,
     file::file_reader_structs::*,
-    http::request_response::{
-        body_error::{BodyError, box_err},
-        gruxi_request::GruxiRequest,
+    http::{
+        caching::etag::etag_strong_from_metadata,
+        request_response::{
+            body_error::{BodyError, box_err},
+            gruxi_request::GruxiRequest,
+        },
     },
     logging::syslog::{debug, error, trace, warn},
 };
@@ -43,8 +46,21 @@ impl FileReaderCache {
         let cache_update_thread_interval = file_data_config.cache_update_thread_interval;
         let forced_eviction_threshold = file_data_config.forced_eviction_threshold;
 
+        // Gzip enabled
         let compressible_content_types = &config.core.gzip.compressible_content_types;
         let gzip_enabled = &config.core.gzip.is_enabled;
+
+        // Etag enabled
+        let etag_enabled = config.core.http_caching.enable_header_etag;
+
+        // Last modified header enabled
+        let last_modified_header_enabled = config.core.http_caching.enable_header_last_modified;
+
+        // Expires header enabled
+        let expires_header_enabled = config.core.http_caching.enable_header_expires;
+
+        // Cache-control header enabled
+        let cache_control_header_enabled = config.core.http_caching.enable_header_cache_control;
 
         let cache = Arc::new(DashMap::new());
         let cached_items_last_checked = Arc::new(DashMap::new());
@@ -57,14 +73,7 @@ impl FileReaderCache {
             let eviction_threshold: f64 = (capacity as f64 * (forced_eviction_threshold as f64 / 100.0)).round();
 
             tokio::spawn(async move {
-                Self::update_cache(
-                    cache_clone_update,
-                    last_checked_clone,
-                    cache_update_thread_interval,
-                    max_item_lifetime,
-                    eviction_threshold as u64,
-                )
-                .await;
+                Self::update_cache(cache_clone_update, last_checked_clone, cache_update_thread_interval, max_item_lifetime, eviction_threshold as u64).await;
             });
         }
 
@@ -75,6 +84,10 @@ impl FileReaderCache {
             max_file_size,
             gzip_enabled: *gzip_enabled,
             compressible_content_types: compressible_content_types.clone(),
+            etag_enabled,
+            last_modified_header_enabled: last_modified_header_enabled,
+            expires_header_enabled,
+            cache_control_header_enabled,
         }
     }
 
@@ -94,7 +107,8 @@ impl FileReaderCache {
 
         // Not found in cache, so we populate it, maybe saving it to cache if enabled
         trace(format!("File/dir not found in cache, reading from disk: {}", file_path));
-        let (length, exists, is_directory, last_modified) = match std::fs::metadata(file_path) {
+        let metadata_result = std::fs::metadata(file_path);
+        let (length, exists, is_directory, last_modified) = match metadata_result {
             Ok(metadata) => (metadata.len(), true, metadata.is_dir(), metadata.modified().unwrap_or(SystemTime::now())),
             Err(_) => (0, false, false, SystemTime::now()),
         };
@@ -108,6 +122,52 @@ impl FileReaderCache {
 
         let should_compress = self.should_compress(&mime_type, length);
 
+        // Calculate ETag if enabled
+        let etag_header = if self.etag_enabled && !is_directory && exists {
+            let etag_value = etag_strong_from_metadata(length, last_modified);
+            Some(etag_value)
+        } else {
+            None
+        };
+
+        // Prepare last modified header if enabled
+        let last_modified_header_value = if self.last_modified_header_enabled {
+            // String based on syntax from last modified: Last-Modified: <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
+            Some(httpdate::fmt_http_date(last_modified))
+        } else {
+            None
+        };
+
+        // Prepare expires header if enabled
+        let expires_header_value = if self.expires_header_enabled {
+            // Expires one year from now
+            Some(httpdate::fmt_http_date(SystemTime::now() + std::time::Duration::from_secs(31557600)))
+        } else {
+            None
+        };
+
+        // Cache control header if enabled
+        let cache_control_header_value = if self.cache_control_header_enabled {
+            let control_value = if mime_type == "text/css"
+                || mime_type == "text/javascript"
+                || mime_type == "application/javascript"
+                || mime_type == "application/wasm"
+                || mime_type.starts_with("font/")
+                || mime_type.starts_with("image/")
+                || mime_type.starts_with("video/")
+                || mime_type.starts_with("audio/")
+            {
+                "public, max-age=31536000, immutable" // 1 year for static files
+            } else if mime_type == "text/html" {
+                "no-cache" // Always revalidate HTML files
+            } else {
+                "public, max-age=86400" // 1 day for other files
+            };
+            Some(control_value.to_string())
+        } else {
+            None
+        };
+
         let mut file_entry = FileEntry {
             meta: FileMeta {
                 file_path: file_path.to_string(),
@@ -116,6 +176,11 @@ impl FileReaderCache {
                 length,
                 is_too_large_to_store: length > self.max_file_size,
                 mime_type: mime_type,
+                last_modified,
+                etag_header,
+                last_modified_header: last_modified_header_value,
+                expires_header: expires_header_value,
+                cache_control_header: cache_control_header_value,
             },
             content: ContentCache { raw: None, gzip: None },
         };
@@ -250,10 +315,7 @@ impl FileReaderCache {
 
             trace("[FileCacheUpdate] Checking for modified timestamps and if known files still exist".to_string());
             // Get a list of files to check
-            let files_to_check: Vec<(String, (Instant, Instant, SystemTime))> = cached_items_last_checked
-                .iter()
-                .map(|entry| (entry.key().clone(), entry.value().clone()))
-                .collect();
+            let files_to_check: Vec<(String, (Instant, Instant, SystemTime))> = cached_items_last_checked.iter().map(|entry| (entry.key().clone(), entry.value().clone())).collect();
 
             trace(format!("[FileCacheUpdate] Files found to check for modified timestamps: {}", files_to_check.len()));
             // Now we go through the list, to check if the file was modified since last known timestamp

@@ -48,6 +48,7 @@ const expandedItems = reactive({
     coreSubsections: {
         fileCache: false,
         gzip: false,
+        httpCaching: false,
     },
 });
 
@@ -1576,6 +1577,30 @@ onMounted(() => {
                                         <input v-model="config.core.tls_settings.use_staging_server" type="checkbox" />
                                         Use LetsEncrypt Staging Server
                                         <span class="help-icon" data-tooltip="Enable to use the LetsEncrypt staging environment for testing (avoids production rate limits). Do not use for real traffic.">?</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- HTTP Caching Settings -->
+                    <div class="binding-item">
+                        <div class="item-header compact" @click="toggleCoreSubsection('httpCaching')">
+                            <div class="header-left">
+                                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('httpCaching') }">▶</span>
+                                <span class="hierarchy-indicator">📦</span>
+                                <h4>HTTP Caching</h4>
+                                <span v-if="config.core.http_caching?.enabled_caching" class="default-badge">ENABLED</span>
+                            </div>
+                        </div>
+
+                        <div v-if="isCoreSubsectionExpanded('httpCaching')" class="item-content">
+                            <div class="form-grid compact">
+                                <div class="form-field full-width">
+                                    <label>
+                                        <input v-model="config.core.http_caching.enabled_caching" type="checkbox" />
+                                        Enable HTTP Caching Headers
+                                        <span class="help-icon" data-tooltip="When enabled, Gruxi will add caching-related HTTP headers (ETag, Last-Modified, Expires, Cache-Control) to responses for static files. This improves performance by allowing browsers to cache files locally.">?</span>
                                     </label>
                                 </div>
                             </div>

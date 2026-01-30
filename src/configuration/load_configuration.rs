@@ -341,6 +341,12 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             "tls_use_staging_server" => {
                 core.tls_settings.use_staging_server = value.parse::<bool>().map_err(|e| format!("Failed to parse tls_use_staging_server: {}", e))?;
             }
+
+            // HTTP Caching settings
+            "http_caching_enabled_caching" => {
+                core.http_caching.enabled_caching = value.parse::<bool>().map_err(|e| format!("Failed to parse http_caching_enabled_caching: {}", e))?;
+                core.http_caching.update_headers_settings();
+            }
             _ => continue,
         }
     }

@@ -5,7 +5,7 @@ use crate::http::http_tls::build_unified_tls_acceptor;
 use crate::http::http_util::add_standard_headers_to_response;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
-use crate::logging::syslog::{debug, error, info, trace, warn};
+use crate::logging::syslog::{debug, error, info, trace};
 use crate::tls::shared_acme_manager::initialize_shared_acme_manager;
 use futures::FutureExt;
 use hyper::Request;
@@ -27,7 +27,7 @@ pub async fn initialize_server() {
     // Initialize shared ACME manager ONCE before starting any bindings.
     // This ensures all TLS bindings share a single ACME client, resolver, and polling task.
     if let Err(e) = initialize_shared_acme_manager().await {
-        error(format!("Failed to initialize shared ACME manager: {}. ACME certificates will not be available.", e));
+        panic!("Failed to initialize shared ACME TLS Certificate manager: {}.", e);
     }
 
     // Starting listening on all configured bindings
@@ -36,17 +36,11 @@ pub async fn initialize_server() {
         let ip = match ip_result {
             Ok(ip_addr) => ip_addr,
             Err(e) => {
-                error(format!("Invalid IP address for binding {}: {}. Skipping this binding.", binding.ip, e));
-                continue;
+                panic!("Invalid IP address for binding {}: {}. Could not start server", binding.ip, e);
             }
         };
         let port = binding.port;
         let addr = SocketAddr::new(ip, port);
-
-        // Enforce admin bindings are TLS-only
-        if binding.is_admin && !binding.is_tls {
-            warn(format!("Admin binding requested without TLS on {}:{}. This is not recommended.", binding.ip, binding.port));
-        }
 
         info(format!("Starting server on {}", addr));
 
@@ -84,8 +78,7 @@ async fn start_server_binding(binding: Binding) {
     let ip = match ip_result {
         Ok(ip_addr) => ip_addr,
         Err(e) => {
-            error(format!("Invalid IP address for binding {}: {}. Skipping this binding.", binding.ip, e));
-            return;
+            panic!("Invalid IP address for binding {}: {}. Could not start server", binding.ip, e);
         }
     };
     let port = binding.port;
@@ -164,13 +157,13 @@ async fn start_server_binding(binding: Binding) {
                                         monitoring_state.decrement_requests_in_queue();
                                     }
                                     Err(err) => {
-                                        trace(format!("TLS handshake error: {:?}", err));
+                                        debug(format!("TLS handshake error: {:?}", err));
                                     }
                                 }
                             });
                         }
                         Err(err) => {
-                            error(format!("Failed to accept connection: {:?}", err));
+                            debug(format!("Failed to accept connection: {:?}", err));
                         }
                     }
                 }
@@ -213,7 +206,7 @@ async fn start_server_binding(binding: Binding) {
                             });
                         }
                         Err(err) => {
-                            error(format!("Failed to accept connection: {:?}", err));
+                            debug(format!("Failed to accept connection: {:?}", err));
                         }
                     }
                 }

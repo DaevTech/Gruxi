@@ -6,3 +6,4 @@ pub mod request_handlers;
 pub mod request_response;
 pub mod client;
 pub mod site_match;
+pub mod caching;

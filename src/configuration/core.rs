@@ -1,3 +1,4 @@
+use crate::configuration::http_caching::HttpCaching;
 use crate::configuration::tls_settings::TlsSettings;
 use crate::configuration::{admin_portal::AdminPortal, file_cache::FileCache};
 use crate::configuration::gzip::Gzip;
@@ -11,6 +12,7 @@ pub struct Core {
     pub server_settings: ServerSettings,
     pub admin_portal: AdminPortal,
     pub tls_settings: TlsSettings,
+    pub http_caching: HttpCaching,
 }
 
 impl Core {
@@ -20,6 +22,7 @@ impl Core {
         self.server_settings.sanitize();
         self.admin_portal.sanitize();
         self.tls_settings.sanitize();
+        self.http_caching.sanitize();
     }
 
     pub fn validate(&self) -> Result<(), Vec<String>> {
@@ -57,6 +60,13 @@ impl Core {
         if let Err(tls_errors) = self.tls_settings.validate() {
             for error in tls_errors {
                 errors.push(format!("TLS Settings: {}", error));
+            }
+        }
+
+        // Validate HTTP caching settings
+        if let Err(http_caching_errors) = self.http_caching.validate() {
+            for error in http_caching_errors {
+                errors.push(format!("HTTP Caching: {}", error));
             }
         }
 

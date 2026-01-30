@@ -6,12 +6,14 @@ use crate::{
     },
     file::{file_util::check_path_secure, normalized_path::NormalizedPath},
     http::{
+        caching::etag::handle_conditional_headers,
         http_util::resolve_web_root_and_path_and_get_file,
         request_handlers::processor_trait::ProcessorTrait,
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
-    logging::syslog::{error, trace},
+    logging::syslog::{error, trace, warn},
 };
+use http::HeaderName;
 use hyper::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -237,11 +239,22 @@ impl ProcessorTrait for StaticFileProcessor {
 
         let mut response = GruxiResponse::new_with_body(hyper::StatusCode::OK.as_u16(), stream);
 
+        // Handle conditional headers like If-*-Match and If-*Modified-Since if we have an ETag
+        match &file_data.meta.etag_header {
+            None => {}
+            Some(etag) => {
+                if handle_conditional_headers(gruxi_request, &mut response, etag, &file_data.meta.last_modified) {
+                    // If we handled a conditional request, return the response as is (304 Not Modified)
+                    return Ok(response);
+                }
+            }
+        }
+
         // Set content type
         let header_value = HeaderValue::from_str(&file_data.meta.mime_type);
         match header_value {
             Err(e) => {
-                error(format!(
+                warn(format!(
                     "Failed to set content type header for file: {} with mime type: {}. Error: {}",
                     file_path, file_data.meta.mime_type, e
                 ));
@@ -256,13 +269,25 @@ impl ProcessorTrait for StaticFileProcessor {
             let header_value = HeaderValue::from_str("gzip");
             match header_value {
                 Err(e) => {
-                    error(format!("Failed to set content encoding header for file: {} with gzip. Error: {}", file_path, e));
+                    warn(format!("Failed to set content encoding header for file: {} with gzip. Error: {}", file_path, e));
                 }
                 Ok(value) => {
                     response.headers_mut().insert(hyper::header::CONTENT_ENCODING, value);
                 }
             }
         }
+
+        // Set ETag header, if available
+        StaticFileProcessor::add_caching_headers(file_data.meta.etag_header.as_ref(), hyper::header::ETAG, &mut response, &file_path);
+
+        // Set Last-Modified header, if available
+        StaticFileProcessor::add_caching_headers(file_data.meta.last_modified_header.as_ref(), hyper::header::LAST_MODIFIED, &mut response, &file_path);
+
+        // Set Expires header, if available
+        StaticFileProcessor::add_caching_headers(file_data.meta.expires_header.as_ref(), hyper::header::EXPIRES, &mut response, &file_path);
+
+        // Set cache-control header, if available
+        StaticFileProcessor::add_caching_headers(file_data.meta.cache_control_header.as_ref(), hyper::header::CACHE_CONTROL, &mut response, &file_path);
 
         Ok(response)
     }
@@ -273,5 +298,24 @@ impl ProcessorTrait for StaticFileProcessor {
 
     fn get_default_pretty_name(&self) -> String {
         "Static File Processor".to_string()
+    }
+}
+
+impl StaticFileProcessor {
+    fn add_caching_headers(header_value_option: Option<&String>, header_name: HeaderName, response: &mut GruxiResponse, file_path: &String) {
+        if let Some(header_value_string) = header_value_option {
+            let header_value = HeaderValue::from_str(header_value_string);
+            match header_value {
+                Err(e) => {
+                    warn(format!(
+                        "Failed to set header: {} for file: {} with value: {}. Error: {}",
+                        header_name, file_path, header_value_string, e
+                    ));
+                }
+                Ok(value) => {
+                    response.headers_mut().insert(header_name, value);
+                }
+            }
+        }
     }
 }

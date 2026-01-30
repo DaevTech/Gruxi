@@ -238,6 +238,9 @@ fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> 
     save_server_settings(connection, "tls_account_email", &core.tls_settings.account_email)?;
     save_server_settings(connection, "tls_use_staging_server", &core.tls_settings.use_staging_server.to_string())?;
 
+    // Save HTTP caching settings
+    save_server_settings(connection, "http_caching_enabled_caching", &core.http_caching.enabled_caching.to_string())?;
+
     Ok(())
 }
 

@@ -7,11 +7,13 @@ use crate::configuration::server_settings::ServerSettings;
 use crate::configuration::site::Site;
 use crate::configuration::tls_settings::TlsSettings;
 use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship};
+use crate::configuration::http_caching::HttpCaching;
 use crate::external_connections::managed_system::php_cgi::PhpCgi;
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
 use crate::http::request_handlers::processors::php_processor::PHPProcessor;
 use crate::http::request_handlers::processors::proxy_processor::ProxyProcessor;
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -46,6 +48,7 @@ impl Configuration {
                 server_settings: ServerSettings::new(),
                 admin_portal: AdminPortal::new(),
                 tls_settings: TlsSettings::new(),
+                http_caching: HttpCaching::new(),
             },
             request_handlers: vec![],
             static_file_processors: vec![],
