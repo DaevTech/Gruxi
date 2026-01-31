@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import LogViewer from './LogViewer.vue';
 import ConfigurationEditor from './ConfigurationEditor.vue';
 import OperationModeSelector from './OperationModeSelector.vue';
@@ -17,6 +17,15 @@ const emit = defineEmits(['logout']);
 // Dashboard state
 const activeView = ref('server-status');
 const sidebarCollapsed = ref(false);
+const refreshRate = ref(5); // Default 5 seconds
+const refreshRateOptions = [
+    { value: 1, label: '1 sec' },
+    { value: 5, label: '5 sec' },
+    { value: 10, label: '10 sec' },
+    { value: 30, label: '30 sec' },
+    { value: 60, label: '60 sec' },
+];
+let statsInterval = null;
 
 // Menu items
 const menuItems = [
@@ -179,6 +188,23 @@ const checkHealth = async () => {
     }
 };
 
+// Format last updated time in local time format
+const lastUpdatedFormatted = computed(() => {
+    return stats.lastUpdated.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+    });
+});
+
+// Start/restart stats update interval
+const startStatsInterval = () => {
+    if (statsInterval) {
+        clearInterval(statsInterval);
+    }
+    statsInterval = setInterval(updateStats, refreshRate.value * 1000);
+};
+
 // Format request count with suffixes
 const formatRequestCount = (count) => {
     if (count >= 1000000000) {
@@ -192,11 +218,23 @@ const formatRequestCount = (count) => {
     }
 };
 
+// Watch for refresh rate changes
+watch(refreshRate, () => {
+    startStatsInterval();
+});
+
 // Initialize dashboard
 onMounted(() => {
     updateBasicData();
     updateStats();
-    setInterval(updateStats, 10000); // Update stats every 10 seconds
+    startStatsInterval();
+});
+
+// Cleanup on unmount
+onUnmounted(() => {
+    if (statsInterval) {
+        clearInterval(statsInterval);
+    }
 });
 </script>
 
@@ -261,6 +299,17 @@ onMounted(() => {
                     <h1 class="page-title">
                         {{ menuItems.find((item) => item.id === activeView)?.name || 'Overview' }}
                     </h1>
+                    <div v-if="activeView === 'server-status'" class="header-status-info">
+                        <span class="last-updated">Last updated: {{ lastUpdatedFormatted }}</span>
+                        <div class="refresh-rate-selector">
+                            <label for="refresh-rate">Refresh:</label>
+                            <select id="refresh-rate" v-model="refreshRate">
+                                <option v-for="option in refreshRateOptions" :key="option.value" :value="option.value">
+                                    {{ option.label }}
+                                </option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 <div class="header-right">
                     <button @click="handleLogout" class="logout-btn">
@@ -528,7 +577,7 @@ onMounted(() => {
 .header-left {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 1.5rem;
 }
 
 .page-title {
@@ -536,6 +585,50 @@ onMounted(() => {
     font-size: 1.5rem;
     font-weight: 700;
     color: #1f2937;
+}
+
+.header-status-info {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    font-size: 0.875rem;
+    color: #6b7280;
+}
+
+.last-updated {
+    color: #6b7280;
+}
+
+.refresh-rate-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.refresh-rate-selector label {
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.refresh-rate-selector select {
+    padding: 0.35rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+    color: #374151;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.refresh-rate-selector select:hover {
+    border-color: #9ca3af;
+}
+
+.refresh-rate-selector select:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1);
 }
 
 .header-right {
@@ -816,6 +909,17 @@ onMounted(() => {
 
     .top-header {
         padding: 1rem;
+    }
+
+    .header-left {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .header-status-info {
+        flex-wrap: wrap;
+        gap: 0.75rem;
     }
 
     .content-area {

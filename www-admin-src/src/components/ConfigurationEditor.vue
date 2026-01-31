@@ -1588,7 +1588,7 @@ onMounted(() => {
                         <div class="item-header compact" @click="toggleCoreSubsection('httpCaching')">
                             <div class="header-left">
                                 <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('httpCaching') }">▶</span>
-                                <span class="hierarchy-indicator">📦</span>
+                                <span class="hierarchy-indicator">🔄</span>
                                 <h4>HTTP Caching</h4>
                                 <span v-if="config.core.http_caching?.enabled_caching" class="default-badge">ENABLED</span>
                             </div>
