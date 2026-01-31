@@ -1,108 +1,101 @@
-use std::sync::Mutex;
-use std::time::Instant;
+use std::path::PathBuf;
+
+use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
+use tokio::io::AsyncWriteExt;
+
+/// Channel capacity for log entries
+const CHANNEL_CAPACITY: usize = 1000;
 
 pub struct BufferedLog {
-    pub log_id: String,
-    pub log_file_path: String,
-    pub buffered_log: Mutex<Vec<String>>,
-    pub seconds_before_force_flush: usize,
-    pub log_count_flush: usize,
-    pub last_flush: Mutex<Instant>,
+    log_file_path: PathBuf,
+    sender: Sender<String>,
+    receiver: Receiver<String>,
 }
 
 impl BufferedLog {
-    pub fn new(id: String, full_file_path: String) -> Self {
+    pub fn new(full_file_path: String) -> Self {
+        let (sender, receiver) = bounded(CHANNEL_CAPACITY);
         let mut buffered_log = BufferedLog {
-            log_id: id,
-            log_file_path: full_file_path,
-            buffered_log: Mutex::new(Vec::new()),
-            seconds_before_force_flush: 5,
-            log_count_flush: 10,
-            last_flush: Mutex::new(Instant::now()),
+            log_file_path: PathBuf::from(&full_file_path),
+            sender,
+            receiver,
         };
 
         // Create the log file and path if it does not exist
-        if let Some(parent) = std::path::Path::new(&buffered_log.log_file_path).parent() {
-            let dirs_created_result = std::fs::create_dir_all(parent);
-            if let Err(e) = dirs_created_result {
-                panic!("Failed to create log directory {}: {}", parent.to_string_lossy(), e);
+        let log_path = &buffered_log.log_file_path;
+        if let Some(parent) = log_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                panic!("Failed to create log directory {}: {}", parent.display(), e);
             }
         }
 
         // Check if log file is indeed a file or a directory, if directory, add a default filename
-        let log_path = std::path::Path::new(&buffered_log.log_file_path);
         if log_path.exists() && log_path.is_dir() {
             // If it's a directory, append a default log filename
-            let mut log_path_buf = log_path.to_path_buf();
-            log_path_buf.push("logfile.log");
-            buffered_log.log_file_path = log_path_buf.to_string_lossy().to_string();
+            buffered_log.log_file_path.push("logfile.log");
         }
 
         // Create the log file if it does not exist
-        if !std::path::Path::new(&buffered_log.log_file_path).exists() {
-            let file_create_result = std::fs::File::create(&buffered_log.log_file_path);
-            if let Err(e) = file_create_result {
-                panic!("Failed to create log file {}: {}", &buffered_log.log_file_path, e);
+        if !buffered_log.log_file_path.exists() {
+            if let Err(e) = std::fs::File::create(&buffered_log.log_file_path) {
+                panic!("Failed to create log file {}: {}", buffered_log.log_file_path.display(), e);
             }
         }
 
         buffered_log
     }
 
-    pub fn add_log(&mut self, log: String) {
-        let buffered_log_lock = self.buffered_log.lock();
-        match buffered_log_lock {
-            Ok(mut guard) => guard.push(log),
-            Err(_) => {}, // We silently fail to add log if we cant get the lock
+    /// Add a log entry to the buffer (lock-free)
+    pub fn add_log(&self, log: String) {
+        // try_send is non-blocking; if channel is full, we drop the log
+        // This prevents backpressure from slowing down request handling
+        if let Err(TrySendError::Disconnected(_)) = self.sender.try_send(log) {
+            // Channel disconnected - this shouldn't happen in normal operation
+            eprintln!("Log channel disconnected");
         }
+        // If Full, we silently drop - acceptable for logging under extreme load
     }
 
-    pub fn consider_flush(&self, force_flush: bool) {
-        // Get lock
-        let mut log_buffer_result = self.buffered_log.lock();
+    /// Flush all pending log entries to disk
+    /// If `force_flush` is true, also sync data to disk (for shutdown)
+    pub async fn flush(&self, force_flush: bool) {
+        // Drain all available logs from the channel (non-blocking)
+        let mut logs_to_write = Vec::with_capacity(self.receiver.len().min(CHANNEL_CAPACITY));
+        while let Ok(log) = self.receiver.try_recv() {
+            logs_to_write.push(log);
+        }
 
-        // If empty, we are done
-        if let Ok(ref mut log_buffer) = log_buffer_result {
-            if log_buffer.is_empty() {
-                return;
+        // If nothing to write, we're done
+        if logs_to_write.is_empty() {
+            return;
+        }
+
+        // Build log data efficiently with pre-calculated capacity
+        let total_len: usize = logs_to_write.iter().map(|s| s.len() + 1).sum();
+        let mut log_data = String::with_capacity(total_len);
+        for entry in &logs_to_write {
+            log_data.push_str(entry);
+            log_data.push('\n');
+        }
+
+        // Append the log to the file path using async I/O
+        let write_result = async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.log_file_path)
+                .await?;
+            file.write_all(log_data.as_bytes()).await?;
+            // Only sync to disk on force flush (shutdown), otherwise let OS buffer
+            if force_flush {
+                file.sync_data().await?;
             }
+            Ok::<(), std::io::Error>(())
         }
-        let mut log_buffer = match log_buffer_result {
-            Ok(guard) => guard,
-            Err(_) => return, // If we cant get the lock, we skip flushing
-        };
+        .await;
 
-        // If not enough time has passed and not enough logs, skip
-        if !force_flush {
-            let last_flush_lock = self.last_flush.lock();
-            match last_flush_lock {
-                Ok(guard) => {
-                    let elapsed = guard.elapsed().as_secs() as usize;
-                    if elapsed < self.seconds_before_force_flush && log_buffer.len() < self.log_count_flush {
-                        return;
-                    }
-                },
-                Err(_) => return, // If we cant get the lock, we skip flushing
-            }
-        }
-
-        // Append the log to the file path
-        let log_data = log_buffer.join("\n") + "\n";
-        if let Err(e) = std::fs::OpenOptions::new().create(true).append(true).open(&self.log_file_path).and_then(|mut file| {
-            use std::io::Write;
-            file.write_all(log_data.as_bytes())
-        }) {
-            eprintln!("Failed to write buffered log to file {}: {}", &self.log_file_path, e);
-        }
-
-        // Clear data and releases the lock
-        log_buffer.clear();
-        let last_flush_lock = self.last_flush.lock();
-        match last_flush_lock {
-            Ok(mut guard) => {
-                *guard = Instant::now();
-            },
-            Err(_) => {}, // If we cant get the lock, we skip updating last flush time
+        if let Err(e) = write_result {
+            eprintln!("Failed to write buffered log to file {}: {}", self.log_file_path.display(), e);
         }
     }
 }
@@ -113,15 +106,15 @@ mod tests {
 
     #[test]
     fn test_buffered_log_new_path_is_directory() {
-        let log = BufferedLog::new("test_log".to_string(), "./temp_test_data/".to_string());
+        let log = BufferedLog::new("./temp_test_data/".to_string());
         assert!(log.log_file_path.ends_with("logfile.log"));
     }
 
     #[test]
     fn test_buffered_log_check_log_created() {
-        let log = BufferedLog::new("test_log".to_string(), "./temp_test_data/test_access.log".to_string());
-        assert!(std::path::Path::new(&log.log_file_path).exists());
-        assert!(std::path::Path::new(&log.log_file_path).is_file());
+        let log = BufferedLog::new("./temp_test_data/test_access.log".to_string());
+        assert!(log.log_file_path.exists());
+        assert!(log.log_file_path.is_file());
         let log_str = std::fs::read_to_string(&log.log_file_path);
         match log_str {
             Ok(s) => assert!(s.is_empty()),

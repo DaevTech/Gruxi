@@ -1,7 +1,7 @@
 use chrono::Utc;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use tokio::select;
 
 use crate::core::operation_mode::OperationMode;
@@ -16,7 +16,7 @@ static DEBUG_ENABLED: AtomicBool = AtomicBool::new(true);
 static TRACE_ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub struct SysLog {
-    pub buffered_log: BufferedLog,
+    pub buffered_log: Arc<BufferedLog>,
     // Log level for writing log
     log_level: LogType,
     // Enabled levels for both logs
@@ -62,7 +62,7 @@ impl fmt::Display for LogType {
 impl SysLog {
     pub fn new(log_level: LogType, stdout_log_level: LogType) -> Self {
         let mut sys_log = SysLog {
-            buffered_log: BufferedLog::new("syslog".to_string(), "./logs/gruxi.log".to_string()),
+            buffered_log: Arc::new(BufferedLog::new("./logs/gruxi.log".to_string())),
             log_level: log_level.clone(),
             error_enabled: false,
             info_enabled: false,
@@ -135,9 +135,7 @@ impl SysLog {
         };
 
         if file_enabled {
-            if let Ok(mut guard) = self.buffered_log.buffered_log.lock() {
-                guard.push(log_entry);
-            }
+            self.buffered_log.add_log(log_entry);
         }
     }
 
@@ -166,21 +164,20 @@ impl SysLog {
             select! {
                 // Ideally, this would be adjustable according to the work load (such as elapsed time to do a flush in average)
                 _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                    match SYS_LOG.read() {
+                    let buffered_log = match SYS_LOG.read() {
                         Err(_) => {
                             // Can't log here - would need the lock we failed to acquire
                             continue;
                         },
-                        Ok(sys_log) => {
-                            sys_log.buffered_log.consider_flush(false);
-                        }
-                    }
+                        Ok(sys_log) => sys_log.buffered_log.clone(),
+                    };
+                    buffered_log.flush(false).await;
                 },
                 _ = operation_mode_changed_token.cancelled() => {
                     // Get new operation mode
                     let operation_mode = crate::core::operation_mode::get_operation_mode();
                     let new_log_level = Self::get_log_level_based_on_operation_mode(operation_mode);
-                    SysLog::set_new_log_level(new_log_level);
+                    SysLog::set_new_log_level(new_log_level).await;
 
                     // Get new token for next time
                     let operation_mode_changed_token_option = triggers.get_token("operation_mode_changed").await;
@@ -195,33 +192,35 @@ impl SysLog {
                 },
                 _ = shutdown_token.cancelled() => {
                     // Shutdown in progress, we force flush the logs
-                    match SYS_LOG.read() {
+                    let buffered_log = match SYS_LOG.read() {
                         Err(_) => {
                             // Can't log here - would need the lock we failed to acquire
+                            break;
                         },
-                        Ok(sys_log) => {
-                            sys_log.buffered_log.consider_flush(true);
-                        }
-                    }
+                        Ok(sys_log) => sys_log.buffered_log.clone(),
+                    };
+                    buffered_log.flush(true).await;
                     break;
                 },
             }
         }
     }
 
-    fn set_new_log_level(new_log_level: LogType) {
-        match SYS_LOG.write() {
+    async fn set_new_log_level(new_log_level: LogType) {
+        let buffered_log = match SYS_LOG.write() {
             Err(_) => {
                 // Can't log - we failed to get the write lock for the logger itself
                 eprintln!("Failed to acquire write lock for syslog when setting new log level");
                 return;
             }
             Ok(mut guard) => {
-                guard.buffered_log.consider_flush(true);
                 guard.log_level = new_log_level;
                 guard.calculate_enabled_levels();
+                guard.buffered_log.clone()
             }
-        }
+        };
+        // Flush after releasing the write lock
+        buffered_log.flush(true).await;
     }
 
     pub fn set_new_stdout_log_level(new_log_level: LogType) {

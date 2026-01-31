@@ -53,7 +53,7 @@ impl AccessLogBuffer {
                 }
             };
             trace!("Initialized access log buffer for site {} at path {}", &site.id, &log_file_path);
-            access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(site_id.clone(), log_file_path));
+            access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(log_file_path));
         }
 
         access_log_buffer
@@ -66,11 +66,7 @@ impl AccessLogBuffer {
     pub fn add_log(&self, site_id: String, log: String) {
         let log_buffer = self.buffered_logs.get(&site_id);
         if let Some(buffer) = log_buffer {
-            let buffered_log_result = buffer.buffered_log.lock();
-            match buffered_log_result {
-                Ok(mut guard) => guard.push(log),
-                Err(e) => debug!("Failed to acquire lock to add access log entry for site {}: {}", site_id, e),
-            }
+            buffer.add_log(log);
         }
         // We currently just fail silently if no log buffer is found for the site_id
     }
@@ -113,7 +109,7 @@ impl AccessLogBuffer {
                         let access_log_buffer = access_log_buffer_rwlock.read().await;
 
                         for (_site_id, log) in access_log_buffer.buffered_logs.iter() {
-                            log.consider_flush(false);
+                            log.flush(false).await;
                         }
                         let elapsed = start_time.elapsed().as_millis();
                         if elapsed > 0 {
@@ -126,7 +122,7 @@ impl AccessLogBuffer {
                     let access_log_buffer = access_log_buffer_rwlock.read().await;
 
                     for (_site_id, log) in access_log_buffer.buffered_logs.iter() {
-                        log.consider_flush(true);
+                        log.flush(true).await;
                     }
                     break;
                 },
@@ -136,7 +132,7 @@ impl AccessLogBuffer {
                     let access_log_buffer = access_log_buffer_rwlock.read().await;
 
                     for (_site_id, log) in access_log_buffer.buffered_logs.iter() {
-                        log.consider_flush(true);
+                        log.flush(true).await;
                     }
                     break;
                 }

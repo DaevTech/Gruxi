@@ -1,5 +1,5 @@
 use criterion::Criterion;
-use gruxi::logging::syslog::*;
+use gruxi::{info, logging::syslog::*};
 use tokio::runtime::Runtime;
 
 pub fn syslog_benchmark_internal(c: &mut Criterion) {
@@ -43,13 +43,13 @@ pub fn syslog_benchmark_without_stdout_single(c: &mut Criterion) {
 
     c.bench_function("syslog_error", |b| {
         b.iter(|| {
-            info("This is a syslog error message for benchmarking purposes.");
+            info!("This is a syslog error message for benchmarking purposes.");
         })
     });
 }
 
 async fn syslog_benchmark_concurrency() {
-    let handles: Vec<_> = (0..1000).map(|_| tokio::spawn(async { info("This is a syslog error message for benchmarking purposes.") })).collect();
+    let handles: Vec<_> = (0..1000).map(|_| tokio::spawn(async { info!("This is a syslog error message for benchmarking purposes.") })).collect();
     futures::future::join_all(handles).await;
 }
 
