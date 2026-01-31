@@ -1,5 +1,5 @@
 use crate::core::{running_state_manager::get_running_state_manager, triggers::get_trigger_handler};
-use crate::logging::syslog::{debug, trace};
+use crate::{debug, trace};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{select, sync::OnceCell};
 
@@ -33,7 +33,7 @@ impl MonitoringState {
 
     // Background monitoring task.
     pub fn initialize_monitoring(&self) {
-        debug("Monitoring initialized");
+        debug!("Monitoring initialized");
         tokio::spawn(Self::monitoring_task());
     }
 
@@ -81,7 +81,7 @@ impl MonitoringState {
                 monitoring_state.file_cache_max_items.store(file_cache_max_items, Ordering::Relaxed);
             }
 
-            trace("Monitoring data updated");
+            trace!("Monitoring data updated");
 
             select! {
                 _ = configuration_token.cancelled() => {
@@ -90,7 +90,7 @@ impl MonitoringState {
                     let configuration_trigger = match configuration_trigger_result {
                         Some(trigger) => trigger,
                         None => {
-                            debug("Failed to get reload_configuration trigger - Monitoring task exiting");
+                            debug!("Failed to get reload_configuration trigger - Monitoring task exiting");
                             return;
                         }
                     };

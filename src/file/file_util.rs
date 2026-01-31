@@ -1,4 +1,4 @@
-use crate::logging::syslog::trace;
+use crate::trace;
 use cached::proc_macro::cached;
 use std::time::Duration;
 
@@ -50,13 +50,13 @@ pub fn replace_web_root_in_path(original_path: &str, old_web_root: &str, new_web
 pub async fn check_path_secure(base_path: &str, test_path: &str) -> bool {
     // Check that the test_path starts with the base_path
     if !test_path.starts_with(base_path) {
-        trace(format!("Path is blocked, as it does not start with the web root: {} file: {}", base_path, test_path));
+        trace!("Path is blocked, as it does not start with the web root: {} file: {}", base_path, test_path);
         return false;
     }
 
     let (_path, file) = split_path(base_path, test_path);
 
-    trace(format!("Check if file pattern is blocked because of extension: {}", &file));
+    trace!("Check if file pattern is blocked because of extension: {}", &file);
 
     // Check the blacklisted file patterns
     let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
@@ -66,7 +66,7 @@ pub async fn check_path_secure(base_path: &str, test_path: &str) -> bool {
     let file_lowercase = file.to_lowercase();
     for pattern in &config.core.server_settings.blocked_file_patterns {
         if file_lowercase.contains(pattern) {
-            trace(format!("Path is blocked due to blocked file pattern: {} file: {}", pattern, test_path));
+            trace!("Path is blocked due to blocked file pattern: {} file: {}", pattern, test_path);
             return false;
         }
     }

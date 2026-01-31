@@ -1,4 +1,4 @@
-use crate::{core::admin_user::create_default_admin_user, logging::syslog::error};
+use crate::{error, core::admin_user::create_default_admin_user};
 
 pub fn initialize_admin_site() -> Result<(), ()>{
     // Check if there is at least one admin user
@@ -6,7 +6,7 @@ pub fn initialize_admin_site() -> Result<(), ()>{
     let connection = match connection_result {
         Ok(conn) => conn,
         Err(e) => {
-            error(format!("Failed to get database connection: {}", e));
+            error!("Failed to get database connection: {}", e);
             return Err(());
         }
     };
@@ -15,7 +15,7 @@ pub fn initialize_admin_site() -> Result<(), ()>{
     match admin_user_result {
         Ok(_) => (),
         Err(e) => {
-            error(format!("Failed to create default admin user: {}", e));
+            error!("Failed to create default admin user: {}", e);
             return Err(());
         }
     };

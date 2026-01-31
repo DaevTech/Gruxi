@@ -1,5 +1,5 @@
 use crate::core::{command_line_args::cmd_get_operation_mode, database_connection::get_database_connection};
-use crate::logging::syslog::error;
+use crate::error;
 use sqlite::State;
 use std::sync::{
     RwLock,
@@ -25,7 +25,7 @@ pub fn load_operation_mode() -> OperationMode {
         let connection = match connection_result {
             Ok(conn) => conn,
             Err(e) => {
-                error(format!("Failed to get database connection: {}", e));
+                error!("Failed to get database connection: {}", e);
                 return OperationMode::PRODUCTION;
             }
         };
@@ -34,7 +34,7 @@ pub fn load_operation_mode() -> OperationMode {
         let mut stmt = match stmt_result {
             Ok(s) => s,
             Err(e) => {
-                error(format!("Failed to prepare operation_mode query: {}", e));
+                error!("Failed to prepare operation_mode query: {}", e);
                 return OperationMode::PRODUCTION;
             }
         };
@@ -43,7 +43,7 @@ pub fn load_operation_mode() -> OperationMode {
         let mode_str = match mode_str_option {
             Ok(opt) => opt,
             Err(e) => {
-                error(format!("Failed to execute operation_mode query: {}", e));
+                error!("Failed to execute operation_mode query: {}", e);
                 return OperationMode::PRODUCTION;
             }
         };
@@ -83,7 +83,7 @@ pub fn get_operation_mode() -> OperationMode {
         let mut mode_write = match mode_write_result {
             Ok(mw) => mw,
             Err(e) => {
-                error(format!("Failed to acquire write lock for operation mode: {} - Returning default", e));
+                error!("Failed to acquire write lock for operation mode: {} - Returning default", e);
                 return OperationMode::PRODUCTION;
             }
         };
@@ -95,7 +95,7 @@ pub fn get_operation_mode() -> OperationMode {
     match OPERATION_MODE_SINGLETON.read() {
         Ok(mode_read) => *mode_read,
         Err(e) => {
-            error(format!("Failed to acquire read lock for operation mode: {} - Returning default", e));
+            error!("Failed to acquire read lock for operation mode: {} - Returning default", e);
             return OperationMode::PRODUCTION;
         }
     }
@@ -121,7 +121,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
             let mut mode_write = match mode_write_result {
                 Ok(mw) => mw,
                 Err(e) => {
-                    error(format!("Failed to acquire write lock for operation mode: {} - Returning false", e));
+                    error!("Failed to acquire write lock for operation mode: {} - Returning false", e);
                     return false;
                 }
             };
@@ -133,7 +133,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
             let connection = match connection_result {
                 Ok(conn) => conn,
                 Err(e) => {
-                    error(format!("Failed to get database connection: {} - Returning false", e));
+                    error!("Failed to get database connection: {} - Returning false", e);
                     return false;
                 }
             };
@@ -143,7 +143,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
             let mut stmt = match stmt_result {
                 Ok(s) => s,
                 Err(e) => {
-                    error(format!("Failed to prepare select query: {} - Returning false", e));
+                    error!("Failed to prepare select query: {} - Returning false", e);
                     return false;
                 }
             };
@@ -154,7 +154,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
                     State::Done => None,
                 },
                 Err(e) => {
-                    error(format!("Failed to execute select query: {} - Returning false", e));
+                    error!("Failed to execute select query: {} - Returning false", e);
                     return false;
                 }
             };
@@ -167,7 +167,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
                 let mut update_stmt = match update_stmt_result {
                     Ok(s) => s,
                     Err(e) => {
-                        error(format!("Failed to prepare update query: {} - Returning false", e));
+                        error!("Failed to prepare update query: {} - Returning false", e);
                         return false;
                     }
                 };
@@ -175,21 +175,21 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
                 match update_stmt.bind((1, new_mode.as_str())) {
                     Ok(_) => (),
                     Err(e) => {
-                        error(format!("Failed to bind new_mode: {} - Returning false", e));
+                        error!("Failed to bind new_mode: {} - Returning false", e);
                         return false;
                     }
                 };
                 match update_stmt.bind((2, "operation_mode")) {
                     Ok(_) => (),
                     Err(e) => {
-                        error(format!("Failed to bind operation_mode key: {} - Returning false", e));
+                        error!("Failed to bind operation_mode key: {} - Returning false", e);
                         return false;
                     }
                 };
                 match update_stmt.next() {
                     Ok(_) => (),
                     Err(e) => {
-                        error(format!("Failed to execute update query: {} - Returning false", e));
+                        error!("Failed to execute update query: {} - Returning false", e);
                         return false;
                     }
                 };
@@ -199,21 +199,21 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
                 let mut insert_stmt = match insert_stmt_result {
                     Ok(s) => s,
                     Err(e) => {
-                        error(format!("Failed to prepare insert query: {} - Returning false", e));
+                        error!("Failed to prepare insert query: {} - Returning false", e);
                         return false;
                     }
                 };
                 match insert_stmt.bind((1, new_mode.as_str())) {
                     Ok(_) => (),
                     Err(e) => {
-                        error(format!("Failed to bind new_mode: {} - Returning false", e));
+                        error!("Failed to bind new_mode: {} - Returning false", e);
                         return false;
                     }
                 };
                 match insert_stmt.next() {
                     Ok(_) => (),
                     Err(e) => {
-                        error(format!("Failed to execute insert query: {} - Returning false", e));
+                        error!("Failed to execute insert query: {} - Returning false", e);
                         return false;
                     }
                 };
@@ -228,7 +228,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
             true
         }
         None => {
-            error(format!("Attempted to set invalid operation mode: {}", new_mode));
+            error!("Attempted to set invalid operation mode: {}", new_mode);
             false
         }
     }

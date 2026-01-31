@@ -1,4 +1,5 @@
 use crate::{
+    debug,
     external_connections::external_system_handler::ExternalSystemHandler,
     file::file_reader_structs::FileReaderCache,
     http::{
@@ -6,7 +7,6 @@ use crate::{
         request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager},
         site_match::binding_site_cache::BindingSiteCache,
     },
-    logging::syslog::{debug},
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -27,32 +27,32 @@ impl RunningState {
     pub async fn new() -> Self {
         let access_log_buffer = AccessLogBuffer::new().await;
         access_log_buffer.start_flushing_task();
-        debug("Access log buffers initialized");
+        debug!("Access log buffers initialized");
 
         // Start external system handler, which in turns load any defined external handlers, such as PHP-CGI
         let external_system_handler = ExternalSystemHandler::new().await;
-        debug("External system handler initialized");
+        debug!("External system handler initialized");
 
         // Start file read cache
         let file_reader_cache = FileReaderCache::new().await;
-        debug("File reader cache initialized");
+        debug!("File reader cache initialized");
 
         // Start request handler manager
         let request_handler_manager = RequestHandlerManager::new().await;
-        debug("Request handler manager initialized");
+        debug!("Request handler manager initialized");
 
         // Start processor manager
         let processor_manager = ProcessorManager::new().await;
-        debug("Processor manager initialized");
+        debug!("Processor manager initialized");
 
         // Initialize http clients
         let http_client = HttpClient::new();
-        debug("HTTP client initialized");
+        debug!("HTTP client initialized");
 
         // Start binding site cache
         let binding_site_cache = BindingSiteCache::new();
         binding_site_cache.init().await;
-        debug("Binding<>site cache initialized");
+        debug!("Binding<>site cache initialized");
 
         RunningState {
             access_log_buffer: Arc::new(RwLock::new(access_log_buffer)),

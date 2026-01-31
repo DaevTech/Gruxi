@@ -6,9 +6,9 @@ use tokio::{
 };
 
 use crate::{
+    error, trace, warn,
     core::triggers::get_trigger_handler,
     external_connections::fastcgi::FastCgi,
-    logging::syslog::{error, trace, warn},
     network::port_manager::{PortManager, get_port_manager},
 };
 
@@ -141,10 +141,10 @@ impl PhpCgi {
                 self.process = Some(child);
                 self.restart_count += 1;
                 self.last_activity = Instant::now();
-                trace(format!("PHP-CGI process started successfully on port {} (restart count: {})", port, self.restart_count));
+                trace!("PHP-CGI process started successfully on port {} (restart count: {})", port, self.restart_count);
             }
             Err(e) => {
-                error(format!("Failed to start PHP-CGI process: {}", e));
+                error!("Failed to start PHP-CGI process: {}", e);
                 // Release the port if process failed to start
                 if let Some(port) = self.assigned_port {
                     self.port_manager.release_port(port).await;
@@ -164,7 +164,7 @@ impl PhpCgi {
         let shutdown_token = match shutdown_token_option {
             Some(token) => token,
             None => {
-                error("Failed to get shutdown token - PHP-CGI monitoring thread exiting - Please report a bug".to_string());
+                error!("Failed to get shutdown token - PHP-CGI monitoring thread exiting - Please report a bug");
                 return;
             }
         };
@@ -173,7 +173,7 @@ impl PhpCgi {
         let stop_services_token = match stop_services_token_option {
             Some(token) => token,
             None => {
-                error("Failed to get stop_services token - PHP-CGI monitoring thread exiting - Please report a bug".to_string());
+                error!("Failed to get stop_services token - PHP-CGI monitoring thread exiting - Please report a bug");
                 return;
             }
         };
@@ -181,18 +181,18 @@ impl PhpCgi {
         loop {
             select! {
                 _ = shutdown_token.cancelled() => {
-                    trace("Shutdown signal received, stopping PHP processes if running".to_string());
+                    trace!("Shutdown signal received, stopping PHP processes if running");
                     instance.stop().await;
                     break;
                 },
                 _ = stop_services_token.cancelled() => {
-                    trace("Stop services signal received, stopping PHP processes if running".to_string());
+                    trace!("Stop services signal received, stopping PHP processes if running");
                     instance.stop().await;
                     break;
                 },
                 _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
                     if let Err(e) = instance.ensure_running().await {
-                        error(format!("Failed to ensure PHP-CGI process is running: {}", e));
+                        error!("Failed to ensure PHP-CGI process is running: {}", e);
                     }
                 }
             }
@@ -203,13 +203,13 @@ impl PhpCgi {
         if let Some(ref mut process) = self.process.as_mut() {
             match process.try_wait() {
                 Ok(Some(_)) => {
-                    warn("PHP-CGI process has exited".to_string());
+                    warn!("PHP-CGI process has exited");
                     self.process = None;
                     false
                 }
                 Ok(None) => true, // Process is still running
                 Err(e) => {
-                    error(format!("Error checking PHP-CGI process status: {}", e));
+                    error!("Error checking PHP-CGI process status: {}", e);
                     self.process = None;
                     false
                 }
@@ -228,7 +228,7 @@ impl PhpCgi {
                     true
                 }
                 Err(e) => {
-                    error(format!("Keep-alive FastCGI request failed: {}", e));
+                    error!("Keep-alive FastCGI request failed: {}", e);
                     false
                 }
             }
@@ -239,7 +239,7 @@ impl PhpCgi {
 
     async fn ensure_running(&mut self) -> Result<(), String> {
         if !self.is_alive().await {
-            warn("PHP-CGI process is not running, restarting...".to_string());
+            warn!("PHP-CGI process is not running, restarting...");
             // Wait a bit before restarting to avoid rapid restart loops
             tokio::time::sleep(Duration::from_millis(1000)).await;
             self.start().await?;
@@ -248,7 +248,7 @@ impl PhpCgi {
             let time_since_activity = self.last_activity.elapsed();
             if time_since_activity >= Duration::from_secs(10) {
                 if !self.send_keep_alive().await {
-                    warn("Keep-alive failed, restarting PHP-CGI process".to_string());
+                    warn!("Keep-alive failed, restarting PHP-CGI process");
                     self.stop().await;
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                     self.start().await?;
@@ -260,9 +260,9 @@ impl PhpCgi {
 
     pub async fn stop(&mut self) {
         if let Some(mut process) = self.process.take() {
-            trace("Stopping PHP-CGI process".to_string());
+            trace!("Stopping PHP-CGI process");
             if let Err(e) = process.kill().await {
-                error(format!("Failed to kill PHP-CGI process: {}", e));
+                error!("Failed to kill PHP-CGI process: {}", e);
             }
         }
 

@@ -2,10 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
+    trace,
     configuration::{request_handler::RequestHandler, site::Site},
     error::gruxi_error::GruxiError,
     http::request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
-    logging::syslog::trace,
 };
 
 pub struct RequestHandlerManager {
@@ -57,7 +57,7 @@ impl RequestHandlerManager {
             }
         }
 
-        trace(format!("No request handler found for request path '{}'", &gruxi_request.get_path_and_query()));
+        trace!("No request handler found for request path '{}'", &gruxi_request.get_path_and_query());
         Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()))
     }
 }

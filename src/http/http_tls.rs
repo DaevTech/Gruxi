@@ -1,5 +1,5 @@
 use crate::core::running_state_manager::get_running_state_manager;
-use crate::logging::syslog::{debug, error, info, warn};
+use crate::{debug, error, info, warn};
 use crate::tls::shared_acme_manager::{get_shared_acme_domains, get_shared_acme_manager_async};
 use rand;
 use rustls::crypto::aws_lc_rs;
@@ -209,7 +209,7 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
         }
     };
 
-    debug(format!("Building unified cert resolver for {}:{} with {} ACME domains", binding.ip, binding.port, acme_domains.len()));
+    debug!("Building unified cert resolver for {}:{} with {} ACME domains", binding.ip, binding.port, acme_domains.len());
 
     let mut resolver = UnifiedCertResolver::new(acme_resolver, acme_domains.clone());
     let mut fallback_certificate: Option<std::sync::Arc<RustlsCertifiedKey>> = None;
@@ -252,10 +252,10 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
                     // We dont want to fallback to other methods if user explicitly set paths
                     // And also, we dont want to overwrite it with a self signed cert
                     if !site.tls_cert_path.is_empty() && !site.tls_key_path.is_empty() {
-                        error(format!(
+                        error!(
                             "Site: '{}' with hostnames '{:?}' Failed to load TLS certificates from disk paths - Administrator is needed to fix this issue",
                             site.id, site.hostnames
-                        ));
+                        );
                         continue;
                     }
                     None
@@ -273,10 +273,10 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
                     // We dont want to fallback to other methods if user explicitly set content of certificates
                     // And also, we dont want to overwrite it with a self signed cert
                     if !site.tls_cert_content.is_empty() && !site.tls_key_content.is_empty() {
-                        error(format!(
+                        error!(
                             "Site: '{}' with hostnames '{:?}' Failed to load TLS certificates from content fields - Administrator is needed to fix this issue",
                             site.id, site.hostnames
-                        ));
+                        );
                         continue;
                     }
                     None
@@ -288,10 +288,10 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
         if certificates.is_none() {
             let generated_certs = generate_self_signed_certificate_and_persist(site, sans.clone(), binding.is_admin).await;
             if let Some(certs) = generated_certs {
-                info(format!(
+                info!(
                     "Generated self-signed certificate, because of missing certificates, for site '{}' with hostnames: {:?}",
                     site.id, sans
-                ));
+                );
                 certificates = Some(certs);
             }
         }
@@ -300,7 +300,7 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
         let (cert_chain, priv_key) = match certificates {
             Some(certs) => certs,
             None => {
-                warn(format!("No valid TLS certificate could be obtained for site '{}' with hostnames {:?}", site.id, site.hostnames));
+                warn!("No valid TLS certificate could be obtained for site '{}' with hostnames {:?}", site.id, site.hostnames);
                 continue;
             }
         };
@@ -319,11 +319,11 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
         for name in &sans {
             match resolver.add_manual_cert(name, certified_arc.as_ref().clone()) {
                 Ok(()) => {
-                    debug(format!("Added manual cert for hostname '{}'", name));
+                    debug!("Added manual cert for hostname '{}'", name);
                     cert_added = true;
                 }
                 Err(e) => {
-                    debug(format!("Failed to add SNI name '{}': {:?}", name, e));
+                    debug!("Failed to add SNI name '{}': {:?}", name, e);
                 }
             }
         }
@@ -332,7 +332,7 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
         if has_wildcard {
             if !sans.contains(&"localhost".to_string()) {
                 if let Err(e) = resolver.add_manual_cert("localhost", certified_arc.as_ref().clone()) {
-                    debug(format!("Failed to add localhost for wildcard site: {:?}", e));
+                    debug!("Failed to add localhost for wildcard site: {:?}", e);
                 } else {
                     cert_added = true;
                 }
@@ -357,7 +357,7 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
         }
 
         if let Err(e) = resolver.add_manual_cert("localhost", certified_arc.as_ref().clone()) {
-            warn(format!("Failed to add fallback certificate for localhost: {:?}", e));
+            warn!("Failed to add fallback certificate for localhost: {:?}", e);
         }
     }
 
@@ -371,12 +371,12 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
 
 fn generate_self_signed_certificate(sans: Vec<String>) -> Option<(Vec<CertificateDer<'static>>, String, PrivateKeyDer<'static>, String)> {
     // Generate self-signed certificate
-    debug(format!("Generating self-signed certificate for site with hostnames: {:?}", sans));
+    debug!("Generating self-signed certificate for site with hostnames: {:?}", sans);
     let gen_key_result = rcgen::generate_simple_self_signed(sans);
     let gen_key = match gen_key_result {
         Ok(k) => k,
         Err(e) => {
-            warn(format!("Failed to generate self-signed cert: {}", e));
+            warn!("Failed to generate self-signed cert: {}", e);
             return None;
         }
     };
@@ -393,7 +393,7 @@ fn generate_self_signed_certificate(sans: Vec<String>) -> Option<(Vec<Certificat
     let cert_chain = match certs_result {
         Ok(certs) => certs,
         Err(e) => {
-            warn(format!("Failed to parse generated TLS cert PEM content: {}", e));
+            warn!("Failed to parse generated TLS cert PEM content: {}", e);
             return None;
         }
     };
@@ -402,11 +402,11 @@ fn generate_self_signed_certificate(sans: Vec<String>) -> Option<(Vec<Certificat
     let priv_key = match key_result {
         Ok(Some(key)) => key,
         Ok(None) => {
-            warn("No private key found in generated PEM content".to_string());
+            warn!("No private key found in generated PEM content");
             return None;
         }
         Err(e) => {
-            warn(format!("Failed to parse generated TLS key PEM content: {}", e));
+            warn!("Failed to parse generated TLS key PEM content: {}", e);
             return None;
         }
     };
@@ -425,10 +425,10 @@ async fn generate_self_signed_certificate_and_persist(site: &Site, sans: Vec<Str
     // Persist generated cert/key to disk
     match persist_generated_tls_for_site(site, &cert_pem, &key_pem, is_admin).await {
         Ok(cert_paths) => {
-            debug(format!("Successfully persisted generated certificate to: {:?}", cert_paths));
+            debug!("Successfully persisted generated certificate to: {:?}", cert_paths);
         }
         Err(e) => {
-            warn(format!("Failed to persist generated certificate (will continue with in-memory cert): {}", e));
+            warn!("Failed to persist generated certificate (will continue with in-memory cert): {}", e);
         }
     }
 
@@ -449,7 +449,7 @@ fn get_certificates_from_config(site: &Site) -> Option<(Vec<CertificateDer<'stat
     let cert_chain = match certs_result {
         Ok(certs) => certs,
         Err(e) => {
-            warn(format!("Site: '{}' Failed to parse TLS cert PEM content: {}", site.id, e));
+            warn!("Site: '{}' Failed to parse TLS cert PEM content: {}", site.id, e);
             return None;
         }
     };
@@ -458,11 +458,11 @@ fn get_certificates_from_config(site: &Site) -> Option<(Vec<CertificateDer<'stat
     let priv_key = match key_result {
         Ok(Some(key)) => key,
         Ok(None) => {
-            warn(format!("Site: '{}' No private key found in PEM content", site.id));
+            warn!("Site: '{}' No private key found in PEM content", site.id);
             return None;
         }
         Err(e) => {
-            warn(format!("Site: '{}' Failed to parse TLS key PEM content: {}", site.id, e));
+            warn!("Site: '{}' Failed to parse TLS key PEM content: {}", site.id, e);
             return None;
         }
     };
@@ -481,7 +481,7 @@ fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static
     let cert_file = match cert_file_result {
         Ok(f) => f,
         Err(e) => {
-            warn(format!("Site: '{}' Failed to open TLS cert file {}: {}", site.id, site.tls_cert_path, e));
+            warn!("Site: '{}' Failed to open TLS cert file {}: {}", site.id, site.tls_cert_path, e);
             return None;
         }
     };
@@ -489,7 +489,7 @@ fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static
     let key_file = match key_file_result {
         Ok(f) => f,
         Err(e) => {
-            warn(format!("Site: '{}' Failed to open TLS key file {}: {}", site.id, site.tls_key_path, e));
+            warn!("Site: '{}' Failed to open TLS key file {}: {}", site.id, site.tls_key_path, e);
             return None;
         }
     };
@@ -501,7 +501,7 @@ fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static
     let cert_chain = match certs_result {
         Ok(certs) => certs,
         Err(e) => {
-            warn(format!("Site: '{}' Failed to parse TLS cert file {}: {}", site.id, site.tls_cert_path, e));
+            warn!("Site: '{}' Failed to parse TLS cert file {}: {}", site.id, site.tls_cert_path, e);
             return None;
         }
     };
@@ -510,11 +510,11 @@ fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static
     let priv_key = match key_result {
         Ok(Some(key)) => key,
         Ok(None) => {
-            warn(format!("Site: '{}' No private key found in {}", site.id, site.tls_key_path));
+            warn!("Site: '{}' No private key found in {}", site.id, site.tls_key_path);
             return None;
         }
         Err(e) => {
-            warn(format!("Site: '{}' Failed to parse TLS key file {}: {}", site.id, site.tls_key_path, e));
+            warn!("Site: '{}' Failed to parse TLS key file {}: {}", site.id, site.tls_key_path, e);
             return None;
         }
     };

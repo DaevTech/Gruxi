@@ -1,10 +1,19 @@
 use chrono::Utc;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, RwLock};
 use tokio::select;
 
 use crate::core::operation_mode::OperationMode;
 use crate::logging::buffered_log::BufferedLog;
+
+// Atomic flags for fast lock-free log level checks
+// Initialize to true so logs work before SYS_LOG LazyLock is initialized
+static ERROR_ENABLED: AtomicBool = AtomicBool::new(true);
+static WARN_ENABLED: AtomicBool = AtomicBool::new(true);
+static INFO_ENABLED: AtomicBool = AtomicBool::new(true);
+static DEBUG_ENABLED: AtomicBool = AtomicBool::new(true);
+static TRACE_ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub struct SysLog {
     pub buffered_log: BufferedLog,
@@ -88,6 +97,13 @@ impl SysLog {
         self.stdout_info_enabled = stdout_log_level.clone() as u8 >= LogType::Info as u8;
         self.stdout_debug_enabled = stdout_log_level.clone() as u8 >= LogType::Debug as u8;
         self.stdout_trace_enabled = stdout_log_level.clone() as u8 >= LogType::Trace as u8;
+
+        // Update the atomic flags for lock-free checks (combine file and stdout)
+        ERROR_ENABLED.store(self.error_enabled || self.stdout_error_enabled, Ordering::Relaxed);
+        WARN_ENABLED.store(self.warn_enabled || self.stdout_warn_enabled, Ordering::Relaxed);
+        INFO_ENABLED.store(self.info_enabled || self.stdout_info_enabled, Ordering::Relaxed);
+        DEBUG_ENABLED.store(self.debug_enabled || self.stdout_debug_enabled, Ordering::Relaxed);
+        TRACE_ENABLED.store(self.trace_enabled || self.stdout_trace_enabled, Ordering::Relaxed);
     }
 
     pub fn start_flushing_task(&self) {
@@ -95,20 +111,10 @@ impl SysLog {
     }
 
     pub fn add_log(&self, log_type: LogType, log: String) {
-        // Match the logtype against the enabled levels
-        match log_type {
-            LogType::Error if !self.error_enabled => return,
-            LogType::Warn if !self.warn_enabled => return,
-            LogType::Info if !self.info_enabled => return,
-            LogType::Debug if !self.debug_enabled => return,
-            LogType::Trace if !self.trace_enabled => return,
-            _ => {}
-        }
-
         let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
         let log_entry = format!("{} - [{}] {}", &ts, &log_type, &log);
 
-        // Also print to stdout right away if enabled
+        // Print to stdout if enabled for this level
         match log_type {
             LogType::Error if self.stdout_error_enabled => println!("{}", &log_entry),
             LogType::Warn if self.stdout_warn_enabled => println!("{}", &log_entry),
@@ -118,9 +124,20 @@ impl SysLog {
             _ => {}
         }
 
-        match self.buffered_log.buffered_log.lock() {
-            Err(_) => {}
-            Ok(mut guard) => guard.push(log_entry),
+        // Write to file if enabled for this level
+        let file_enabled = match log_type {
+            LogType::Error => self.error_enabled,
+            LogType::Warn => self.warn_enabled,
+            LogType::Info => self.info_enabled,
+            LogType::Debug => self.debug_enabled,
+            LogType::Trace => self.trace_enabled,
+            LogType::Off => false,
+        };
+
+        if file_enabled {
+            if let Ok(mut guard) = self.buffered_log.buffered_log.lock() {
+                guard.push(log_entry);
+            }
         }
     }
 
@@ -131,7 +148,7 @@ impl SysLog {
         let mut operation_mode_changed_token = match operation_mode_changed_token_option {
             Some(token) => token,
             None => {
-                error("Failed to get operation_mode_changed token - Could not start flushing thread for syslog. Please report a bug".to_string());
+                _log_error("Failed to get operation_mode_changed token - Could not start flushing thread for syslog. Please report a bug".to_string());
                 return;
             }
         };
@@ -140,7 +157,7 @@ impl SysLog {
         let shutdown_token = match shutdown_token_option {
             Some(token) => token,
             None => {
-                error("Failed to get shutdown token - Could not start flushing thread for syslog. Please report a bug".to_string());
+                _log_error("Failed to get shutdown token - Could not start flushing thread for syslog. Please report a bug".to_string());
                 return;
             }
         };
@@ -151,7 +168,7 @@ impl SysLog {
                 _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
                     match SYS_LOG.read() {
                         Err(_) => {
-                            debug("Failed to acquire read lock for syslog during flushing task".to_string());
+                            // Can't log here - would need the lock we failed to acquire
                             continue;
                         },
                         Ok(sys_log) => {
@@ -170,7 +187,7 @@ impl SysLog {
                     operation_mode_changed_token = match operation_mode_changed_token_option {
                         Some(token) => token,
                         None => {
-                            error("Failed to get operation_mode_changed token - Could not start flushing thread for syslog. Please report a bug".to_string());
+                            _log_error("Failed to get operation_mode_changed token - Could not start flushing thread for syslog. Please report a bug".to_string());
                             return;
                         }
                     };
@@ -180,7 +197,7 @@ impl SysLog {
                     // Shutdown in progress, we force flush the logs
                     match SYS_LOG.read() {
                         Err(_) => {
-                            debug("Failed to acquire read lock for syslog during flushing task".to_string());
+                            // Can't log here - would need the lock we failed to acquire
                         },
                         Ok(sys_log) => {
                             sys_log.buffered_log.consider_flush(true);
@@ -195,7 +212,8 @@ impl SysLog {
     fn set_new_log_level(new_log_level: LogType) {
         match SYS_LOG.write() {
             Err(_) => {
-                error("Failed to acquire write lock for syslog when setting new log level".to_string());
+                // Can't log - we failed to get the write lock for the logger itself
+                eprintln!("Failed to acquire write lock for syslog when setting new log level");
                 return;
             }
             Ok(mut guard) => {
@@ -209,7 +227,7 @@ impl SysLog {
     pub fn set_new_stdout_log_level(new_log_level: LogType) {
         match SYS_LOG.write() {
             Err(_) => {
-                error("Failed to acquire write lock for syslog when setting new stdout log level".to_string());
+                eprintln!("Failed to acquire write lock for syslog when setting new stdout log level");
                 return;
             }
             Ok(mut guard) => {
@@ -248,47 +266,115 @@ fn init_log() -> SysLog {
     sys_log
 }
 
-pub fn error<S: Into<String>>(log: S) {
-    match SYS_LOG.read() {
-        Err(_) => {}
-        Ok(sys_log) => {
-            sys_log.add_log(LogType::Error, log.into());
-        }
+// Check functions that return whether a log level is enabled
+// These use atomic loads - no locking required
+#[inline]
+pub fn is_error_enabled() -> bool {
+    ERROR_ENABLED.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn is_warn_enabled() -> bool {
+    WARN_ENABLED.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn is_info_enabled() -> bool {
+    INFO_ENABLED.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn is_debug_enabled() -> bool {
+    DEBUG_ENABLED.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn is_trace_enabled() -> bool {
+    TRACE_ENABLED.load(Ordering::Relaxed)
+}
+
+// Internal functions used by macros - these assume the level check has already been done
+#[doc(hidden)]
+pub fn _log_error(log: String) {
+    if let Ok(sys_log) = SYS_LOG.read() {
+        sys_log.add_log(LogType::Error, log);
     }
 }
 
-pub fn warn<S: Into<String>>(log: S) {
-    match SYS_LOG.read() {
-        Err(_) => {}
-        Ok(sys_log) => {
-            sys_log.add_log(LogType::Warn, log.into());
-        }
+#[doc(hidden)]
+pub fn _log_warn(log: String) {
+    if let Ok(sys_log) = SYS_LOG.read() {
+        sys_log.add_log(LogType::Warn, log);
     }
 }
 
-pub fn info<S: Into<String>>(log: S) {
-    match SYS_LOG.read() {
-        Err(_) => {}
-        Ok(sys_log) => {
-            sys_log.add_log(LogType::Info, log.into());
-        }
+#[doc(hidden)]
+pub fn _log_info(log: String) {
+    if let Ok(sys_log) = SYS_LOG.read() {
+        sys_log.add_log(LogType::Info, log);
     }
 }
 
-pub fn debug<S: Into<String>>(log: S) {
-    match SYS_LOG.read() {
-        Err(_) => {}
-        Ok(sys_log) => {
-            sys_log.add_log(LogType::Debug, log.into());
-        }
+#[doc(hidden)]
+pub fn _log_debug(log: String) {
+    if let Ok(sys_log) = SYS_LOG.read() {
+        sys_log.add_log(LogType::Debug, log);
     }
 }
 
-pub fn trace<S: Into<String>>(log: S) {
-    match SYS_LOG.read() {
-        Err(_) => {}
-        Ok(sys_log) => {
-            sys_log.add_log(LogType::Trace, log.into());
-        }
+#[doc(hidden)]
+pub fn _log_trace(log: String) {
+    if let Ok(sys_log) = SYS_LOG.read() {
+        sys_log.add_log(LogType::Trace, log);
     }
+}
+
+/// Logs an error message. The format arguments are only evaluated if error logging is enabled.
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        if $crate::logging::syslog::is_error_enabled() {
+            $crate::logging::syslog::_log_error(format!($($arg)*));
+        }
+    };
+}
+
+/// Logs a warning message. The format arguments are only evaluated if warn logging is enabled.
+#[macro_export]
+macro_rules! warn {
+    ($($arg:tt)*) => {
+        if $crate::logging::syslog::is_warn_enabled() {
+            $crate::logging::syslog::_log_warn(format!($($arg)*));
+        }
+    };
+}
+
+/// Logs an info message. The format arguments are only evaluated if info logging is enabled.
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => {
+        if $crate::logging::syslog::is_info_enabled() {
+            $crate::logging::syslog::_log_info(format!($($arg)*));
+        }
+    };
+}
+
+/// Logs a debug message. The format arguments are only evaluated if debug logging is enabled.
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        if $crate::logging::syslog::is_debug_enabled() {
+            $crate::logging::syslog::_log_debug(format!($($arg)*));
+        }
+    };
+}
+
+/// Logs a trace message. The format arguments are only evaluated if trace logging is enabled.
+#[macro_export]
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        if $crate::logging::syslog::is_trace_enabled() {
+            $crate::logging::syslog::_log_trace(format!($($arg)*));
+        }
+    };
 }

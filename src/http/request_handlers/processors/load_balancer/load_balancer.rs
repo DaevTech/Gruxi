@@ -7,7 +7,7 @@ use tokio::time::{self, Duration};
 
 use crate::core::running_state_manager;
 use crate::core::triggers::get_trigger_handler;
-use crate::logging::syslog::{debug, error};
+use crate::{debug, error};
 
 // Commands sent to a load balancer task
 pub enum LoadBalancerCommand {
@@ -25,7 +25,7 @@ pub trait LoadBalancerImpl: Send + 'static {
             Ok(u) => u,
             Err(e) => {
                 health_register.store(false, Ordering::SeqCst);
-                error(format!("Health check failed: Invalid URI for server '{}': {}", uri, e));
+                error!("Health check failed: Invalid URI for server '{}': {}", uri, e);
                 return;
             }
         };
@@ -42,12 +42,12 @@ pub trait LoadBalancerImpl: Send + 'static {
             let resp = tokio::time::timeout(Duration::from_secs(request_timeout_secs), client.get(server_uri.clone())).await;
             let elapsed = start_time.elapsed().as_secs_f32();
             let is_healthy = resp.ok().and_then(|r| r.ok()).map(|r| r.status().is_success()).unwrap_or(false);
-            debug(format!(
+            debug!(
                 "Health check for server '{}': {} - Request was done in {:.3} seconds",
                 server_uri,
                 if is_healthy { "Healthy" } else { "Unhealthy" },
                 elapsed
-            ));
+            );
             health_register.store(is_healthy, Ordering::SeqCst);
         });
     }
@@ -65,7 +65,7 @@ async fn load_balancer_task<T: LoadBalancerImpl>(mut lb: T, mut rx: mpsc::Receiv
     let shutdown_token = match shutdown_token_option {
         Some(token) => token,
         None => {
-            error("Failed to get shutdown token - Could not start load balancer task. Please report a bug".to_string());
+            error!("Failed to get shutdown token - Could not start load balancer task. Please report a bug");
             return;
         }
     };
@@ -74,7 +74,7 @@ async fn load_balancer_task<T: LoadBalancerImpl>(mut lb: T, mut rx: mpsc::Receiv
     let stop_services_token = match stop_services_token_option {
         Some(token) => token,
         None => {
-            error("Failed to get stop_services token - Could not start load balancer task. Please report a bug".to_string());
+            error!("Failed to get stop_services token - Could not start load balancer task. Please report a bug");
             return;
         }
     };

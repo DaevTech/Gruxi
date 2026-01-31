@@ -3,7 +3,7 @@ use gruxi::core::operation_mode::get_operation_mode;
 use gruxi::core::running_state_manager::get_running_state_manager;
 use gruxi::core::triggers::get_trigger_handler;
 use gruxi::database::database_schema::initialize_database;
-use gruxi::logging::syslog::{error, info};
+use gruxi::{error, info};
 use gruxi::{admin_portal::init::initialize_admin_site, core::background_tasks::start_background_tasks};
 use tokio::select;
 
@@ -39,7 +39,7 @@ async fn main() {
         let shutdown_token_trigger = match shutdown_token_trigger_option {
             Some(trigger) => trigger,
             None => {
-                error("Failed to get shutdown trigger - If this happens, please report a bug");
+                error!("Failed to get shutdown trigger - If this happens, please report a bug");
                 return;
             }
         };
@@ -50,7 +50,7 @@ async fn main() {
             let configuration_trigger = match configuration_trigger_option {
                 Some(trigger) => trigger,
                 None => {
-                    error("Failed to get reload_configuration trigger - If this happens, please report a bug");
+                    error!("Failed to get reload_configuration trigger - If this happens, please report a bug");
                     return;
                 }
             };
@@ -58,7 +58,7 @@ async fn main() {
 
             select! {
                 _ = configuration_token.cancelled() => {
-                    info("Reloading running state due to configuration change");
+                    info!("Reloading running state due to configuration change");
                     running_state_manager.set_new_running_state().await;
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     gruxi::http::http_server::initialize_server().await;
@@ -71,7 +71,7 @@ async fn main() {
     })
     .await;
     if let Err(e) = join_handle {
-        error(format!("Main loop task exited with error: {}", e));
+        error!("Main loop task exited with error: {}", e);
     }
 
     // Waiting a little while to allow graceful shutdown
@@ -86,7 +86,7 @@ fn start_gruxi_basics() {
 
     // Initialize database tables and migrations
     if let Err(e) = initialize_database() {
-        error(format!("Failed to initialize database: {}", e));
+        error!("Failed to initialize database: {}", e);
         std::process::exit(1);
     }
 
@@ -94,8 +94,8 @@ fn start_gruxi_basics() {
     let operation_mode = get_operation_mode();
 
     let version = env!("CARGO_PKG_VERSION");
-    info(format!("Starting Gruxi {}", version));
-    info(format!("Operation mode: {:?}", operation_mode));
+    info!("Starting Gruxi {}", version);
+    info!("Operation mode: {:?}", operation_mode);
 
     // Load the configuration early to catch any errors
     gruxi::configuration::load_configuration::init();
@@ -104,7 +104,7 @@ fn start_gruxi_basics() {
     match initialize_admin_site() {
         Ok(_) => (),
         Err(_) => {
-            error("Failed to initialize admin site");
+            error!("Failed to initialize admin site");
             std::process::exit(1);
         }
     };

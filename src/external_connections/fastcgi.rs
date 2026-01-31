@@ -4,8 +4,8 @@ use crate::file::file_util::split_path;
 use crate::http::http_util::full;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
-use crate::logging::syslog::error;
-use crate::logging::syslog::trace;
+use crate::error;
+use crate::trace;
 use std::time::Instant;
 use std::{collections::HashMap, time::Duration};
 use tokio::io::AsyncReadExt;
@@ -122,7 +122,7 @@ impl FastCgi {
             let padding_length = buffer[i + 6] as usize;
 
             if version != 1 {
-                trace(format!("Unexpected FastCGI version {} at offset {}, stopping parse", version, i));
+                trace!("Unexpected FastCGI version {} at offset {}, stopping parse", version, i);
                 break;
             }
 
@@ -130,12 +130,12 @@ impl FastCgi {
             let content_end = content_start + content_length;
 
             if content_end > buffer.len() {
-                trace(format!(
+                trace!(
                     "Incomplete FastCGI record at offset {}, expected {} bytes but only {} available",
                     i,
                     content_end - i,
                     buffer.len() - i
-                ));
+                );
                 break;
             }
 
@@ -145,24 +145,24 @@ impl FastCgi {
                     let content = &buffer[content_start..content_end];
                     response.extend_from_slice(content);
                     stdout_records += 1;
-                    trace(format!(
+                    trace!(
                         "Parsed FCGI_STDOUT record #{} with {} bytes (total response: {} bytes)",
                         stdout_records,
                         content_length,
                         response.len()
-                    ));
+                    );
                 } else {
-                    trace("Received empty FCGI_STDOUT record (stream terminator)".to_string());
+                    trace!("Received empty FCGI_STDOUT record (stream terminator)");
                 }
             } else if record_type == 7 {
                 // FCGI_STDERR - log errors
                 if content_length > 0 {
                     let stderr_content = String::from_utf8_lossy(&buffer[content_start..content_end]);
-                    error(format!("FastCGI STDERR: {}", stderr_content));
+                    error!("FastCGI STDERR: {}", stderr_content);
                 }
             } else if record_type == 3 {
                 // FCGI_END_REQUEST
-                trace(format!("Received FCGI_END_REQUEST, parsed {} STDOUT records with total {} bytes", stdout_records, response.len()));
+                trace!("Received FCGI_END_REQUEST, parsed {} STDOUT records with total {} bytes", stdout_records, response.len());
                 break;
             }
 
@@ -213,17 +213,17 @@ impl FastCgi {
         let params = match params_result {
             Ok(p) => p,
             Err(_) => {
-                error(format!("Failed to generate FastCGI parameters from request {:?}", gruxi_request));
+                error!("Failed to generate FastCGI parameters from request {:?}", gruxi_request);
                 return Err(FastCgiError::Initialization);
             }
         };
-        trace(format!("Generated FastCGI parameters: {:?}", params));
+        trace!("Generated FastCGI parameters: {:?}", params);
 
         // Determine FastCGI server IP and port
         let ip_and_port = match gruxi_request.get_calculated_data("fastcgi_connect_ip_and_port") {
             Some(ip_and_port) => ip_and_port,
             None => {
-                error(format!("No FastCGI IP and port found in request calculated data ip and port: {:?}", gruxi_request));
+                error!("No FastCGI IP and port found in request calculated data ip and port: {:?}", gruxi_request);
                 return Err(FastCgiError::Initialization);
             }
         };
@@ -235,19 +235,19 @@ impl FastCgi {
             Some(connection_semaphore) => {
                 // We only need a permit, if a connection semaphore is set
                 let available_permits = connection_semaphore.available_permits();
-                trace(format!("Acquiring connection permit for FastCGI server at {} (available permits: {})", ip_and_port, available_permits));
+                trace!("Acquiring connection permit for FastCGI server at {} (available permits: {})", ip_and_port, available_permits);
 
                 // Acquire a connection permit to limit concurrent connections to php-fpm
                 let _permit = match connection_semaphore.acquire().await {
                     Ok(permit) => {
-                        trace(format!(
+                        trace!(
                             "Connection permit acquired for FastCGI server (remaining permits: {})",
                             connection_semaphore.available_permits()
-                        ));
+                        );
                         permit
                     }
                     Err(e) => {
-                        error(format!("Failed to acquire connection permit for FastCGI server: {}", e));
+                        error!("Failed to acquire connection permit for FastCGI server: {}", e);
                         return Err(FastCgiError::ConnectionPermitAcquisition);
                     }
                 };
@@ -260,39 +260,39 @@ impl FastCgi {
     }
 
     pub async fn do_fastcgi_request_and_response(gruxi_request: &mut GruxiRequest, ip_and_port: &str, params: &HashMap<String, String>) -> Result<GruxiResponse, FastCgiError> {
-        trace(format!("Connecting to FastCGI server at {}", ip_and_port));
+        trace!("Connecting to FastCGI server at {}", ip_and_port);
 
         // Connect to the FastCGI server
         let mut stream = match tokio::net::TcpStream::connect(&ip_and_port).await {
             Ok(stream) => stream,
             Err(e) => {
-                error(format!("FastCGI Error: Failed to connect to FastCGI server {}: {}", ip_and_port, e));
+                error!("FastCGI Error: Failed to connect to FastCGI server {}: {}", ip_and_port, e);
                 return Err(FastCgiError::Connection(e));
             }
         };
 
         // Send FastCGI request
-        trace(format!("Sending FastCGI request... with parameters: {:?}", params));
+        trace!("Sending FastCGI request... with parameters: {:?}", params);
         let start_time = Instant::now();
 
         // Send BEGIN_REQUEST
         let begin_request = Self::create_fastcgi_begin_request();
         if let Err(e) = stream.write_all(&begin_request).await {
-            error(format!("FastCGI Error: Failed to send BEGIN_REQUEST: {}", e));
+            error!("FastCGI Error: Failed to send BEGIN_REQUEST: {}", e);
             return Err(FastCgiError::Communication(e));
         }
 
         // Send parameters
         let params_data = Self::create_fastcgi_params(&params);
         if let Err(e) = stream.write_all(&params_data).await {
-            error(format!("FastCGI Error: Failed to send PARAMS: {}", e));
+            error!("FastCGI Error: Failed to send PARAMS: {}", e);
             return Err(FastCgiError::Communication(e));
         }
 
         // Send empty params to signal end
         let empty_params = Self::create_fastcgi_params(&HashMap::new());
         if let Err(e) = stream.write_all(&empty_params).await {
-            error(format!("FastCGI Error: Failed to send empty params: {}", e));
+            error!("FastCGI Error: Failed to send empty params: {}", e);
             return Err(FastCgiError::Communication(e));
         }
 
@@ -301,7 +301,7 @@ impl FastCgi {
         if body_bytes.len() > 0 {
             let stdin_data = Self::create_fastcgi_stdin(&body_bytes);
             if let Err(e) = stream.write_all(&stdin_data).await {
-                error(format!("FastCGI Error: Failed to send STDIN: {}", e));
+                error!("FastCGI Error: Failed to send STDIN: {}", e);
                 return Err(FastCgiError::Communication(e));
             }
         }
@@ -309,12 +309,12 @@ impl FastCgi {
         // Send empty stdin to signal end
         let empty_stdin = Self::create_fastcgi_stdin(&[]);
         if let Err(e) = stream.write_all(&empty_stdin).await {
-            error(format!("FastCGI Error: Failed to send empty stdin: {}", e));
+            error!("FastCGI Error: Failed to send empty stdin: {}", e);
             return Err(FastCgiError::Communication(e));
         }
 
         // Read response
-        trace("Reading FastCGI response...".to_string());
+        trace!("Reading FastCGI response...");
         let mut response_buffer = Vec::new();
         // Use 65535 byte buffer to match FastCGI max record size (FCGI_MAX_LENGTH)
         let mut buffer = vec![0u8; 65535];
@@ -325,16 +325,16 @@ impl FastCgi {
             loop {
                 match stream.read(&mut buffer).await {
                     Ok(0) => {
-                        trace("FastCGI connection closed by server".to_string());
+                        trace!("FastCGI connection closed by server");
                         break; // Connection closed
                     }
                     Ok(n) => {
-                        trace(format!("Read {} bytes from FastCGI stream (total: {} bytes)", n, response_buffer.len() + n));
+                        trace!("Read {} bytes from FastCGI stream (total: {} bytes)", n, response_buffer.len() + n);
                         response_buffer.extend_from_slice(&buffer[..n]);
 
                         // Check for complete response (empty STDOUT + END_REQUEST)
                         if Self::is_fastcgi_response_complete(&response_buffer) {
-                            trace(format!("FastCGI response complete, total size: {} bytes", response_buffer.len()));
+                            trace!("FastCGI response complete, total size: {} bytes", response_buffer.len());
                             break;
                         }
                     }
@@ -349,7 +349,7 @@ impl FastCgi {
         {
             Ok(_) => {}
             Err(_) => {
-                error(format!("FastCGI response timeout after reading {} bytes", response_buffer.len()));
+                error!("FastCGI response timeout after reading {} bytes", response_buffer.len());
                 return Err(FastCgiError::Timeout);
             }
         }
@@ -357,7 +357,7 @@ impl FastCgi {
         // Parse FastCGI response and extract HTTP response
         let http_response_bytes = Self::parse_fastcgi_response(&response_buffer);
         if http_response_bytes.is_empty() {
-            error("FastCGI - Empty response from PHP-CGI process".to_string());
+            error!("FastCGI - Empty response from PHP-CGI process");
             return Err(FastCgiError::InvalidResponse);
         }
 
@@ -414,11 +414,11 @@ impl FastCgi {
             Ok(response) => {
                 let end_time = Instant::now();
                 let duration = end_time - start_time;
-                trace(format!("FastCGI response parsed successfully in {:?}", duration));
+                trace!("FastCGI response parsed successfully in {:?}", duration);
                 Ok(GruxiResponse::from_hyper_bytes(response).await)
             }
             Err(e) => {
-                error(format!("FastCGI - Failed to build HTTP response: {}", e));
+                error!("FastCGI - Failed to build HTTP response: {}", e);
                 return Err(FastCgiError::InvalidResponse);
             }
         }
@@ -489,7 +489,7 @@ impl FastCgi {
         // Figure out PATH_INFO
         let path_info = Self::compute_path_info(&request_uri, &filename);
 
-        trace(format!("FastCGI - Directory: {}, Filename: {}", directory, filename));
+        trace!("FastCGI - Directory: {}, Filename: {}", directory, filename);
 
         // Build FastCGI parameters (CGI environment variables)
         params.insert("REQUEST_METHOD".to_string(), gruxi_request.get_http_method());

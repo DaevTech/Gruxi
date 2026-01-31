@@ -15,8 +15,8 @@ use http::HeaderValue;
 use hyper::body::Bytes;
 
 use crate::{
+    trace,
     http::request_response::gruxi_request::GruxiRequest,
-    logging::syslog::trace,
 };
 
 /// Represents a parsed byte range from the Range header
@@ -200,7 +200,7 @@ pub fn should_process_range(
             let matches = !if_range.starts_with("W/")
                 && !current_etag.starts_with("W/")
                 && if_range == current_etag;
-            trace(format!("If-Range ETag comparison: {} vs {} = {}", if_range, current_etag, matches));
+            trace!("If-Range ETag comparison: {} vs {} = {}", if_range, current_etag, matches);
             return matches;
         }
         return false; // No ETag to compare against
@@ -219,12 +219,12 @@ pub fn should_process_range(
             .unwrap_or(0);
 
         let matches = last_modified_secs == if_range_secs;
-        trace(format!("If-Range date comparison: {} == {} = {}", last_modified_secs, if_range_secs, matches));
+        trace!("If-Range date comparison: {} == {} = {}", last_modified_secs, if_range_secs, matches);
         return matches;
     }
 
     // Invalid If-Range value - ignore range request per RFC 9110
-    trace(format!("If-Range header has invalid value: {}", if_range));
+    trace!("If-Range header has invalid value: {}", if_range);
     false
 }
 

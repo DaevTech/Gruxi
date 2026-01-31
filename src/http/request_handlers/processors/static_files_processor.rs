@@ -1,4 +1,5 @@
 use crate::{
+    error, trace, warn,
     configuration::site::Site,
     error::{
         gruxi_error::GruxiError,
@@ -14,7 +15,6 @@ use crate::{
         request_handlers::processor_trait::ProcessorTrait,
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
-    logging::syslog::{error, trace, warn},
 };
 use http::HeaderName;
 use hyper::header::HeaderValue;
@@ -52,7 +52,7 @@ impl ProcessorTrait for StaticFileProcessor {
             self.normalized_web_root = match normalized_path_result {
                 Ok(path) => Some(path),
                 Err(_) => {
-                    error(format!("Failed to normalize web root path: {}", self.web_root));
+                    error!("Failed to normalize web root path: {}", self.web_root);
                     return;
                 }
             };
@@ -104,7 +104,7 @@ impl ProcessorTrait for StaticFileProcessor {
     async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
         // Check and normalize web root if not already done
         if self.normalized_web_root.is_none() {
-            error(format!("StaticFileProcessor web root is not initialized as expected for id: '{}'", self.id));
+            error!("StaticFileProcessor web root is not initialized as expected for id: '{}'", self.id);
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
         }
 
@@ -112,7 +112,7 @@ impl ProcessorTrait for StaticFileProcessor {
         let web_root_option = self.normalized_web_root.as_ref();
         let web_root = match web_root_option {
             None => {
-                error(format!("StaticFileProcessor web root is not initialized as expected for id: '{}'", self.id));
+                error!("StaticFileProcessor web root is not initialized as expected for id: '{}'", self.id);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
             Some(web_root) => web_root.get_full_path(),
@@ -123,13 +123,13 @@ impl ProcessorTrait for StaticFileProcessor {
         // Get the file, if it exists
         let normalized_path_result = NormalizedPath::new(&web_root, &path);
         if let Err(_) = normalized_path_result {
-            trace(format!("Failed or rejected to normalize request path: {}", path));
+            trace!("Failed or rejected to normalize request path: {}", path);
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
         }
         let normalized_path = match normalized_path_result {
             Ok(path) => path,
             Err(_) => {
-                trace(format!("Failed or rejected to normalize request path: {}", path));
+                trace!("Failed or rejected to normalize request path: {}", path);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         };
@@ -137,13 +137,13 @@ impl ProcessorTrait for StaticFileProcessor {
         let file_data_result = resolve_web_root_and_path_and_get_file(&normalized_path).await;
         if let Err(e) = file_data_result {
             // If we fail to get the file, return cant/wont handle
-            trace(format!("We could not get data on the file: {}, so we cannot handle with static file processor", e));
+            trace!("We could not get data on the file: {}, so we cannot handle with static file processor", e);
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
         }
         let mut file_data = match file_data_result {
             Ok(data) => data,
             Err(e) => {
-                trace(format!("We could not get data on the file: {}, so we cannot handle with static file processor", e));
+                trace!("We could not get data on the file: {}, so we cannot handle with static file processor", e);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
             }
         };
@@ -151,9 +151,9 @@ impl ProcessorTrait for StaticFileProcessor {
 
         // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
         if !file_data.meta.exists {
-            trace(format!("File does not exist: {}", file_path));
+            trace!("File does not exist: {}", file_path);
             if site.get_rewrite_functions_hashmap().contains_key("OnlyWebRootIndexForSubdirs") {
-                trace(format!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path));
+                trace!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path);
                 // We rewrite the path to just "/" which will make it serve the index file
                 path = "/".to_string();
 
@@ -162,7 +162,7 @@ impl ProcessorTrait for StaticFileProcessor {
                 let normalized_path = match normalized_path_result {
                     Ok(path) => path,
                     Err(_) => {
-                        trace(format!("Failed or rejected to normalize request path: {}", path));
+                        trace!("Failed or rejected to normalize request path: {}", path);
                         return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
                     }
                 };
@@ -171,23 +171,23 @@ impl ProcessorTrait for StaticFileProcessor {
                 file_data = match file_data_result {
                     Ok(data) => data,
                     Err(e) => {
-                        trace(format!("We could not get data on the file: {}, so we cannot handle with static file processor", e));
+                        trace!("We could not get data on the file: {}, so we cannot handle with static file processor", e);
                         return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
                     }
                 };
                 file_path = file_data.meta.file_path.clone();
             } else {
-                trace(format!(
+                trace!(
                     "File does not exist and no rewrite function is applied: {}, so we cannot handle with static file processor",
                     file_path
-                ));
+                );
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         }
 
         if file_data.meta.is_directory {
             // If it's a directory, we will try to return the index file
-            trace(format!("File is a directory: {}", file_path));
+            trace!("File is a directory: {}", file_path);
 
             // Check if we can find a index file in the directory
             let mut found_index = false;
@@ -197,7 +197,7 @@ impl ProcessorTrait for StaticFileProcessor {
                 let normalized_path = match normalized_path_result {
                     Ok(path) => path,
                     Err(_) => {
-                        trace(format!("Failed to normalize path: {} and file: {}", file_path, file));
+                        trace!("Failed to normalize path: {} and file: {}", file_path, file);
                         continue;
                     }
                 };
@@ -206,31 +206,31 @@ impl ProcessorTrait for StaticFileProcessor {
                 file_data = match file_data_result {
                     Ok(data) => data,
                     Err(_) => {
-                        trace(format!("Index files in dir does not exist: {}", file_path));
+                        trace!("Index files in dir does not exist: {}", file_path);
                         continue;
                     }
                 };
 
                 if file_data.meta.exists == false {
-                    trace(format!("Index files in dir does not exist: {}", file_path));
+                    trace!("Index files in dir does not exist: {}", file_path);
                     continue;
                 }
 
                 file_path = file_data.meta.file_path.clone();
-                trace(format!("Found index file: {}", file_path));
+                trace!("Found index file: {}", file_path);
                 found_index = true;
                 break;
             }
 
             if !found_index {
-                trace(format!("Did not find index file: {}", file_path));
+                trace!("Did not find index file: {}", file_path);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         }
 
         // Do a safety check of the path, make sure it's still under the web root and not blocked file extension
         if !check_path_secure(&web_root, &file_path).await {
-            trace(format!("File path is not secure: {}", file_path));
+            trace!("File path is not secure: {}", file_path);
             // We should probably not reveal that the file is blocked, so we return a 404
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(
                 file_path,
@@ -293,10 +293,10 @@ impl ProcessorTrait for StaticFileProcessor {
         let header_value = HeaderValue::from_str(content_type);
         match header_value {
             Err(e) => {
-                warn(format!(
+                warn!(
                     "Failed to set content type header for file: {} with mime type: {}. Error: {}",
                     file_path, content_type, e
-                ));
+                );
             }
             Ok(value) => {
                 response.headers_mut().insert(hyper::header::CONTENT_TYPE, value);
@@ -309,7 +309,7 @@ impl ProcessorTrait for StaticFileProcessor {
             let header_value = HeaderValue::from_str("gzip");
             match header_value {
                 Err(e) => {
-                    warn(format!("Failed to set content encoding header for file: {} with gzip. Error: {}", file_path, e));
+                    warn!("Failed to set content encoding header for file: {} with gzip. Error: {}", file_path, e);
                 }
                 Ok(value) => {
                     response.headers_mut().insert(hyper::header::CONTENT_ENCODING, value);
@@ -350,10 +350,10 @@ impl StaticFileProcessor {
             let header_value = HeaderValue::from_str(header_value_string);
             match header_value {
                 Err(e) => {
-                    warn(format!(
+                    warn!(
                         "Failed to set header: {} for file: {} with value: {}. Error: {}",
                         header_name, file_path, header_value_string, e
-                    ));
+                    );
                 }
                 Ok(value) => {
                     response.headers_mut().insert(header_name, value);

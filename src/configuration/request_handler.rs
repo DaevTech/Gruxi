@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    trace,
     configuration::site::Site,
     core::running_state_manager::get_running_state_manager,
     error::{gruxi_error::GruxiError, gruxi_error_enums::*},
@@ -9,7 +10,6 @@ use crate::{
         request_handlers::processor_trait::ProcessorTrait,
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
-    logging::syslog::trace,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -124,7 +124,7 @@ impl RequestHandler {
         // Depending on request handler type, we get the appropriate processor
         let response_result = match self.processor_type.as_str() {
             "static" => {
-                trace(format!("Handling request with static file processor id '{}'", &self.processor_id));
+                trace!("Handling request with static file processor id '{}'", &self.processor_id);
                 let pm_option = processor_manager.get_static_file_processor_by_id(&self.processor_id);
                 match pm_option {
                     Some(p) => p.handle_request(gruxi_request, &site).await,
@@ -137,7 +137,7 @@ impl RequestHandler {
                 }
             }
             "php" => {
-                trace(format!("Handling request with PHP processor id '{}'", &self.processor_id));
+                trace!("Handling request with PHP processor id '{}'", &self.processor_id);
                 let pm_option = processor_manager.get_php_processor_by_id(&self.processor_id);
                 match pm_option {
                     Some(p) => p.handle_request(gruxi_request, &site).await,
@@ -150,7 +150,7 @@ impl RequestHandler {
                 }
             }
             "proxy" => {
-                trace(format!("Handling request with proxy processor id '{}'", &self.processor_id));
+                trace!("Handling request with proxy processor id '{}'", &self.processor_id);
                 let pm_option = processor_manager.get_proxy_processor_by_id(&self.processor_id);
                 match pm_option {
                     Some(p) => p.handle_request(gruxi_request, &site).await,

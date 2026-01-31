@@ -1,4 +1,4 @@
-use crate::logging::syslog::{trace, warn};
+use crate::{trace, warn};
 use std::{
     collections::HashMap,
     sync::{Arc, OnceLock},
@@ -41,10 +41,10 @@ impl Triggers {
         if let Some(token_lock) = self.triggers.get(name) {
             let token_clone = token_lock.clone();
             let token = token_clone.read().await;
-            trace(format!("Running trigger: {}", name));
+            trace!("Running trigger: {}", name);
             token.cancel();
         } else {
-            warn(format!("A non-existent trigger was triggered - Please report as a bug. Trigger: {}", name));
+            warn!("A non-existent trigger was triggered - Please report as a bug. Trigger: {}", name);
         }
         // When token is used, we renew it for next time
         self.renew_trigger(name).await;

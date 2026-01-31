@@ -14,7 +14,7 @@
 
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::core::triggers::get_trigger_handler;
-use crate::logging::syslog::{debug, trace};
+use crate::{debug, trace};
 use rustls_acme::caches::DirCache;
 use rustls_acme::{AcmeConfig, ResolvesServerCertAcme};
 use std::collections::BTreeSet;
@@ -60,7 +60,7 @@ impl SharedAcmeManager {
 pub async fn shutdown_shared_acme_manager() {
     let mut manager = SHARED_ACME_MANAGER.write().await;
     if let Some(existing) = manager.take() {
-        debug("Shutting down shared ACME manager".to_string());
+        debug!("Shutting down shared ACME manager");
         existing.polling_cancel_token.cancel();
     }
 }
@@ -105,7 +105,7 @@ async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<d
 
     // ACME requires an account email to create/register the account.
     if tls_settings.account_email.trim().is_empty() {
-        debug("ACME not enabled: no account email configured".to_string());
+        debug!("ACME not enabled: no account email configured");
         return Ok(None);
     }
 
@@ -150,7 +150,7 @@ async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<d
     }
 
     if all_domains.is_empty() {
-        debug("ACME not enabled: no valid domains found with tls_automatic_enabled".to_string());
+        debug!("ACME not enabled: no valid domains found with tls_automatic_enabled");
         return Ok(None);
     }
 
@@ -170,13 +170,13 @@ async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<d
     // rustls-acme requires `mailto:` prefix.
     acme_config = acme_config.contact_push(format!("mailto:{}", tls_settings.account_email.trim()));
 
-    trace(format!(
+    trace!(
         "ACME initialized (staging={}, cache_dir='{}') for {} domains: {:?}",
         tls_settings.use_staging_server,
         cache_dir,
         all_domains.len(),
         all_domains
-    ));
+    );
 
     // Create the ACME state - this is the single instance that will handle all certificate operations
     let acme_state = acme_config.state();
@@ -204,7 +204,7 @@ fn spawn_acme_polling_task(
     cancel_token: CancellationToken,
 ) {
     tokio::spawn(async move {
-        trace("ACME background polling task started".to_string());
+        trace!("ACME background polling task started");
 
         // Get shutdown and stop_services triggers
         let triggers = get_trigger_handler();
@@ -229,31 +229,31 @@ fn spawn_acme_polling_task(
             tokio::select! {
                 // Check for cancellation (from manager shutdown)
                 _ = cancel_token.cancelled() => {
-                    debug("ACME polling task cancelled by manager shutdown".to_string());
+                    debug!("ACME polling task cancelled by manager shutdown");
                     break;
                 }
                 // Check for shutdown trigger
                 _ = shutdown_token.cancelled() => {
-                    debug("ACME polling task stopping due to shutdown signal".to_string());
+                    debug!("ACME polling task stopping due to shutdown signal");
                     break;
                 }
                 // Check for stop_services trigger
                 _ = stop_services_token.cancelled() => {
-                    debug("ACME polling task stopping due to stop_services signal".to_string());
+                    debug!("ACME polling task stopping due to stop_services signal");
                     break;
                 }
                 // Poll for ACME events
                 event = acme_state.next() => {
                     match event {
                         Some(Ok(ok)) => {
-                            trace(format!("ACME event: {:?}", ok));
+                            trace!("ACME event: {:?}", ok);
                         }
                         Some(Err(err)) => {
-                            debug(format!("ACME error: {:?}", err));
+                            debug!("ACME error: {:?}", err);
                         }
                         None => {
                             // Stream ended
-                            debug("ACME event stream ended".to_string());
+                            debug!("ACME event stream ended");
                             break;
                         }
                     }
@@ -261,6 +261,6 @@ fn spawn_acme_polling_task(
             }
         }
 
-        debug("ACME background polling task ended".to_string());
+        debug!("ACME background polling task ended");
     });
 }

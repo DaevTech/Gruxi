@@ -3,8 +3,8 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Semaphore;
 
 use crate::{
+    error, trace,
     external_connections::managed_system::php_cgi::PhpCgi,
-    logging::syslog::{error, trace},
 };
 
 pub struct ExternalSystemHandler {
@@ -36,7 +36,7 @@ impl ExternalSystemHandler {
             let port = match port_result {
                 Ok(p) => p,
                 Err(e) => {
-                    error(format!("Failed to start PHP-CGI handler with ID: {}: {}", php_cgi_config.id, e));
+                    error!("Failed to start PHP-CGI handler with ID: {}: {}", php_cgi_config.id, e);
                     0
                 }
             };
@@ -56,7 +56,7 @@ impl ExternalSystemHandler {
             // Start monitoring thread for this PHP-CGI instance
             tokio::spawn(PhpCgi::start_monitoring_thread(new_php_cgi));
 
-            trace(format!("Initialized PHP-CGI handler with ID: {}", php_cgi_config.id));
+            trace!("Initialized PHP-CGI handler with ID: {}", php_cgi_config.id);
         }
 
         ExternalSystemHandler {

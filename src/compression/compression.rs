@@ -1,6 +1,6 @@
 use crate::http::request_response::gruxi_body::GruxiBody::Buffered;
 use crate::http::request_response::gruxi_response::GruxiResponse;
-use crate::logging::syslog::debug;
+use crate::debug;
 use flate2::write::GzEncoder;
 use http::HeaderValue;
 use hyper::body::Bytes;
@@ -31,7 +31,7 @@ impl Compression {
             Ok(_) => {}
             Err(e) => {
                 // If compression fails, we just return without modifying the response
-                debug(format!("Gzip compression failed: {}", e));
+                debug!("Gzip compression failed: {}", e);
                 return;
             }
         }

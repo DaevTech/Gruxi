@@ -7,7 +7,7 @@ use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
 use urlencoding::decode;
 
-use crate::logging::syslog::debug;
+use crate::debug;
 
 #[derive(Clone, Debug)]
 pub struct NormalizedPath {
@@ -36,7 +36,7 @@ impl NormalizedPath {
             normalized_path.path = match normalized_path_cleaned_result {
                 Ok(p) => p,
                 Err(_) => {
-                    debug(format!("Failed to clean URL path in NormalizePath: {:?}", normalized_path));
+                    debug!("Failed to clean URL path in NormalizePath: {:?}", normalized_path);
                     return Err(());
                 }
             };

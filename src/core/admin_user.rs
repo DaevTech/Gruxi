@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
-use crate::logging::syslog::{error, info};
+use crate::{error, info};
 use random_password_generator::generate_password;
 use serde::{Deserialize, Serialize};
 use sqlite::Connection;
@@ -67,7 +67,7 @@ pub fn create_default_admin_user(connection: &Connection) -> Result<(), String> 
             ))
             .map_err(|e| format!("Failed to create default admin user: {}", e))?;
 
-        info(format!("Default admin user created with username 'admin' and password '{}'", random_password));
+        info!("Default admin user created with username 'admin' and password '{}'", random_password);
         need_to_clear_sessions = true;
     }
 
@@ -113,7 +113,7 @@ fn get_random_hashed_password() -> Result<(String, String), ()> {
     let password_hash = match password_hash_result {
         Ok(hash) => hash,
         Err(_) => {
-            error("Failed to hash password");
+            error!("Failed to hash password");
             return Err(())
         }
     };
@@ -203,7 +203,7 @@ pub fn create_session(user: &User) -> Result<Session, String> {
         ))
         .map_err(|e| format!("Failed to create session: {}", e))?;
 
-    info(format!("Created session for user: {}", user.username));
+    info!("Created session for user: {}", user.username);
     Ok(session)
 }
 
@@ -319,7 +319,7 @@ pub fn cleanup_all_expired_sessions() -> Result<u64, String> {
         .map_err(|e| format!("Failed to cleanup expired sessions: {}", e))?;
 
     if expired_count > 0 {
-        info(format!("Cleaned up {} expired sessions", expired_count));
+        info!("Cleaned up {} expired sessions", expired_count);
     }
 
     Ok(expired_count)

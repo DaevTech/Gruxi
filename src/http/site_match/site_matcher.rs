@@ -1,4 +1,4 @@
-use crate::{configuration::site::Site, logging::syslog::trace};
+use crate::{trace, configuration::site::Site};
 
 // Find a best match site for the requested hostname, comparing case-insensitively
 pub fn find_best_match_site<'a>(sites: &'a Vec<Site>, requested_hostname: &str) -> Option<&'a Site> {
@@ -17,7 +17,7 @@ pub fn find_best_match_site<'a>(sites: &'a Vec<Site>, requested_hostname: &str) 
 
     // If we still cant find a proper site, we return None
     if site.is_none() {
-        trace(format!("No matching site found for requested hostname: {}", requested_hostname));
+        trace!("No matching site found for requested hostname: {}", requested_hostname);
         return None;
     }
 

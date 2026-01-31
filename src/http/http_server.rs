@@ -5,7 +5,7 @@ use crate::http::http_tls::build_unified_tls_acceptor;
 use crate::http::http_util::add_standard_headers_to_response;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
-use crate::logging::syslog::{debug, error, info, trace};
+use crate::{debug, error, info, trace};
 use crate::tls::shared_acme_manager::initialize_shared_acme_manager;
 use futures::FutureExt;
 use hyper::Request;
@@ -42,7 +42,7 @@ pub async fn initialize_server() {
         let port = binding.port;
         let addr = SocketAddr::new(ip, port);
 
-        info(format!("Starting server on {}", addr));
+        info!("Starting server on {}", addr);
 
         // Start listening on the specified address - spawn each binding as a separate task
         let binding_clone = binding.clone();
@@ -66,7 +66,7 @@ async fn start_listener_with_retry(addr: SocketAddr) -> TcpListener {
                 if attempts >= max_attempts {
                     panic!("Failed to bind to {} after {} attempts: {}", addr, attempts, e);
                 }
-                error(format!("Failed to bind to {}: {}. Retrying in {:?}...", addr, e, retry_delay));
+                error!("Failed to bind to {}: {}. Retrying in {:?}...", addr, e, retry_delay);
                 tokio::time::sleep(retry_delay).await;
             }
         }
@@ -85,7 +85,7 @@ async fn start_server_binding(binding: Binding) {
     let addr = SocketAddr::new(ip, port);
 
     let listener = start_listener_with_retry(addr).await;
-    trace(format!("Listening on binding: {:?}", binding));
+    trace!("Listening on binding: {:?}", binding);
 
     let triggers = crate::core::triggers::get_trigger_handler();
 
@@ -93,7 +93,7 @@ async fn start_server_binding(binding: Binding) {
     let shutdown_token = match shutdown_token_option {
         Some(token) => token,
         None => {
-            error("Failed to get shutdown token - Could not start server binding. Please report a bug".to_string());
+            error!("Failed to get shutdown token - Could not start server binding. Please report a bug");
             return;
         }
     };
@@ -102,7 +102,7 @@ async fn start_server_binding(binding: Binding) {
     let stop_services_token = match stop_services_token_option {
         Some(token) => token,
         None => {
-            error("Failed to get stop_services token - Could not start server binding. Please report a bug".to_string());
+            error!("Failed to get stop_services token - Could not start server binding. Please report a bug");
             return;
         }
     };
@@ -113,7 +113,7 @@ async fn start_server_binding(binding: Binding) {
         let tls_acceptor = match build_unified_tls_acceptor(&binding).await {
             Ok(result) => result,
             Err(e) => {
-                error(format!("TLS setup failed for {}:{} => {}", binding.ip, binding.port, e));
+                error!("TLS setup failed for {}:{} => {}", binding.ip, binding.port, e);
                 return;
             }
         };
@@ -122,11 +122,11 @@ async fn start_server_binding(binding: Binding) {
         loop {
             select! {
                 _ = shutdown_token.cancelled() => {
-                    trace(format!("Shutdown signal received, stopping server on {}:{}", binding.ip, binding.port));
+                    trace!("Shutdown signal received, stopping server on {}:{}", binding.ip, binding.port);
                     break;
                 },
                 _ = stop_services_token.cancelled() => {
-                    trace(format!("Service cancellation signal received, stopping server on {}:{}", binding.ip, binding.port));
+                    trace!("Service cancellation signal received, stopping server on {}:{}", binding.ip, binding.port);
                     break;
                 },
                 result = listener.accept() => {
@@ -157,13 +157,13 @@ async fn start_server_binding(binding: Binding) {
                                         monitoring_state.decrement_requests_in_queue();
                                     }
                                     Err(err) => {
-                                        debug(format!("TLS handshake error: {:?}", err));
+                                        debug!("TLS handshake error: {:?}", err);
                                     }
                                 }
                             });
                         }
                         Err(err) => {
-                            debug(format!("Failed to accept connection: {:?}", err));
+                            debug!("Failed to accept connection: {:?}", err);
                         }
                     }
                 }
@@ -173,11 +173,11 @@ async fn start_server_binding(binding: Binding) {
         loop {
             select! {
                 _ = shutdown_token.cancelled() => {
-                    trace(format!("Termination signal received, stopping server on {}:{}", binding.ip, binding.port));
+                    trace!("Termination signal received, stopping server on {}:{}", binding.ip, binding.port);
                     break;
                 },
                 _ = stop_services_token.cancelled() => {
-                    trace(format!("Service stop signal received, stopping server on {}:{}", binding.ip, binding.port));
+                    trace!("Service stop signal received, stopping server on {}:{}", binding.ip, binding.port);
                     break;
                 },
                 result = listener.accept() => {
@@ -206,7 +206,7 @@ async fn start_server_binding(binding: Binding) {
                             });
                         }
                         Err(err) => {
-                            debug(format!("Failed to accept connection: {:?}", err));
+                            debug!("Failed to accept connection: {:?}", err);
                         }
                     }
                 }
@@ -223,10 +223,10 @@ fn handle_connection_panic(panic: Box<dyn std::any::Any + Send>) {
     } else {
         "Panic occured but payload is not a string"
     };
-    error(format!(
+    error!(
         "Panic occurred in request handling while serving connection: {:?} - Please submit a bug with this information and message",
         message
-    ));
+    );
 }
 
 // Helper function to serve a connection (works for both TLS and non-TLS)
@@ -250,7 +250,7 @@ where
             let gruxi_response_result = handle_request(gruxi_request, binding).await;
             let mut response = match gruxi_response_result {
                 Err(err) => {
-                    error(format!("Error handling request from {}: {:?}", &remote_ip, err));
+                    error!("Error handling request from {}: {:?}", &remote_ip, err);
                     let response = GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16());
                     response
                 }
@@ -260,7 +260,7 @@ where
             // Add standard headers
             add_standard_headers_to_response(&mut response);
 
-            debug(format!("Responding with: {:?}", response));
+            debug!("Responding with: {:?}", response);
 
             // Convert gruxi_response to hyper response
             Ok::<_, std::convert::Infallible>(response.into_hyper())
@@ -277,6 +277,6 @@ where
     };
 
     if let Err(err) = result {
-        trace(format!("Connection error: {:?}", err));
+        trace!("Connection error: {:?}", err);
     }
 }

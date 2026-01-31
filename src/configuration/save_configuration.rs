@@ -10,7 +10,7 @@ use crate::external_connections::managed_system::php_cgi::PhpCgi;
 use crate::http::request_handlers::processors::php_processor::PHPProcessor;
 use crate::http::request_handlers::processors::proxy_processor::ProxyProcessor;
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
-use crate::logging::syslog::{info, trace};
+use crate::{info, trace};
 use serde_json;
 use sqlite::Connection;
 use sqlite::State;
@@ -127,7 +127,7 @@ pub fn save_configuration(config: &mut Configuration, force: bool) -> Result<boo
     // Commit transaction
     connection.execute("COMMIT").map_err(|e| vec![format!("Failed to commit transaction: {}", e)])?;
 
-    info("Configuration saved successfully");
+    info!("Configuration saved successfully");
 
     Ok(true) // Changes were saved
 }
@@ -292,7 +292,7 @@ fn save_binding(connection: &Connection, binding: &Binding) -> Result<(), String
         ))
         .map_err(|e| format!("Failed to insert binding: {}", e))?;
 
-    trace(format!("Inserted binding with id: {}", binding.id));
+    trace!("Inserted binding with id: {}", binding.id);
 
     Ok(())
 }
@@ -333,7 +333,7 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
         ))
         .map_err(|e| format!("Failed to insert site: {}", e))?;
 
-    trace(format!("Inserted site with id: {}", site.id));
+    trace!("Inserted site with id: {}", site.id);
 
     Ok(())
 }

@@ -6,7 +6,7 @@ use crate::http::request_handlers::processor_trait::ProcessorTrait;
 use crate::http::request_handlers::processors::php_processor::{self, PHPProcessor};
 use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorRewrite};
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
-use crate::logging::syslog::{info, trace};
+use crate::{info, trace};
 use crate::{
     configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::HeaderKV, site::Site},
     core::database_connection::get_database_connection,
@@ -21,10 +21,10 @@ pub fn init() -> Configuration {
 
     // Determine if we need to migrate
     if schema_version > 0 && schema_version < CURRENT_DB_SCHEMA_VERSION {
-        info(format!(
+        info!(
             "Database schema version {} is older than current version {}, migrating...",
             schema_version, CURRENT_DB_SCHEMA_VERSION
-        ));
+        );
         migrate_database();
     }
 
@@ -32,7 +32,7 @@ pub fn init() -> Configuration {
     let mut configuration = {
         if schema_version == 0 {
             // No schema version found, likely first run - create default configuration
-            info("No configuration found, creating default configuration");
+            info!("No configuration found, creating default configuration");
             let mut configuration = Configuration::get_default();
             let save_result = save_configuration(&mut configuration, true);
             if let Err(e) = save_result {
@@ -61,7 +61,7 @@ pub fn init() -> Configuration {
 
     // Add admin portal to configuration if we have it enabled (which it is by default)
     if configuration.core.admin_portal.is_enabled {
-        trace("Admin portal is enabled, adding it to configuration");
+        trace!("Admin portal is enabled, adding it to configuration");
         add_admin_portal_to_configuration(&mut configuration);
     }
 

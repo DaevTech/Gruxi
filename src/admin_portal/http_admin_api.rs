@@ -10,7 +10,7 @@ use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
 use crate::file::normalized_path::{NormalizedPath};
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
-use crate::logging::syslog::{debug, error, info, trace};
+use crate::{debug, error, info, trace};
 use http::HeaderValue;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -29,14 +29,14 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site) ->
     let normalized_path = match normalized_path_result {
         Ok(np) => np,
         Err(_) => {
-            trace(format!("Failed to normalize path: {}", path));
+            trace!("Failed to normalize path: {}", path);
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::AdminApi(AdminApiError::InvalidRequest)));
         }
     };
 
     let path_cleaned = normalized_path.get_path();
 
-    trace(format!("Handling request for admin portal with path: {}", path_cleaned));
+    trace!("Handling request for admin portal with path: {}", path_cleaned);
 
     // We only want to handle a few paths in the admin portal
     let response_result = if path_cleaned == "/login" && method == "POST" {
@@ -63,7 +63,7 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site) ->
         admin_post_operation_mode_endpoint(gruxi_request, site).await
     } else {
         // If we reach here, no matching admin API route was found
-        trace(format!("No matching admin API route found for path: {}", path_cleaned));
+        trace!("No matching admin API route found for path: {}", path_cleaned);
         Err(GruxiError::new_with_kind_only(GruxiErrorKind::AdminApi(AdminApiError::NoRouteMatched)))
     };
 
@@ -73,7 +73,7 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site) ->
 pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check if this is a POST request
     if gruxi_request.get_http_method() != "POST" {
-        trace(format!("Login request attempted with invalid method: {}", gruxi_request.get_http_method()));
+        trace!("Login request attempted with invalid method: {}", gruxi_request.get_http_method());
         let response = GruxiResponse::new_empty_with_status(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16());
         return Ok(response);
     }
@@ -85,26 +85,26 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
     let login_request: LoginRequest = match serde_json::from_slice(&body_bytes) {
         Ok(req) => req,
         Err(e) => {
-            error(format!("Failed to parse login request: {}", e));
+            error!("Failed to parse login request: {}", e);
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid JSON format for login"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     };
 
-    debug(format!("Login attempt for username: {}", login_request.username));
+    debug!("Login attempt for username: {}", login_request.username);
 
     // Authenticate user
     let user = match authenticate_user(&login_request.username, &login_request.password) {
         Ok(Some(user)) => user,
         Ok(None) => {
-            info(format!("Failed login attempt for username: {}", login_request.username));
+            info!("Failed login attempt for username: {}", login_request.username);
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid username or password"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
         Err(e) => {
-            error(format!("Database error during authentication: {}", e));
+            error!("Database error during authentication: {}", e);
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
@@ -115,7 +115,7 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
     let session = match create_session(&user) {
         Ok(session) => session,
         Err(e) => {
-            error(format!("Failed to create session: {}", e));
+            error!("Failed to create session: {}", e);
             let return_message = r#"{"error": "Failed to create session"}"#;
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(return_message));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
@@ -123,7 +123,7 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
         }
     };
 
-    info(format!("Successful login for user: {}", user.username));
+    info!("Successful login for user: {}", user.username);
 
     // Return success response with session token
     let response_json = serde_json::json!({
@@ -142,7 +142,7 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
 pub async fn handle_logout_request(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check if this is a POST request
     if gruxi_request.get_http_method() != "POST" {
-        trace(format!("Logout request with invalid method: {}", gruxi_request.get_http_method()));
+        trace!("Logout request with invalid method: {}", gruxi_request.get_http_method());
         let response = GruxiResponse::new_empty_with_status(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16());
         return Ok(response);
     }
@@ -153,7 +153,7 @@ pub async fn handle_logout_request(gruxi_request: &mut GruxiRequest, _admin_site
     if let Some(token) = token {
         match invalidate_session(&token) {
             Ok(true) => {
-                info("Successfully logged out session".to_string());
+                info!("Successfully logged out session");
                 let response_json = serde_json::json!({
                     "success": true,
                     "message": "Logout successful"
@@ -168,7 +168,7 @@ pub async fn handle_logout_request(gruxi_request: &mut GruxiRequest, _admin_site
                 Ok(response)
             }
             Err(e) => {
-                error(format!("Failed to logout session: {}", e));
+                error!("Failed to logout session: {}", e);
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
                 response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                 Ok(response)
@@ -186,7 +186,7 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
     match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with getting configuration
-            debug("User authenticated, retrieving configuration".to_string());
+            debug!("User authenticated, retrieving configuration");
         }
         Ok(None) => {
             // This shouldn't happen as require_authentication returns error for None
@@ -205,7 +205,7 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
     let config = match config_result {
         Ok(cfg) => cfg,
         Err(e) => {
-            error(format!("Failed to retrieve configuration from database: {}", e));
+            error!("Failed to retrieve configuration from database: {}", e);
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Failed to retrieve configuration"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
@@ -215,7 +215,7 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
     let json_config = match serde_json::to_string_pretty(&config) {
         Ok(json) => json,
         Err(e) => {
-            error(format!("Failed to serialize configuration: {}", e));
+            error!("Failed to serialize configuration: {}", e);
             let mut response = GruxiResponse::new_with_bytes(
                 hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
                 bytes::Bytes::from(r#"{"error": "Failed to serialize configuration"}"#),
@@ -235,7 +235,7 @@ pub async fn admin_post_configuration_reload(gruxi_request: &mut GruxiRequest, _
     match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with reloading configuration
-            debug("User authenticated, reloading configuration".to_string());
+            debug!("User authenticated, reloading configuration");
         }
         Ok(None) => {
             // This shouldn't happen as require_authentication returns error for None
@@ -254,7 +254,7 @@ pub async fn admin_post_configuration_reload(gruxi_request: &mut GruxiRequest, _
     triggers.run_trigger("refresh_cached_configuration").await;
     triggers.run_trigger("reload_configuration").await;
 
-    info("Configuration reload triggered by admin user".to_string());
+    info!("Configuration reload triggered by admin user");
 
     let success_response = serde_json::json!({
         "success": true,
@@ -269,7 +269,7 @@ pub async fn admin_post_configuration_reload(gruxi_request: &mut GruxiRequest, _
 pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check if this is a POST request
     if gruxi_request.get_http_method() != "POST" {
-        trace(format!("Request with invalid method: {}", gruxi_request.get_http_method()));
+        trace!("Request with invalid method: {}", gruxi_request.get_http_method());
         let response = GruxiResponse::new_empty_with_status(hyper::StatusCode::METHOD_NOT_ALLOWED.as_u16());
         return Ok(response);
     }
@@ -277,7 +277,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
     // Check authentication first
     match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
-            debug("User authenticated for configuration update".to_string());
+            debug!("User authenticated for configuration update");
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
@@ -301,7 +301,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
     let mut configuration: Configuration = match serde_json::from_slice(&body_bytes) {
         Ok(config) => config,
         Err(e) => {
-            error(format!("Failed to parse configuration JSON: {}", e));
+            error!("Failed to parse configuration JSON: {}", e);
             let error_response = serde_json::json!({
                 "error": "Invalid JSON format",
                 "details": e.to_string()
@@ -316,13 +316,13 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
     // Save the configuration
     match save_configuration(&mut configuration, false) {
         Ok(true) => {
-            info("Configuration updated successfully".to_string());
+            info!("Configuration updated successfully");
 
             // Serialize the sanitized configuration to return to the client
             let config_json = match serde_json::to_value(&configuration) {
                 Ok(json) => json,
                 Err(e) => {
-                    error(format!("Failed to serialize updated configuration: {}", e));
+                    error!("Failed to serialize updated configuration: {}", e);
 
                     let mut response = GruxiResponse::new_with_bytes(
                         hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
@@ -344,13 +344,13 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
             return Ok(response);
         }
         Ok(false) => {
-            info("Configuration save requested, but no changes detected".to_string());
+            info!("Configuration save requested, but no changes detected");
 
             // Even if no changes were made, return the current configuration
             let config_json = match serde_json::to_value(&configuration) {
                 Ok(json) => json,
                 Err(e) => {
-                    error(format!("Failed to serialize configuration: {}", e));
+                    error!("Failed to serialize configuration: {}", e);
                     let mut response = GruxiResponse::new_with_bytes(
                         hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
                         bytes::Bytes::from(r#"{"error": "Failed to serialize configuration response"}"#),
@@ -371,7 +371,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
             return Ok(response);
         }
         Err(validation_errors) => {
-            info(format!("Configuration validation failed: {}", validation_errors.join("; ")));
+            info!("Configuration validation failed: {}", validation_errors.join("; "));
             let error_response = serde_json::json!({
                 "errors": validation_errors
             });
@@ -415,7 +415,7 @@ pub async fn require_authentication(gruxi_request: &GruxiRequest) -> Result<Opti
                 Err(response)
             }
             Err(e) => {
-                error(format!("Failed to verify session: {}", e));
+                error!("Failed to verify session: {}", e);
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
                 response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
                 Err(response)
@@ -433,7 +433,7 @@ pub async fn admin_monitoring_endpoint(gruxi_request: &mut GruxiRequest, _admin_
     // Check authentication first
     match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
-            debug("User authenticated, retrieving monitoring data".to_string());
+            debug!("User authenticated, retrieving monitoring data");
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
@@ -458,7 +458,7 @@ pub async fn admin_get_basic_data_endpoint(gruxi_request: &mut GruxiRequest, _ad
     // Check authentication first
     match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
-            debug("User authenticated, retrieving basic data for admin portal".to_string());
+            debug!("User authenticated, retrieving basic data for admin portal");
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
@@ -491,7 +491,7 @@ pub async fn admin_logs_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: 
     // Check authentication first
     match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
-            debug("User authenticated, retrieving logs".to_string());
+            debug!("User authenticated, retrieving logs");
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
@@ -561,7 +561,7 @@ async fn list_log_files() -> Result<GruxiResponse, GruxiError> {
             return Ok(response);
         }
         Err(e) => {
-            error(format!("Failed to read logs directory: {}", e));
+            error!("Failed to read logs directory: {}", e);
             let error_response = serde_json::json!({
                 "error": "Failed to read logs directory",
                 "details": e.to_string()
@@ -645,7 +645,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiErro
                     return Ok(response);
                 }
                 Err(e) => {
-                    error(format!("Failed to read log file {}: {}", filename, e));
+                    error!("Failed to read log file {}: {}", filename, e);
                     let error_response = serde_json::json!({
                         "error": "Failed to read log file",
                         "details": e.to_string()
@@ -658,7 +658,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiErro
             }
         }
         Err(e) => {
-            error(format!("Failed to get metadata for log file {}: {}", filename, e));
+            error!("Failed to get metadata for log file {}: {}", filename, e);
             let error_response = serde_json::json!({
                 "error": "Failed to access log file",
                 "details": e.to_string()
@@ -687,7 +687,7 @@ pub async fn admin_get_operation_mode_endpoint(gruxi_request: &mut GruxiRequest,
     // Check authentication first
     match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
-            debug("User authenticated, retrieving operation mode".to_string());
+            debug!("User authenticated, retrieving operation mode");
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
@@ -707,7 +707,7 @@ pub async fn admin_get_operation_mode_endpoint(gruxi_request: &mut GruxiRequest,
     let json_response = match serde_json::to_string(&response) {
         Ok(json) => json,
         Err(e) => {
-            error(format!("Failed to serialize operation mode response: {}", e));
+            error!("Failed to serialize operation mode response: {}", e);
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Failed to serialize response"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
@@ -730,7 +730,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
     // Check authentication first
     match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
-            debug("User authenticated for operation mode update".to_string());
+            debug!("User authenticated for operation mode update");
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
@@ -754,7 +754,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
     let mode_request: OperationModeRequest = match serde_json::from_slice(&body_bytes) {
         Ok(req) => req,
         Err(e) => {
-            error(format!("Failed to parse operation mode request: {}", e));
+            error!("Failed to parse operation mode request: {}", e);
             let error_response = serde_json::json!({
                 "error": "Invalid JSON format",
                 "details": e.to_string()

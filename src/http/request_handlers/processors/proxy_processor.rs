@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crate::{
+    error, trace,
     configuration::site::Site,
     core::running_state_manager,
     error::{
@@ -14,7 +15,6 @@ use crate::{
         },
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
-    logging::syslog::{error, trace},
 };
 use http::HeaderValue;
 use hyper::Response;
@@ -132,7 +132,7 @@ impl ProxyProcessor {
                 self.health_check_interval_seconds as u64,
             ),
             _ => {
-                error(format!("Unsupported load balancing strategy: {}", self.load_balancing_strategy));
+                error!("Unsupported load balancing strategy: {}", self.load_balancing_strategy);
                 panic!("Unsupported load balancing strategy: '{}' - Defined in proxy processor: {}", self.load_balancing_strategy, self.id);
             }
         }
@@ -225,7 +225,7 @@ impl ProcessorTrait for ProxyProcessor {
     }
 
     async fn handle_request(&self, gruxi_request: &mut GruxiRequest, _site: &Site) -> Result<GruxiResponse, GruxiError> {
-        trace(format!("ProxyProcessor handling request - {:?}", &self));
+        trace!("ProxyProcessor handling request - {:?}", &self);
 
         // We determine which upstream server to use based on the load balancing strategy.
         let running_state_manager = running_state_manager::get_running_state_manager().await;
@@ -237,7 +237,7 @@ impl ProcessorTrait for ProxyProcessor {
         let server_to_handle_request = match server_to_handle_request_option {
             Some(s) => s,
             None => {
-                error(format!("No upstream servers are currently available for proxy processor with id: {}", self.id));
+                error!("No upstream servers are currently available for proxy processor with id: {}", self.id);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable)));
             }
         };
@@ -253,10 +253,10 @@ impl ProcessorTrait for ProxyProcessor {
         let upstream_uri: hyper::Uri = match rewritten_url.parse() {
             Ok(uri) => uri,
             Err(e) => {
-                error(format!(
+                error!(
                     "Could not parse a rewritten URL '{}' for proxy processor with id: {} with error: {:?}",
                     rewritten_url, self.id, e
-                ));
+                );
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
             }
         };
@@ -275,7 +275,7 @@ impl ProcessorTrait for ProxyProcessor {
         let mut proxy_request = match gruxi_request.get_streaming_http_request() {
             Ok(req) => req,
             Err(_) => {
-                error(format!("Failed to get streaming HTTP request for request: {:?}", gruxi_request));
+                error!("Failed to get streaming HTTP request for request: {:?}", gruxi_request);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
             }
         };
@@ -288,16 +288,16 @@ impl ProcessorTrait for ProxyProcessor {
             // Header is there already, so we only remove it if we are not preserving it
             if !self.preserve_host_header {
                 proxy_request.headers_mut().remove(hyper::header::HOST);
-                trace("Not preserving original Host header for upstream request");
+                trace!("Not preserving original Host header for upstream request");
             }
         } else {
-            trace("Using forced Host header for upstream request");
+            trace!("Using forced Host header for upstream request");
             if let Ok(header_value) = HeaderValue::from_str(&self.forced_host_header) {
                 proxy_request.headers_mut().insert(hyper::header::HOST, header_value);
             }
         }
 
-        trace(format!("Forwarding request to upstream server: {:?}", proxy_request));
+        trace!("Forwarding request to upstream server: {:?}", proxy_request);
 
         let timeout_duration = Duration::from_secs(self.timeout_seconds as u64);
         match timeout(timeout_duration, client.request(proxy_request)).await {
@@ -305,7 +305,7 @@ impl ProcessorTrait for ProxyProcessor {
                 // Check if this is a protocol upgrade
                 let mut is_websocket_upgrade = false;
                 if resp.status() == hyper::StatusCode::SWITCHING_PROTOCOLS {
-                    trace("Detected WebSocket/protocol upgrade (HTTP 101)");
+                    trace!("Detected WebSocket/protocol upgrade (HTTP 101)");
 
                     // Get the upstream upgrade from the response extensions
                     let upstream_upgrade = resp.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
@@ -315,21 +315,21 @@ impl ProcessorTrait for ProxyProcessor {
                         tokio::spawn(async move {
                             match tokio::try_join!(client_upgrade, upstream_upgrade) {
                                 Ok((client, upstream)) => {
-                                    trace("WebSocket upgrade successful, bridging connections");
+                                    trace!("WebSocket upgrade successful, bridging connections");
                                     // Wrap the upgraded connections with TokioIo to make them compatible with tokio::io
                                     let mut client = TokioIo::new(client);
                                     let mut upstream = TokioIo::new(upstream);
                                     match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
                                         Ok((from_client, from_server)) => {
-                                            trace(format!("WebSocket closed. Client→Server: {} bytes, Server→Client: {} bytes", from_client, from_server));
+                                            trace!("WebSocket closed. Client→Server: {} bytes, Server→Client: {} bytes", from_client, from_server);
                                         }
                                         Err(e) => {
-                                            error(format!("WebSocket proxy error: {}", e));
+                                            error!("WebSocket proxy error: {}", e);
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error(format!("Failed to upgrade connections: {}", e));
+                                    error!("Failed to upgrade connections: {}", e);
                                 }
                             }
                         });
@@ -346,11 +346,11 @@ impl ProcessorTrait for ProxyProcessor {
                 return Ok(gruxi_response);
             }
             Ok(Err(e)) => {
-                error(format!("Failed to send request to upstream server: {:?}", e));
+                error!("Failed to send request to upstream server: {:?}", e);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed)));
             }
             Err(_) => {
-                error(format!("Request to upstream server '{}' timed out after {} seconds", server_to_handle_request, self.timeout_seconds));
+                error!("Request to upstream server '{}' timed out after {} seconds", server_to_handle_request, self.timeout_seconds);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout)));
             }
         }
