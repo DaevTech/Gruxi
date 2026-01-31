@@ -15,11 +15,11 @@ pub struct HttpCaching {
 impl HttpCaching {
     pub fn new() -> Self {
         Self {
-            enabled_caching: false,
-            enable_header_etag: false,
-            enable_header_last_modified: false,
-            enable_header_expires: false,
-            enable_header_cache_control: false,
+            enabled_caching: true,
+            enable_header_etag: true,
+            enable_header_last_modified: true,
+            enable_header_expires: true,
+            enable_header_cache_control: true,
         }
     }
 

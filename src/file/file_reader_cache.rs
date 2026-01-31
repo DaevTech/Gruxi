@@ -9,7 +9,10 @@ use crate::{
     core::triggers::get_trigger_handler,
     file::file_reader_structs::*,
     http::{
-        caching::etag::etag_strong_from_metadata,
+        caching::{
+            etag::etag_strong_from_metadata,
+            range::{RangeParseResult, format_content_range, build_multipart_body, build_multipart_body_from_parts, parse_range_header, should_process_range, get_range_header},
+        },
         request_response::{
             body_error::{BodyError, box_err},
             gruxi_request::GruxiRequest,
@@ -26,6 +29,7 @@ use http_body_util::{StreamBody, combinators::BoxBody};
 use hyper::body::{Bytes, Frame};
 use tokio::{
     fs::File,
+    io::{AsyncReadExt, AsyncSeekExt},
     select,
     time::{Instant, interval},
 };
@@ -364,7 +368,181 @@ impl FileReaderCache {
 }
 
 impl FileEntry {
+    /// Result type for range request handling
+    /// Contains the body, encoding, optional content-range header, and status code
     pub async fn get_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
+        // Check if this is a range request - clone the header value to avoid borrow issues
+        let range_header_value = get_range_header(gruxi_request)
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+
+        if let Some(range_str) = range_header_value {
+            // Check If-Range precondition before processing range
+            if should_process_range(gruxi_request, self.meta.etag_header.as_deref(), &self.meta.last_modified) {
+                let range_result = self.handle_range_request(&range_str).await;
+                if let Some(result) = range_result {
+                    return result;
+                }
+                // If range_result is None, fall through to serve full content
+            }
+        }
+
+        // Serve full content (no range request or range not applicable)
+        self.get_full_content_stream(gruxi_request).await
+    }
+
+    /// Handle a range request, returning None if we should serve full content instead
+    async fn handle_range_request(&self, range_str: &str) -> Option<(BoxBody<Bytes, BodyError>, String)> {
+        let content_length = self.meta.length;
+
+        match parse_range_header(range_str) {
+            RangeParseResult::NoRangeHeader | RangeParseResult::InvalidSyntax | RangeParseResult::UnsupportedUnit => {
+                // Serve full content
+                None
+            }
+            RangeParseResult::Ranges(ranges) => {
+                // Resolve all ranges against content length
+                let resolved_ranges: Vec<(u64, u64)> = ranges
+                    .iter()
+                    .filter_map(|r| r.resolve(content_length))
+                    .collect();
+
+                if resolved_ranges.is_empty() {
+                    // No satisfiable ranges - this will be handled by the caller with 416 response
+                    // Return a special marker (empty body with encoding indicating unsatisfiable)
+                    trace("No satisfiable ranges found".to_string());
+                    let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
+                    return Some((BoxBody::new(empty), "RANGE_NOT_SATISFIABLE".to_string()));
+                }
+
+                if resolved_ranges.len() == 1 {
+                    // Single range - use optimized path that avoids reading entire file
+                    let (start, end) = resolved_ranges[0];
+                    return Some(self.get_single_range_content(start, end).await);
+                } else {
+                    // Multiple ranges - need to build multipart response
+                    // For cached content, use zero-copy slicing; for uncached, read efficiently
+                    return Some(self.get_multipart_range_content(&resolved_ranges).await);
+                }
+            }
+        }
+    }
+
+    /// Get content for a single range request - optimized to avoid reading entire file
+    async fn get_single_range_content(&self, start: u64, end: u64) -> (BoxBody<Bytes, BodyError>, String) {
+        let content_length = self.meta.length;
+        let content_range = format_content_range(start, end, content_length);
+
+        // If content is cached, slice directly without copying
+        if let Some(raw_content) = &self.content.raw {
+            let start_idx = start as usize;
+            let end_idx = (end + 1) as usize;
+            let end_idx = end_idx.min(raw_content.len());
+            
+            if start_idx < raw_content.len() {
+                // Use Bytes::slice for zero-copy
+                let range_bytes = raw_content.slice(start_idx..end_idx);
+                let full_body = Full::new(range_bytes).map_err(|never| -> BodyError { match never {} });
+                return (BoxBody::new(full_body), format!("RANGE:{}", content_range));
+            }
+        }
+
+        // For uncached files, seek and read only the needed bytes
+        let range_length = end - start + 1;
+        match File::open(&self.meta.file_path).await {
+            Ok(mut file) => {
+                // Seek to start position
+                if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
+                    trace(format!("Failed to seek file {} for range: {}", self.meta.file_path, e));
+                    let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
+                    return (BoxBody::new(empty), String::new());
+                }
+
+                // Read only the range
+                let mut buffer = vec![0u8; range_length as usize];
+                match file.read_exact(&mut buffer).await {
+                    Ok(_) => {
+                        let range_bytes = Bytes::from(buffer);
+                        let full_body = Full::new(range_bytes).map_err(|never| -> BodyError { match never {} });
+                        (BoxBody::new(full_body), format!("RANGE:{}", content_range))
+                    }
+                    Err(e) => {
+                        trace(format!("Failed to read range from file {}: {}", self.meta.file_path, e));
+                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
+                        (BoxBody::new(empty), String::new())
+                    }
+                }
+            }
+            Err(e) => {
+                trace(format!("Failed to open file {} for range: {}", self.meta.file_path, e));
+                let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
+                (BoxBody::new(empty), String::new())
+            }
+        }
+    }
+
+    /// Get content for multiple range requests - builds multipart response
+    async fn get_multipart_range_content(&self, resolved_ranges: &[(u64, u64)]) -> (BoxBody<Bytes, BodyError>, String) {
+        let content_length = self.meta.length;
+
+        // If content is cached, use zero-copy slicing for multipart
+        if let Some(raw_content) = &self.content.raw {
+            let (body_bytes, content_type) = build_multipart_body(
+                resolved_ranges,
+                raw_content.as_ref(),
+                &self.meta.mime_type,
+                content_length,
+            );
+            trace(format!("Serving {} ranges as multipart from cache", resolved_ranges.len()));
+            let full_body = Full::new(body_bytes).map_err(|never| -> BodyError { match never {} });
+            return (BoxBody::new(full_body), format!("MULTIPART:{}", content_type));
+        }
+
+        // For uncached files, read each range separately and build multipart
+        let mut range_contents: Vec<Vec<u8>> = Vec::with_capacity(resolved_ranges.len());
+        
+        match File::open(&self.meta.file_path).await {
+            Ok(mut file) => {
+                for &(start, end) in resolved_ranges {
+                    let range_length = (end - start + 1) as usize;
+                    
+                    if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
+                        trace(format!("Failed to seek file {} for multipart range: {}", self.meta.file_path, e));
+                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
+                        return (BoxBody::new(empty), String::new());
+                    }
+
+                    let mut buffer = vec![0u8; range_length];
+                    if let Err(e) = file.read_exact(&mut buffer).await {
+                        trace(format!("Failed to read multipart range from file {}: {}", self.meta.file_path, e));
+                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
+                        return (BoxBody::new(empty), String::new());
+                    }
+                    range_contents.push(buffer);
+                }
+            }
+            Err(e) => {
+                trace(format!("Failed to open file {} for multipart ranges: {}", self.meta.file_path, e));
+                let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
+                return (BoxBody::new(empty), String::new());
+            }
+        }
+
+        // Build multipart body from the collected ranges
+        let (body_bytes, content_type) = build_multipart_body_from_parts(
+            resolved_ranges,
+            &range_contents,
+            &self.meta.mime_type,
+            content_length,
+        );
+        
+        trace(format!("Serving {} ranges as multipart from disk", resolved_ranges.len()));
+        let full_body = Full::new(body_bytes).map_err(|never| -> BodyError { match never {} });
+        (BoxBody::new(full_body), format!("MULTIPART:{}", content_type))
+    }
+
+    /// Get the full content stream (original implementation)
+    async fn get_full_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
         let accept_encoding_headers = gruxi_request.get_accepted_encodings();
 
         if self.content.raw.is_none() && self.content.gzip.is_none() {

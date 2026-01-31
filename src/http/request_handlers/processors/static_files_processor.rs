@@ -6,7 +6,10 @@ use crate::{
     },
     file::{file_util::check_path_secure, normalized_path::NormalizedPath},
     http::{
-        caching::etag::handle_conditional_headers,
+        caching::{
+            etag::handle_conditional_headers,
+            range::{accept_ranges_bytes, format_content_range_unsatisfiable},
+        },
         http_util::resolve_web_root_and_path_and_get_file,
         request_handlers::processor_trait::ProcessorTrait,
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
@@ -234,29 +237,65 @@ impl ProcessorTrait for StaticFileProcessor {
             ))));
         }
 
-        // Get a stream of the file content, based on the accept-encoding header
-        let (stream, compression) = file_data.get_content_stream(gruxi_request).await;
+        // Get a stream of the file content, based on the accept-encoding header and range requests
+        let (stream, encoding_info) = file_data.get_content_stream(gruxi_request).await;
 
-        let mut response = GruxiResponse::new_with_body(hyper::StatusCode::OK.as_u16(), stream);
+        // Determine response status and handle range-specific logic
+        let (status_code, content_type_override, content_range_header) = if encoding_info.starts_with("RANGE:") {
+            // Single range - 206 Partial Content
+            let content_range = encoding_info.strip_prefix("RANGE:").unwrap_or("");
+            (206, None, Some(content_range.to_string()))
+        } else if encoding_info.starts_with("MULTIPART:") {
+            // Multiple ranges - 206 Partial Content with multipart/byteranges
+            let multipart_content_type = encoding_info.strip_prefix("MULTIPART:").unwrap_or("");
+            (206, Some(multipart_content_type.to_string()), None)
+        } else if encoding_info == "RANGE_NOT_SATISFIABLE" {
+            // 416 Range Not Satisfiable
+            let mut response = GruxiResponse::new_empty_with_status(416);
+            // Add Content-Range header with unsatisfiable indicator
+            let content_range = format_content_range_unsatisfiable(file_data.meta.length);
+            if let Ok(header_value) = HeaderValue::from_str(&content_range) {
+                response.headers_mut().insert(hyper::header::CONTENT_RANGE, header_value);
+            }
+            // Add Accept-Ranges header
+            response.headers_mut().insert(hyper::header::ACCEPT_RANGES, accept_ranges_bytes());
+            return Ok(response);
+        } else {
+            // Normal 200 OK response
+            (200, None, None)
+        };
+
+        let mut response = GruxiResponse::new_with_body(status_code, stream);
 
         // Handle conditional headers like If-*-Match and If-*Modified-Since if we have an ETag
-        match &file_data.meta.etag_header {
-            None => {}
-            Some(etag) => {
-                if handle_conditional_headers(gruxi_request, &mut response, etag, &file_data.meta.last_modified) {
-                    // If we handled a conditional request, return the response as is (304 Not Modified)
-                    return Ok(response);
+        // Only for full content requests (status 200)
+        if status_code == 200 {
+            match &file_data.meta.etag_header {
+                None => {}
+                Some(etag) => {
+                    if handle_conditional_headers(gruxi_request, &mut response, etag, &file_data.meta.last_modified) {
+                        // If we handled a conditional request, return the response as is (304 Not Modified)
+                        return Ok(response);
+                    }
                 }
             }
         }
 
-        // Set content type
-        let header_value = HeaderValue::from_str(&file_data.meta.mime_type);
+        // Set Content-Range header for single range responses
+        if let Some(content_range) = content_range_header {
+            if let Ok(header_value) = HeaderValue::from_str(&content_range) {
+                response.headers_mut().insert(hyper::header::CONTENT_RANGE, header_value);
+            }
+        }
+
+        // Set content type (override for multipart ranges)
+        let content_type = content_type_override.as_ref().map(|s| s.as_str()).unwrap_or(&file_data.meta.mime_type);
+        let header_value = HeaderValue::from_str(content_type);
         match header_value {
             Err(e) => {
                 warn(format!(
                     "Failed to set content type header for file: {} with mime type: {}. Error: {}",
-                    file_path, file_data.meta.mime_type, e
+                    file_path, content_type, e
                 ));
             }
             Ok(value) => {
@@ -264,7 +303,8 @@ impl ProcessorTrait for StaticFileProcessor {
             }
         }
 
-        // Set content encoding if gzipped
+        // Set content encoding if gzipped (only for non-range requests)
+        let compression = if encoding_info == "gzip" { "gzip" } else { "" };
         if compression == "gzip" {
             let header_value = HeaderValue::from_str("gzip");
             match header_value {
@@ -276,6 +316,9 @@ impl ProcessorTrait for StaticFileProcessor {
                 }
             }
         }
+
+        // Always add Accept-Ranges header to indicate range request support
+        response.headers_mut().insert(hyper::header::ACCEPT_RANGES, accept_ranges_bytes());
 
         // Set ETag header, if available
         StaticFileProcessor::add_caching_headers(file_data.meta.etag_header.as_ref(), hyper::header::ETAG, &mut response, &file_path);
