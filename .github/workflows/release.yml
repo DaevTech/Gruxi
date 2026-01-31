@@ -12,14 +12,37 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
         include:
           - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
             archive_ext: tar.gz
             binary_ext: ''
+            archive_suffix: linux-x64
+            cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive_ext: tar.gz
+            binary_ext: ''
+            archive_suffix: linux-arm64
+            cross: true
           - os: windows-latest
+            target: x86_64-pc-windows-msvc
             archive_ext: zip
             binary_ext: .exe
+            archive_suffix: windows-x64
+            cross: false
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+            binary_ext: ''
+            archive_suffix: mac-os-arm64
+            cross: false
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive_ext: tar.gz
+            binary_ext: ''
+            archive_suffix: mac-os-x64
+            cross: false
 
     runs-on: ${{ matrix.os }}
 
@@ -28,6 +51,14 @@ jobs:
 
     - name: Setup Rust
       uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        target: ${{ matrix.target }}
+
+    - name: Install Cross-Compiler (Linux ARM64)
+      if: matrix.cross
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -41,7 +72,9 @@ jobs:
         npm run build
 
     - name: Build Gruxi (Release)
-      run: cargo build --release
+      run: cargo build --release --target ${{ matrix.target }}
+      env:
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
     - name: Extract version from Cargo.toml
       id: version
@@ -58,26 +91,31 @@ jobs:
         mkdir -p release/gruxi/db
         mkdir -p release/gruxi/logs
         mkdir -p release/gruxi/certs
-        cp target/release/gruxi${{ matrix.binary_ext }} release/gruxi/
+        cp target/${{ matrix.target }}/release/gruxi${{ matrix.binary_ext }} release/gruxi/
         cp -r www-admin release/gruxi/
         cp -r www-default release/gruxi/
         cp README.md release/gruxi/
         cp LICENSE release/gruxi/
 
     - name: Create Linux Archive
-      if: matrix.os == 'ubuntu-latest'
+      if: startsWith(matrix.target, 'x86_64-unknown-linux') || startsWith(matrix.target, 'aarch64-unknown-linux')
       working-directory: release
-      run: tar -czf gruxi-${{ steps.version.outputs.version }}-linux-x64.tar.gz gruxi
+      run: tar -czf gruxi-${{ steps.version.outputs.version }}-${{ matrix.archive_suffix }}.tar.gz gruxi
+
+    - name: Create macOS Archive
+      if: startsWith(matrix.os, 'macos')
+      working-directory: release
+      run: tar -czf gruxi-${{ steps.version.outputs.version }}-${{ matrix.archive_suffix }}.tar.gz gruxi
 
     - name: Create Windows Archive
       if: matrix.os == 'windows-latest'
       working-directory: release
       shell: bash
-      run: 7z a -tzip gruxi-${{ steps.version.outputs.version }}-windows-x64.zip gruxi
+      run: 7z a -tzip gruxi-${{ steps.version.outputs.version }}-${{ matrix.archive_suffix }}.zip gruxi
 
     - name: Upload Release Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: gruxi-${{ matrix.os }}
+        name: gruxi-${{ matrix.archive_suffix }}
         path: release/gruxi-*.${{ matrix.archive_ext }}
         if-no-files-found: error
