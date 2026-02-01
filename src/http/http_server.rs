@@ -246,7 +246,7 @@ where
             get_monitoring_state().await.increment_requests_served();
 
             let mut gruxi_request = GruxiRequest::from_hyper(req);
-            gruxi_request.add_calculated_data("remote_ip", &remote_ip);
+            gruxi_request.set_remote_ip(remote_ip.clone());
             let gruxi_response_result = handle_request(gruxi_request, binding).await;
             let mut response = match gruxi_response_result {
                 Err(err) => {

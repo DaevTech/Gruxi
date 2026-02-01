@@ -162,7 +162,7 @@ impl ProcessorTrait for PHPProcessor {
             }
         };
 
-        let mut path = gruxi_request.get_path().clone();
+        let mut path = gruxi_request.get_path().to_string();
 
         // Get the file, if it exists
         let normalized_path_result = NormalizedPath::new(&local_web_root, &path);

@@ -221,7 +221,7 @@ impl FastCgi {
 
         // Determine FastCGI server IP and port
         let ip_and_port = match gruxi_request.get_calculated_data("fastcgi_connect_ip_and_port") {
-            Some(ip_and_port) => ip_and_port,
+            Some(ip_and_port) => ip_and_port.to_string(),
             None => {
                 error!("No FastCGI IP and port found in request calculated data ip and port: {:?}", gruxi_request);
                 return Err(FastCgiError::Initialization);
@@ -427,7 +427,7 @@ impl FastCgi {
     pub fn generate_fast_cgi_params(gruxi_request: &mut GruxiRequest) -> Result<HashMap<String, String>, ()> {
         let mut params: HashMap<String, String> = HashMap::new();
 
-        let uri = gruxi_request.get_path();
+        let uri = gruxi_request.get_path().to_string();
         let headers = gruxi_request.get_headers();
 
         // Add HTTP headers as CGI variables, prefixed with HTTP_ and uppercased
@@ -454,10 +454,10 @@ impl FastCgi {
         }
 
         // Handle web root mapping
-        let mut full_script_path = gruxi_request.get_calculated_data("fastcgi_script_file").unwrap_or("".to_string());
-        let mut script_web_root = gruxi_request.get_calculated_data("fastcgi_local_web_root").unwrap_or("".to_string());
-        let other_webroot = gruxi_request.get_calculated_data("fastcgi_web_root").unwrap_or("".to_string());
-        let uri_is_a_dir_with_index_file_inside = gruxi_request.get_calculated_data("fastcgi_uri_is_a_dir_with_index_file_inside").unwrap_or("false".to_string()) == "true";
+        let mut full_script_path = gruxi_request.get_calculated_data("fastcgi_script_file").unwrap_or("").to_string();
+        let mut script_web_root = gruxi_request.get_calculated_data("fastcgi_local_web_root").unwrap_or("").to_string();
+        let other_webroot = gruxi_request.get_calculated_data("fastcgi_web_root").unwrap_or("").to_string();
+        let uri_is_a_dir_with_index_file_inside = gruxi_request.get_calculated_data("fastcgi_uri_is_a_dir_with_index_file_inside").unwrap_or("false") == "true";
 
         if !other_webroot.is_empty() {
             let full_local_web_root = script_web_root;
@@ -474,14 +474,14 @@ impl FastCgi {
             let (path_only_str, query_part) = if let Some(pos) = uri.find('?') { (&uri[..pos], &uri[pos..]) } else { (uri.as_str(), "") };
             // Add forward slash to the end if missing, but before any query string
             let path_only = if !path_only_str.ends_with('/') {
-                format!("{}/", path_only_str)
+                &format!("{}/", path_only_str)
             } else {
-                path_only_str.to_string()
+                path_only_str
             };
             request_uri = format!("{}{}", path_only, query_part);
         }
 
-        let mut server_software = gruxi_request.get_calculated_data("fastcgi_override_server_software").unwrap_or("Gruxi".to_string());
+        let mut server_software = gruxi_request.get_calculated_data("fastcgi_override_server_software").unwrap_or("Gruxi").to_string();
         if server_software.is_empty() {
             server_software = "Gruxi".to_string();
         }
@@ -492,25 +492,24 @@ impl FastCgi {
         trace!("FastCGI - Directory: {}, Filename: {}", directory, filename);
 
         // Build FastCGI parameters (CGI environment variables)
-        params.insert("REQUEST_METHOD".to_string(), gruxi_request.get_http_method());
-        params.insert("REQUEST_URI".to_string(), request_uri.clone());
+        params.insert("REQUEST_METHOD".to_string(), gruxi_request.get_http_method().to_string());
+        params.insert("REQUEST_URI".to_string(), request_uri.to_string());
         params.insert("SCRIPT_NAME".to_string(), request_uri);
         params.insert("SCRIPT_FILENAME".to_string(), full_script_path);
         params.insert("DOCUMENT_ROOT".to_string(), script_web_root);
-        params.insert("QUERY_STRING".to_string(), gruxi_request.get_query());
+        params.insert("QUERY_STRING".to_string(), gruxi_request.get_query().to_string());
         params.insert("CONTENT_LENGTH".to_string(), gruxi_request.get_body_size().to_string());
         params.insert("SERVER_SOFTWARE".to_string(), server_software);
-        params.insert("SERVER_NAME".to_string(), gruxi_request.get_hostname());
+        params.insert("SERVER_NAME".to_string(), gruxi_request.get_hostname().to_string());
         params.insert("SERVER_PORT".to_string(), gruxi_request.get_server_port().to_string());
         params.insert("HTTPS".to_string(), if gruxi_request.is_https() { "on" } else { "off" }.to_string());
         params.insert("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string());
-        params.insert("SERVER_PROTOCOL".to_string(), gruxi_request.get_http_version());
-        params.insert("REMOTE_ADDR".to_string(), gruxi_request.get_remote_ip());
+        params.insert("SERVER_PROTOCOL".to_string(), gruxi_request.get_http_version().to_string());
+        params.insert("REMOTE_ADDR".to_string(), gruxi_request.get_remote_ip().to_string());
         params.insert("REMOTE_HOST".to_string(), "".to_string());
         params.insert("PATH_INFO".to_string(), path_info);
         params.insert("REDIRECT_STATUS".to_string(), "200".to_string());
-        params.insert("HTTP_HOST".to_string(), gruxi_request.get_hostname());
-
+        params.insert("HTTP_HOST".to_string(), gruxi_request.get_hostname().to_string());
         Ok(params)
     }
 

@@ -1,39 +1,20 @@
-// ============================================================================
-// SHARED ACME MANAGER
-// ============================================================================
-//
-// This module provides a single, shared ACME client instance for all TLS bindings.
-// Instead of creating one ACME client per binding (which would cause rate-limiting
-// issues and duplicate certificate requests), we create one shared manager that:
-//   - Holds a single AcmeConfig and AcmeState
-//   - Collects all ACME-enabled domains across all bindings
-//   - Provides a shared resolver (Arc<ResolvesServerCertAcme>) to all bindings
-//   - Runs a single background task to poll for certificate updates
-//   - Responds to shutdown/stop_services/reload_configuration triggers
-// ============================================================================
-
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::core::triggers::get_trigger_handler;
 use crate::{debug, trace};
 use rustls_acme::caches::DirCache;
 use rustls_acme::{AcmeConfig, ResolvesServerCertAcme};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-/// Global singleton for the shared ACME manager (can be reset on configuration reload)
 static SHARED_ACME_MANAGER: RwLock<Option<SharedAcmeManager>> = RwLock::const_new(None);
 
-/// Holds the shared ACME state and resolver that can be used across all TLS bindings
 pub struct SharedAcmeManager {
-    /// The ACME resolver used to resolve certificates for ACME-managed domains
     resolver: Arc<ResolvesServerCertAcme>,
-    /// All domains managed by this ACME instance
-    domains: std::collections::HashSet<String>,
-    /// Cancellation token for the polling task
+    domains: HashSet<String>,
     polling_cancel_token: CancellationToken,
 }
 
@@ -50,7 +31,7 @@ impl SharedAcmeManager {
     }
 
     /// Get all ACME-managed domains
-    pub fn domains(&self) -> &std::collections::HashSet<String> {
+    pub fn domains(&self) -> &HashSet<String> {
         &self.domains
     }
 }
@@ -91,7 +72,7 @@ pub async fn get_shared_acme_manager_async() -> Option<Arc<ResolvesServerCertAcm
 }
 
 /// Get ACME domains from the shared manager
-pub async fn get_shared_acme_domains() -> std::collections::HashSet<String> {
+pub async fn get_shared_acme_domains() -> HashSet<String> {
     let manager = SHARED_ACME_MANAGER.read().await;
     manager.as_ref().map(|m| m.domains().clone()).unwrap_or_default()
 }
@@ -154,7 +135,7 @@ async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<d
         return Ok(None);
     }
 
-    let cache_dir ="certs/cache".to_string();
+    let cache_dir = "certs/cache".to_string();
 
     // Ensure cache directory exists.
     fs::create_dir_all(&cache_dir)
@@ -188,7 +169,7 @@ async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<d
     // Spawn a single background task to poll the ACME state for certificate updates
     spawn_acme_polling_task(acme_state, polling_cancel_token.clone());
 
-    let domains_set: std::collections::HashSet<String> = all_domains.into_iter().collect();
+    let domains_set: HashSet<String> = all_domains.into_iter().collect();
 
     Ok(Some(SharedAcmeManager {
         resolver,
@@ -199,10 +180,7 @@ async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<d
 
 /// Spawn a background task that polls the ACME state for certificate acquisition and renewal.
 /// The task will stop when the cancellation token is cancelled or when shutdown/stop_services triggers fire.
-fn spawn_acme_polling_task(
-    mut acme_state: rustls_acme::AcmeState<Box<dyn std::fmt::Debug>, Box<dyn std::fmt::Debug>>,
-    cancel_token: CancellationToken,
-) {
+fn spawn_acme_polling_task(mut acme_state: rustls_acme::AcmeState<Box<dyn std::fmt::Debug>, Box<dyn std::fmt::Debug>>, cancel_token: CancellationToken) {
     tokio::spawn(async move {
         trace!("ACME background polling task started");
 
@@ -219,9 +197,7 @@ fn spawn_acme_polling_task(
 
         let stop_services_token = triggers
             .get_trigger("stop_services")
-            .map(|t| {
-                t.try_read().map(|guard| guard.clone()).unwrap_or_else(|_| CancellationToken::new())
-            })
+            .map(|t| t.try_read().map(|guard| guard.clone()).unwrap_or_else(|_| CancellationToken::new()))
             .unwrap_or_else(|| CancellationToken::new());
 
         // Poll the ACME state to handle certificate acquisition and renewal

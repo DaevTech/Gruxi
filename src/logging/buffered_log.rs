@@ -3,19 +3,18 @@ use std::path::PathBuf;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use tokio::io::AsyncWriteExt;
 
-/// Channel capacity for log entries
-const CHANNEL_CAPACITY: usize = 1000;
-
 pub struct BufferedLog {
+    capacity: u64,
     log_file_path: PathBuf,
     sender: Sender<String>,
     receiver: Receiver<String>,
 }
 
 impl BufferedLog {
-    pub fn new(full_file_path: String) -> Self {
-        let (sender, receiver) = bounded(CHANNEL_CAPACITY);
+    pub fn new(full_file_path: String, capacity: u64) -> Self {
+        let (sender, receiver) = bounded(capacity as usize);
         let mut buffered_log = BufferedLog {
+            capacity,
             log_file_path: PathBuf::from(&full_file_path),
             sender,
             receiver,
@@ -60,7 +59,7 @@ impl BufferedLog {
     /// If `force_flush` is true, also sync data to disk (for shutdown)
     pub async fn flush(&self, force_flush: bool) {
         // Drain all available logs from the channel (non-blocking)
-        let mut logs_to_write = Vec::with_capacity(self.receiver.len().min(CHANNEL_CAPACITY));
+        let mut logs_to_write = Vec::with_capacity(self.receiver.len().min(self.capacity as usize));
         while let Ok(log) = self.receiver.try_recv() {
             logs_to_write.push(log);
         }
@@ -106,13 +105,13 @@ mod tests {
 
     #[test]
     fn test_buffered_log_new_path_is_directory() {
-        let log = BufferedLog::new("./temp_test_data/".to_string());
+        let log = BufferedLog::new("./temp_test_data/".to_string(), 100);
         assert!(log.log_file_path.ends_with("logfile.log"));
     }
 
     #[test]
     fn test_buffered_log_check_log_created() {
-        let log = BufferedLog::new("./temp_test_data/test_access.log".to_string());
+        let log = BufferedLog::new("./temp_test_data/test_access.log".to_string(), 100);
         assert!(log.log_file_path.exists());
         assert!(log.log_file_path.is_file());
         let log_str = std::fs::read_to_string(&log.log_file_path);

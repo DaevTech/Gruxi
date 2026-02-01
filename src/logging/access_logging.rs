@@ -53,7 +53,7 @@ impl AccessLogBuffer {
                 }
             };
             trace!("Initialized access log buffer for site {} at path {}", &site.id, &log_file_path);
-            access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(log_file_path));
+            access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(log_file_path, 100000));
         }
 
         access_log_buffer
