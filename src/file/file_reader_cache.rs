@@ -111,7 +111,7 @@ impl FileReaderCache {
 
         // Not found in cache, so we populate it, maybe saving it to cache if enabled
         trace!("File/dir not found in cache, reading from disk: {}", file_path);
-        let metadata_result = std::fs::metadata(file_path);
+        let metadata_result = tokio::fs::metadata(file_path).await;
         let (length, exists, is_directory, last_modified) = match metadata_result {
             Ok(metadata) => (metadata.len(), true, metadata.is_dir(), metadata.modified().unwrap_or(SystemTime::now())),
             Err(_) => (0, false, false, SystemTime::now()),
@@ -191,14 +191,14 @@ impl FileReaderCache {
 
         // Pre-fetch content of file if caching is enabled
         if self.is_caching_enabled && !is_directory && exists && length <= self.max_file_size {
-            match std::fs::read(file_path) {
+            match tokio::fs::read(file_path).await {
                 Ok(file_bytes) => {
                     let raw_bytes = Arc::new(Bytes::from(file_bytes));
                     file_entry.content.raw = Some(raw_bytes);
 
                     if should_compress {
                         let raw_content_result = file_entry.content.raw.as_ref();
-                        let mut content_found = false;
+                        let mut content_found = true;
                         let raw_content = match raw_content_result {
                             Some(content) => content.as_ref(),
                             None => {
@@ -541,7 +541,7 @@ impl FileEntry {
         (BoxBody::new(full_body), format!("MULTIPART:{}", content_type))
     }
 
-    /// Get the full content stream (original implementation)
+    /// Get the full content stream
     async fn get_full_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
         let accept_encoding_headers = gruxi_request.get_accepted_encodings();
 

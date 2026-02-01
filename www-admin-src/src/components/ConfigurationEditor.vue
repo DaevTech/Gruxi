@@ -418,7 +418,7 @@ const addSite = () => {
         tls_key_path: '',
         tls_key_content: '',
         tls_automatic_enabled: false,
-        rewrite_functions: ['OnlyWebRootIndexForSubdirs'],
+        rewrite_functions: [],
         request_handlers: [],
         extra_headers: [],
         access_log_enabled: false,
@@ -994,7 +994,7 @@ onMounted(() => {
                                             <div class="form-field">
                                                 <label>Rewrite Functions - Pre-defined request rewrites</label>
                                                 <div class="doc-link">
-                                                    <a href="https://gruxi.org/docs/#rewrite-functions" target="_blank">Documentation on rewrite functions</a>
+                                                    <a href="https://gruxi.org/docs/configuration/sites/#rewrite-functions" target="_blank">Documentation on rewrite functions</a>
                                                 </div>
                                                 <div class="list-items">
                                                     <div v-for="(func, funcIndex) in site.rewrite_functions" :key="funcIndex" class="list-item">

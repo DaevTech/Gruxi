@@ -10,7 +10,6 @@ Gruxi is actively developed and tested. New features and improvements are releas
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
 
----
 
 ## Project status
 
@@ -18,7 +17,6 @@ Gruxi is actively developed and tested. New features and improvements are releas
 
 Gruxi is usable today, but it has not yet reached a 1.0 release. Core functionality is stable, while configuration formats and internal APIs may still evolve. Backward‑incompatible changes may occur prior to 1.0.
 
----
 
 ## Features
 
@@ -34,6 +32,8 @@ Gruxi is usable today, but it has not yet reached a 1.0 release. Core functional
 * HTTP/1.1 and HTTP/2 support
 * Reverse proxy with TLS offloading
 * Load balancing and health checks
+* Caching headers and conditional requests
+* Range requests supported
 
 ### TLS & security
 
@@ -48,9 +48,9 @@ Gruxi is usable today, but it has not yet reached a 1.0 release. Core functional
 ### Application support
 
 * PHP support via PHP‑FPM
-* Managed PHP‑CGI on Windows
+* Managed PHP‑CGI on Windows, with easy version switching
 
----
+
 
 ## Who Gruxi is for — and who it is not
 
@@ -66,7 +66,25 @@ Gruxi may **not** be a good fit if you:
 * Prefer fully manual TLS or certificate management
 * Need a highly extensible plugin ecosystem
 
----
+
+## Documentation
+
+Comprehensive documentation is available at:
+
+[https://gruxi.org](https://gruxi.org)
+
+
+
+## Admin portal
+
+The admin portal provides configuration management, monitoring, and operational insight.
+
+* Username: `admin`
+* Password: Generated on first startup and printed to the server output
+
+The initial password is not displayed again after first launch. It can be reset using the --reset-admin-password on command line.
+
+
 
 ## Performance
 
@@ -94,119 +112,28 @@ The following section documents **performance characteristics** of Gruxi under c
 ### Results
 
 * Requests per second: **173,309 req/second**
-* Median latency: **0.005752 ms**
-* 99th percentile latency: **0.011570 ms**
 * Memory usage under load: **10 MB**
 * CPU utilization: **30 %**
 
-### Benchmark screenshot
+### Benchmark screenshot with details
 
 <img src="https://github.com/DaevTech/Gruxi/blob/main/assets/performance-test-260126-static-files.png" alt="Gruxi Performance Test" width="600">
 
 > **Note:** These results reflect local lab conditions with no external network traffic. Performance may differ under real-world scenarios with TLS enabled, external clients, and varied content types.
 
 
----
 
 ## Getting started
 
 There are several ways to run Gruxi, depending on your environment and deployment preferences.
 
-### Using prebuilt binaries (recommended for maximum performance)
+- Using prebuilt binaries (recommended for maximum performance)
+- Running with Docker
+- Docker Compose
 
-1. Download the release matching your operating system.
-2. Extract the archive; no additional setup is required.
-3. Run the Gruxi binary and open [http://localhost](http://localhost) to view the default page.
-4. Open the admin portal at [https://localhost:8000](https://localhost:8000) and log in using the username `admin` and the password printed to the console on first startup.
+Detailed instructions are available in the [documentation for Grxui.](https://gruxi.org/docs/introduction/getting-started/).
 
-> The initial admin password is shown **only once**. Store it securely.
 
----
-
-### Running with Docker
-
-Official Docker images are based on Alpine Linux and run Gruxi as a non‑root user.
-
-Basic test run:
-
-```
-docker run --name gruxi1 \
-  -p 80:80 \
-  -p 443:443 \
-  -p 8000:8000 \
-  -d ghcr.io/daevtech/gruxi:latest
-```
-
-Gruxi will be available at [http://localhost](http://localhost) with the admin portal at [https://localhost:8000](https://localhost:8000).
-
-Extended example with persistent data:
-
-```
-docker run --name gruxi1 \
-  -p 80:80 \
-  -p 443:443 \
-  -p 8000:8000 \
-  -v ./my-web-content:/app/www-default:ro \
-  -v ./logs:/app/logs \
-  -v ./certs:/app/certs \
-  -v ./db:/app/db \
-  -d ghcr.io/daevtech/gruxi:latest
-```
-
----
-
-### Docker Compose
-
-For production‑style deployments, Docker Compose is recommended. An example `docker-compose.yml` is included in the repository root.
-
-Minimal example:
-
-```yml
-services:
-  gruxi:
-    image: ghcr.io/daevtech/gruxi:latest
-    ports:
-      - "80:80"
-      - "443:443"
-      - "8000:8000"
-    volumes:
-      - ./db:/app/db
-      - ./logs:/app/logs
-      - ./certs:/app/certs
-# - ./www-default:/app/www-default  # Gruxi serves default site on /app/www-default, so map in your own data her
-    restart: unless-stopped
-    depends_on:
-      - php-fpm
-    networks:
-      - gruxi-network
-
-  php-fpm:
-    image: php:8.2-fpm-alpine
-    # volumes:
-    # - ./www-default:/var/www/html:ro # Site needs to be available to PHP, so map your own web root to this
-    ports:
-      - "9000:9000"
-    restart: unless-stopped
-    networks:
-      - gruxi-network
-
-networks:
-  gruxi-network:
-    driver: bridge
-```
-
----
-
-## Admin portal
-
-The admin portal provides configuration management, monitoring, and operational insight.
-
-* Username: `admin`
-* Password: Generated on first startup and printed to the server output
-
-The initial password is not displayed again after first launch. It can be reset using the --reset-admin-password on command line.
-
----
 
 ## Screenshots
 
@@ -216,15 +143,6 @@ The initial password is not displayed again after first launch. It can be reset 
 
 <img src="https://github.com/DaevTech/Gruxi/blob/main/assets/admin_portal_configuration.png" alt="Gruxi Admin Portal Configuration" width="600">
 
----
-
-## Documentation
-
-Comprehensive documentation is available at:
-
-[https://gruxi.org](https://gruxi.org)
-
----
 
 ## Licensing, support, and sponsorship
 
@@ -234,7 +152,7 @@ If you require commercial support, consulting, or wish to sponsor development, p
 
 [contact@gruxi.org](mailto:contact@gruxi.org)
 
----
+
 
 ## Copyright and Trademark Notice
 
