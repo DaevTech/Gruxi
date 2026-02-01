@@ -37,7 +37,7 @@ jobs:
             binary_ext: ''
             archive_suffix: mac-os-arm64
             cross: false
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             archive_ext: tar.gz
             binary_ext: ''
