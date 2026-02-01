@@ -1,7 +1,10 @@
-# Use the latest official Rust image based on Alpine Linux
-FROM rust:alpine AS gruxi-builder
+# syntax=docker/dockerfile:1.7
 
-# Install required system dependencies for building
+############################
+# Rust builder
+############################
+FROM --platform=$TARGETPLATFORM rust:alpine AS gruxi-builder
+
 RUN apk add --no-cache \
     musl-dev \
     openssl-dev \
@@ -9,65 +12,55 @@ RUN apk add --no-cache \
     pkgconfig \
     ca-certificates
 
-# Set the working directory inside the container
 WORKDIR /usr/src/gruxi
 
-# Copy the Cargo.toml and Cargo.lock files first for better caching
 COPY Cargo.toml Cargo.lock ./
-
-# Copy the source code
 COPY src/ ./src/
 
-# Build the application in release mode
-RUN cargo build --release
+RUN cargo build --release && \
+    cp target/release/gruxi /usr/src/gruxi/gruxi
 
-# Build the admin portal
-FROM node:25-alpine3.21 AS admin-portal
+############################
+# Admin portal builder
+############################
+FROM --platform=$BUILDPLATFORM node:25-alpine3.21 AS admin-portal
 
 WORKDIR /app
 
 COPY www-admin-src/yarn.lock www-admin-src/package.json ./
-
 RUN yarn install --frozen-lockfile
 
 COPY www-admin-src/ ./
-
 RUN yarn run build
 
-# Start a new stage for the runtime image
+############################
+# Runtime image
+############################
 FROM alpine:latest
 
-# Install runtime dependencies
-RUN apk add --no-cache \
-    ca-certificates
+RUN apk add --no-cache ca-certificates
 
-# Create a non-root user for running the application
+# Non-root user
 RUN addgroup -g 1000 gruxi && \
     adduser -D -s /bin/sh -u 1000 -G gruxi gruxi
 
-# Set the working directory
 WORKDIR /app
 
-# Copy the compiled binary from the builder stage
-COPY --from=gruxi-builder /usr/src/gruxi/target/release/gruxi /app/gruxi
+# Copy Gruxi binary
+COPY --from=gruxi-builder /usr/src/gruxi/gruxi /app/gruxi
 
-# Copy the built admin portal from the admin-portal stage
+# Copy admin portal
 COPY --from=admin-portal /www-admin /app/www-admin/
 
-# Create necessary directories and set ownership
+# Create directories
 RUN mkdir -p /app/logs /app/certs /app/www-default /app/db && \
     chmod 755 /app/certs && \
     chown -R gruxi:gruxi /app
 
-# Copy project files and directories (these will be mounted in development)
-# But we'll create the structure for when running standalone
-COPY  www-default/ /app/www-default/
+COPY www-default/ /app/www-default/
 
-# Switch to the non-root user
 USER gruxi
 
-# Expose the required ports
 EXPOSE 80 443 8000
 
-# Command to run the application
 CMD ["./gruxi"]
