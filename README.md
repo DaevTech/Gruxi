@@ -60,12 +60,6 @@ Many existing web servers offer extensive configuration surfaces with hundreds o
 
 Gruxi intentionally removes low‑value configuration choices. For example, internal buffer sizes and similar micro‑optimizations are not exposed. If a setting is unlikely to materially improve outcomes for the majority of users, it is fixed and carefully chosen.
 
-Gruxi may **not** be a good fit if you:
-
-* Require fine‑grained tuning of internal networking or buffering parameters
-* Prefer fully manual TLS or certificate management
-* Need a highly extensible plugin ecosystem
-
 
 ## Documentation
 

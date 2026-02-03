@@ -14,7 +14,9 @@ use crate::{debug, error, info, trace};
 use http::HeaderValue;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use std::fs;
+use tokio::fs::read_to_string;
+
+use std::fs::{metadata, read_dir};
 use std::path::Path;
 use tokio_util::bytes;
 
@@ -525,7 +527,7 @@ pub async fn admin_logs_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: 
 async fn list_log_files() -> Result<GruxiResponse, GruxiError> {
     let logs_dir = Path::new("logs");
 
-    match fs::read_dir(logs_dir) {
+    match read_dir(logs_dir) {
         Ok(entries) => {
             let mut log_files = Vec::new();
 
@@ -536,7 +538,7 @@ async fn list_log_files() -> Result<GruxiResponse, GruxiError> {
                         if extension == "log" {
                             if let Some(filename) = path.file_name() {
                                 if let Some(filename_str) = filename.to_str() {
-                                    let metadata = fs::metadata(&path);
+                                    let metadata = metadata(&path);
                                     let file_size = metadata.map(|m| m.len()).unwrap_or(0);
 
                                     log_files.push(serde_json::json!({
@@ -598,12 +600,12 @@ async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiErro
         return Ok(response);
     }
 
-    match fs::metadata(&log_path) {
+    match metadata(&log_path) {
         Ok(metadata) => {
             let file_size = metadata.len();
             let max_size = 1024 * 1024; // 1MB limit
 
-            match fs::read_to_string(&log_path) {
+            match read_to_string(&log_path).await {
                 Ok(content) => {
                     let (log_content, is_truncated) = if file_size > max_size {
                         // If file is larger than 1MB, return only the last 1MB

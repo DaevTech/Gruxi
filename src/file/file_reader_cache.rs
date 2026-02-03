@@ -324,7 +324,7 @@ impl FileReaderCache {
             trace!("[FileCacheUpdate] Files found to check for modified timestamps: {}", files_to_check.len());
             // Now we go through the list, to check if the file was modified since last known timestamp
             for (path, (added, _last_checked, last_modified)) in files_to_check {
-                let metadata = match std::fs::metadata(&path) {
+                let metadata = match tokio::fs::metadata(&path).await {
                     Ok(metadata) => metadata,
                     Err(_) => {
                         let mut should_remove_path = false;

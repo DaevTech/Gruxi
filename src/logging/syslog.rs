@@ -112,7 +112,15 @@ impl SysLog {
 
     pub fn add_log(&self, log_type: LogType, log: String) {
         let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-        let log_entry = format!("{} - [{}] {}", &ts, &log_type, &log);
+
+        let log_entry = match tokio::task::try_id() {
+            Some(task_id) => {
+             format!("{} - [{}][ID:{}] {}", &ts, &log_type, task_id, &log)
+            }
+            None => {
+                format!("{} - [{}] {}", &ts, &log_type, &log)
+            }
+        };
 
         // Print to stdout if enabled for this level
         match log_type {
