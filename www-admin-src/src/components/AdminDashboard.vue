@@ -26,6 +26,7 @@ const refreshRateOptions = [
     { value: 60, label: '60 sec' },
 ];
 let statsInterval = null;
+const isClearingFileCache = ref(false);
 
 // Menu items
 const menuItems = [
@@ -57,6 +58,42 @@ const basicData = reactive({
 // Handle logout
 const handleLogout = () => {
     emit('logout');
+};
+
+// Clear file cache
+const clearFileCache = async () => {
+    if (isClearingFileCache.value || !stats.fileCache.enabled) {
+        return;
+    }
+
+    try {
+        isClearingFileCache.value = true;
+        const token = localStorage.getItem('gruxi_session_token');
+        if (!token) {
+            console.error('No session token available');
+            return;
+        }
+
+        const response = await fetch('/cache/file/clear', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+        });
+
+        if (response.ok) {
+            await updateStats();
+        } else if (response.status === 401) {
+            emit('logout');
+        } else {
+            console.error('Failed to clear file cache:', response.status);
+        }
+    } catch (error) {
+        console.error('Error clearing file cache:', error);
+    } finally {
+        isClearingFileCache.value = false;
+    }
 };
 
 // Navigation
@@ -357,6 +394,11 @@ onUnmounted(() => {
                             <div class="stat-card">
                                 <div class="stat-header">
                                     <h3>File Cache</h3>
+                                    <div class="stat-actions" v-if="stats.fileCache.enabled">
+                                        <button class="stat-action-btn" :disabled="!stats.fileCache.enabled || isClearingFileCache" @click="clearFileCache">
+                                            {{ isClearingFileCache ? 'Clearing...' : 'Clear' }}
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="stat-value">
                                     {{ stats.fileCache.enabled ? `${stats.fileCache.currentItems}` : 'Disabled' }}
@@ -833,6 +875,32 @@ onUnmounted(() => {
     font-weight: 500;
     color: #6b7280;
     margin-top: 0.25rem;
+}
+
+.stat-actions {
+    display: flex;
+    justify-content: flex-start;
+}
+
+.stat-action-btn {
+    padding: 0.4rem 0.9rem;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    background: #f8fafc;
+    color: #1f2937;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.stat-action-btn:hover {
+    background: #e2e8f0;
+}
+
+.stat-action-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 
 .stat-progress {

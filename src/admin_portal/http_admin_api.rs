@@ -4,10 +4,11 @@ use crate::configuration::site::Site;
 use crate::core::admin_user::{LoginRequest, authenticate_user, create_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
+use crate::core::running_state_manager::get_running_state_manager;
 use crate::core::triggers::get_trigger_handler;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
-use crate::file::normalized_path::{NormalizedPath};
+use crate::file::normalized_path::NormalizedPath;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::{debug, error, info, trace};
@@ -63,6 +64,8 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site) ->
         admin_get_operation_mode_endpoint(gruxi_request, site).await
     } else if path_cleaned == "/operation-mode" && method == "POST" {
         admin_post_operation_mode_endpoint(gruxi_request, site).await
+    } else if path_cleaned == "/cache/file/clear" && method == "POST" {
+        admin_post_file_cache_clear_endpoint(gruxi_request, site).await
     } else {
         // If we reach here, no matching admin API route was found
         trace!("No matching admin API route found for path: {}", path_cleaned);
@@ -208,7 +211,10 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
         Ok(cfg) => cfg,
         Err(e) => {
             error!("Failed to retrieve configuration from database: {}", e);
-            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Failed to retrieve configuration"}"#));
+            let mut response = GruxiResponse::new_with_bytes(
+                hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                bytes::Bytes::from(r#"{"error": "Failed to retrieve configuration"}"#),
+            );
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
@@ -793,6 +799,40 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
         "success": was_changed,
         "message": return_message,
         "mode": mode_request.mode
+    });
+
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
+    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+    return Ok(response);
+}
+
+// Admin file cache clear POST endpoint - clears the file reader cache
+pub async fn admin_post_file_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
+    // Check authentication first
+    match require_authentication(&gruxi_request).await {
+        Ok(Some(_session)) => {
+            debug!("User authenticated for file cache clear");
+        }
+        Ok(None) => {
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            return Ok(response);
+        }
+        Err(auth_response) => {
+            return Ok(auth_response);
+        }
+    }
+
+    // Get running state
+    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+
+    // Clear the file reader cache
+    running_state.get_file_reader_cache().clear_cache();
+
+    let return_message = "File reader cache cleared".to_string();
+    let success_response = serde_json::json!({
+        "success": true,
+        "message": return_message
     });
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));

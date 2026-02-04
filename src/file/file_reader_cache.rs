@@ -99,6 +99,12 @@ impl FileReaderCache {
         self.cache.len() as u64
     }
 
+    pub fn clear_cache(&self) {
+        self.cache.clear();
+        self.cached_items_last_checked.clear();
+        trace!("File reader cache cleared");
+    }
+
     // Get file data
     pub async fn get_file(&self, file_path: &str) -> Result<Arc<FileEntry>, std::io::Error> {
         // Check the cache first
