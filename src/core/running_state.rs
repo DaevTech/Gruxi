@@ -6,7 +6,7 @@ use crate::{
         client::http_client::HttpClient,
         request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager},
         site_match::binding_site_cache::BindingSiteCache,
-    },
+    }, logging::log_rotation::LogRotation,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -21,6 +21,7 @@ pub struct RunningState {
     pub external_system_handler: ExternalSystemHandler,
     pub http_client: HttpClient,
     pub binding_site_cache: BindingSiteCache,
+    pub log_rotation: LogRotation,
 }
 
 impl RunningState {
@@ -54,6 +55,9 @@ impl RunningState {
         binding_site_cache.init().await;
         debug!("Binding<>site cache initialized");
 
+        // Start log rotation manager
+        let log_rotation = LogRotation::new().await;
+
         RunningState {
             access_log_buffer: Arc::new(RwLock::new(access_log_buffer)),
             file_reader_cache: file_reader_cache,
@@ -62,6 +66,7 @@ impl RunningState {
             external_system_handler: external_system_handler,
             http_client: http_client,
             binding_site_cache: binding_site_cache,
+            log_rotation: log_rotation,
         }
     }
 
@@ -91,5 +96,9 @@ impl RunningState {
 
     pub fn get_binding_site_cache(&self) -> &BindingSiteCache {
         &self.binding_site_cache
+    }
+
+    pub fn get_log_rotation(&self) -> &LogRotation {
+        &self.log_rotation
     }
 }

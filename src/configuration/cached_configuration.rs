@@ -44,9 +44,6 @@ impl CachedConfiguration {
                 let cached_configuration = get_cached_configuration();
                 let mut config_write_guard = cached_configuration.configuration.write().await;
                 *config_write_guard = new_configuration;
-
-                // Trigger configuration_changed trigger
-                triggers.run_trigger("configuration_changed").await;
             }
 
             // Get new token for next time

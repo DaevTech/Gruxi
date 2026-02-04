@@ -2,12 +2,13 @@ use crate::configuration::admin_portal::AdminPortal;
 use crate::configuration::core::Core;
 use crate::configuration::file_cache::FileCache;
 use crate::configuration::gzip::Gzip;
+use crate::configuration::http_caching::HttpCaching;
+use crate::configuration::logging::Logging;
 use crate::configuration::request_handler::RequestHandler;
 use crate::configuration::server_settings::ServerSettings;
 use crate::configuration::site::Site;
 use crate::configuration::tls_settings::TlsSettings;
 use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship};
-use crate::configuration::http_caching::HttpCaching;
 use crate::external_connections::managed_system::php_cgi::PhpCgi;
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
 use crate::http::request_handlers::processors::php_processor::PHPProcessor;
@@ -49,6 +50,7 @@ impl Configuration {
                 admin_portal: AdminPortal::new(),
                 tls_settings: TlsSettings::new(),
                 http_caching: HttpCaching::new(),
+                logging: Logging::new(),
             },
             request_handlers: vec![],
             static_file_processors: vec![],
@@ -210,7 +212,7 @@ impl Configuration {
             ip: "0.0.0.0".to_string(),
             port: 80,
             is_admin: false,
-            is_tls: false
+            is_tls: false,
         };
 
         let default_binding_tls = Binding {
@@ -218,7 +220,7 @@ impl Configuration {
             ip: "0.0.0.0".to_string(),
             port: 443,
             is_admin: false,
-            is_tls: true
+            is_tls: true,
         };
 
         // Static file processor for first site

@@ -13,7 +13,13 @@ pub struct Triggers {
 impl Triggers {
     pub fn new() -> Self {
         let mut triggers = HashMap::new();
-        let known_triggers = vec!["refresh_cached_configuration", "reload_configuration", "configuration_changed", "stop_services", "shutdown", "operation_mode_changed"];
+        let known_triggers = vec![
+            "refresh_cached_configuration", // Cakked when the cached configuration should be reloaded, normally from SIGHUP or user in admin portal
+            "reload_configuration",         // Configuration is reloaded, so notify tasks depending on it to close or refresh
+            "stop_services",                // Called when services should stop that runs within the running_state_manager
+            "shutdown",                     // Called when the entire application is shutting down
+            "operation_mode_changed",       // Called when the operation mode has changed, normally from admin portal
+        ];
         for trigger_name in known_triggers {
             triggers.insert(trigger_name.to_string(), Arc::new(RwLock::new(CancellationToken::new())));
         }

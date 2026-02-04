@@ -49,6 +49,7 @@ const expandedItems = reactive({
         fileCache: false,
         gzip: false,
         httpCaching: false,
+        logging: false,
     },
 });
 
@@ -1602,6 +1603,75 @@ onMounted(() => {
                                         Enable HTTP Caching Headers
                                         <span class="help-icon" data-tooltip="When enabled, Gruxi will add caching-related HTTP headers (ETag, Last-Modified, Expires, Cache-Control) to responses for static files. This improves performance by allowing browsers to cache files locally.">?</span>
                                     </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Logging Settings -->
+                    <div class="binding-item">
+                        <div class="item-header compact" @click="toggleCoreSubsection('logging')">
+                            <div class="header-left">
+                                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('logging') }">▶</span>
+                                <span class="hierarchy-indicator">🧾</span>
+                                <h4>Logging</h4>
+                                <span v-if="config.core.logging?.log_rotation_enabled" class="default-badge">ROTATION ENABLED</span>
+                                <span v-else class="admin-badge">ROTATION DISABLED</span>
+                                <span class="admin-badge" v-if="config.core.logging?.rotate_by_time && config.core.logging?.log_time_rotation_type">(TIME INTERVAL: {{ config.core.logging.log_time_rotation_type }})</span>
+                                <span class="admin-badge" v-if="config.core.logging?.rotate_by_size && config.core.logging?.max_log_file_size_mb">(BY SIZE: {{ config.core.logging.max_log_file_size_mb }} MB)</span>
+                                <span class="admin-badge" v-if="config.core.logging?.delete_old_logs && config.core.logging?.max_log_age_days">(DELETE AFTER: {{ config.core.logging.max_log_age_days }} DAYS)</span>
+                            </div>
+                        </div>
+
+                        <div v-if="isCoreSubsectionExpanded('logging')" class="item-content">
+
+                            <div class="form-grid compact">
+                                <div class="form-field full-width">
+                                    <label>
+                                        <input v-model="config.core.logging.log_rotation_enabled" type="checkbox" />
+                                        Enable Log Rotation
+                                        <span class="help-icon" data-tooltip="Master toggle for log rotation settings. When disabled, logs will grow indefinitely.">?</span>
+                                    </label>
+                                </div>
+
+                                <div class="form-field">
+                                    <label>
+                                        <input v-model="config.core.logging.rotate_by_size" type="checkbox" />
+                                        Rotate By Size
+                                        <span class="help-icon" data-tooltip="Rotate logs when they reach the maximum size.">?</span>
+                                    </label>
+                                </div>
+                                <div class="form-field">
+                                    <label>Max Log File Size (MB) <span class="help-icon" data-tooltip="Maximum log file size before rotation occurs (in MB).">?</span></label>
+                                    <input v-model.number="config.core.logging.max_log_file_size_mb" type="number" min="1" />
+                                </div>
+
+                                <div class="form-field">
+                                    <label>
+                                        <input v-model="config.core.logging.rotate_by_time" type="checkbox" />
+                                        Rotate By Time
+                                        <span class="help-icon" data-tooltip="Rotate logs on a fixed time schedule.">?</span>
+                                    </label>
+                                </div>
+                                <div class="form-field">
+                                    <label>Rotation Interval <span class="help-icon" data-tooltip="Frequency for time-based log rotation.">?</span></label>
+                                    <select v-model="config.core.logging.log_time_rotation_type">
+                                        <option value="daily">Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                        <option value="monthly">Monthly</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-field">
+                                    <label>
+                                        <input v-model="config.core.logging.delete_old_logs" type="checkbox" />
+                                        Delete Old Logs
+                                        <span class="help-icon" data-tooltip="Automatically delete logs older than the configured maximum age.">?</span>
+                                    </label>
+                                </div>
+                                <div class="form-field">
+                                    <label>Max Log Age (days) <span class="help-icon" data-tooltip="Maximum age of logs before deletion (in days).">?</span></label>
+                                    <input v-model.number="config.core.logging.max_log_age_days" type="number" min="1" />
                                 </div>
                             </div>
                         </div>

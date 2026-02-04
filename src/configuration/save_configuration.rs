@@ -241,6 +241,15 @@ fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> 
     // Save HTTP caching settings
     save_server_settings(connection, "http_caching_enabled_caching", &core.http_caching.enabled_caching.to_string())?;
 
+    // Save logging settings
+    save_server_settings(connection, "logging_log_rotation_enabled", &core.logging.log_rotation_enabled.to_string())?;
+    save_server_settings(connection, "logging_rotate_by_size", &core.logging.rotate_by_size.to_string())?;
+    save_server_settings(connection, "logging_max_log_file_size_mb", &core.logging.max_log_file_size_mb.to_string())?;
+    save_server_settings(connection, "logging_rotate_by_time", &core.logging.rotate_by_time.to_string())?;
+    save_server_settings(connection, "logging_log_time_rotation_type", &core.logging.log_time_rotation_type)?;
+    save_server_settings(connection, "logging_delete_old_logs", &core.logging.delete_old_logs.to_string())?;
+    save_server_settings(connection, "logging_max_log_age_days", &core.logging.max_log_age_days.to_string())?;
+
     Ok(())
 }
 

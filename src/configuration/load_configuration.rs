@@ -347,6 +347,30 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
                 core.http_caching.enabled_caching = value.parse::<bool>().map_err(|e| format!("Failed to parse http_caching_enabled_caching: {}", e))?;
                 core.http_caching.update_headers_settings();
             }
+
+            // Logging settings
+            "logging_log_rotation_enabled" => {
+                core.logging.log_rotation_enabled = value.parse::<bool>().map_err(|e| format!("Failed to parse logging_log_rotation_enabled: {}", e))?;
+            }
+            "logging_rotate_by_size" => {
+                core.logging.rotate_by_size = value.parse::<bool>().map_err(|e| format!("Failed to parse logging_rotate_by_size: {}", e))?;
+            }
+            "logging_max_log_file_size_mb" => {
+                core.logging.max_log_file_size_mb = value.parse::<u64>().map_err(|e| format!("Failed to parse logging_max_log_file_size_mb: {}", e))?;
+            }
+            "logging_rotate_by_time" => {
+                core.logging.rotate_by_time = value.parse::<bool>().map_err(|e| format!("Failed to parse logging_rotate_by_time: {}", e))?;
+            }
+            "logging_log_time_rotation_type" => {
+                core.logging.log_time_rotation_type = value;
+            }
+            "logging_delete_old_logs" => {
+                core.logging.delete_old_logs = value.parse::<bool>().map_err(|e| format!("Failed to parse logging_delete_old_logs: {}", e))?;
+            }
+            "logging_max_log_age_days" => {
+                core.logging.max_log_age_days = value.parse::<u32>().map_err(|e| format!("Failed to parse logging_max_log_age_days: {}", e))?;
+            }
+
             _ => continue,
         }
     }

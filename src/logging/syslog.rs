@@ -115,7 +115,7 @@ impl SysLog {
 
         let log_entry = match tokio::task::try_id() {
             Some(task_id) => {
-             format!("{} - [{}][ID:{}] {}", &ts, &log_type, task_id, &log)
+                format!("{} - [{}][ID:{}] {}", &ts, &log_type, task_id, &log)
             }
             None => {
                 format!("{} - [{}] {}", &ts, &log_type, &log)

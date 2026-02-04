@@ -1,4 +1,5 @@
 use crate::configuration::http_caching::HttpCaching;
+use crate::configuration::logging::Logging;
 use crate::configuration::tls_settings::TlsSettings;
 use crate::configuration::{admin_portal::AdminPortal, file_cache::FileCache};
 use crate::configuration::gzip::Gzip;
@@ -13,6 +14,7 @@ pub struct Core {
     pub admin_portal: AdminPortal,
     pub tls_settings: TlsSettings,
     pub http_caching: HttpCaching,
+    pub logging: Logging,
 }
 
 impl Core {
@@ -23,6 +25,7 @@ impl Core {
         self.admin_portal.sanitize();
         self.tls_settings.sanitize();
         self.http_caching.sanitize();
+        self.logging.sanitize();
     }
 
     pub fn validate(&self) -> Result<(), Vec<String>> {
@@ -67,6 +70,13 @@ impl Core {
         if let Err(http_caching_errors) = self.http_caching.validate() {
             for error in http_caching_errors {
                 errors.push(format!("HTTP Caching: {}", error));
+            }
+        }
+
+        // Validate logging settings
+        if let Err(logging_errors) = self.logging.validate() {
+            for error in logging_errors {
+                errors.push(format!("Logging: {}", error));
             }
         }
 
