@@ -7,7 +7,7 @@ pub struct MonitoringState {
     requests_served: AtomicUsize,
     requests_served_last: AtomicUsize,
     requests_served_per_sec: AtomicUsize,
-    requests_in_progress: AtomicUsize,
+    active_connections: AtomicUsize,
     server_start_time: std::time::Instant,
     file_cache_enabled: AtomicBool,
     file_cache_current_items: AtomicUsize,
@@ -23,7 +23,7 @@ impl MonitoringState {
             requests_served: AtomicUsize::new(0),      // Updated from http server
             requests_served_last: AtomicUsize::new(0), // Updated from monitoring thread
             requests_served_per_sec: AtomicUsize::new(0),
-            requests_in_progress: AtomicUsize::new(0), // Updated from http server
+            active_connections: AtomicUsize::new(0), // Updated from http server
             server_start_time: std::time::Instant::now(),
             file_cache_enabled: AtomicBool::new(configuration.core.file_cache.is_enabled),
             file_cache_current_items: AtomicUsize::new(0), // Updated from monitoring thread
@@ -38,7 +38,7 @@ impl MonitoringState {
     }
 
     async fn monitoring_task() {
-        let update_interval_seconds: usize = 10;
+        let update_interval_seconds = 1;
         let update_interval = tokio::time::Duration::from_secs(update_interval_seconds as u64);
 
         let triggers = get_trigger_handler();
@@ -104,28 +104,32 @@ impl MonitoringState {
         self.requests_served.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn decrement_requests_served(&self) {
+        self.requests_served.fetch_sub(1, Ordering::Relaxed);
+    }
+
     pub fn get_requests_served(&self) -> usize {
         self.requests_served.load(Ordering::Relaxed)
     }
 
-    pub fn increment_requests_in_queue(&self) {
-        self.requests_in_progress.fetch_add(1, Ordering::Relaxed);
+    pub fn increment_connections_in_queue(&self) {
+        self.active_connections.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn decrement_requests_in_queue(&self) {
-        self.requests_in_progress.fetch_sub(1, Ordering::Relaxed);
+    pub fn decrement_connections_in_queue(&self) {
+        self.active_connections.fetch_sub(1, Ordering::Relaxed);
     }
 
     pub async fn get_json(&self) -> serde_json::Value {
         let monitoring_state = get_monitoring_state().await;
 
-        // Get the requests in progress minus one to account for the current monitoring request
-        let requests_in_progress = monitoring_state.requests_in_progress.load(Ordering::Relaxed).saturating_sub(1);
+        // Get the active connections minus one to account for the current monitoring request
+        let active_connections = monitoring_state.active_connections.load(Ordering::Relaxed);
 
         serde_json::json!({
             "requests_served": monitoring_state.get_requests_served(),
             "requests_per_sec": f64::from_bits(monitoring_state.requests_served_per_sec.load(Ordering::Relaxed) as u64),
-            "requests_in_progress": requests_in_progress,
+            "active_connections": active_connections,
             "uptime_seconds": monitoring_state.server_start_time.elapsed().as_secs(),
             "file_cache": {
                 "enabled": monitoring_state.file_cache_enabled.load(Ordering::Relaxed),

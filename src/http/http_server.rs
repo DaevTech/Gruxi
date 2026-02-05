@@ -132,6 +132,10 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
     let listener = start_listener_with_retry(addr).await;
     trace!("Listening on binding: {:?}", connection_context.binding);
 
+    // Get the monitoring state to update active connections
+    let monitoring_state = get_monitoring_state().await;
+    let should_increment_connections_in_queue = !connection_context.binding.is_admin;
+
     if connection_context.binding.is_tls {
         // Build unified TLS acceptor that handles both ACME and manual certificates
         let tls_acceptor = match build_unified_tls_acceptor(&connection_context.binding).await {
@@ -167,16 +171,19 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
                                 match acceptor.accept(tcp_stream).await {
                                     Ok(tls_stream) => {
                                         let io = TokioIo::new(tls_stream);
-                                        // Increment requests in queue when connection is ready to be served
-                                        let monitoring_state = get_monitoring_state().await;
-                                        monitoring_state.increment_requests_in_queue();
+                                        // Increment connections in queue when connection is ready to be served
+                                        if should_increment_connections_in_queue {
+                                            monitoring_state.increment_connections_in_queue();
+                                        }
 
                                         if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context, remote_addr_ip)).catch_unwind().await {
                                             handle_connection_panic(panic);
                                         }
 
                                         // Decrement when connection is fully handled
-                                        monitoring_state.decrement_requests_in_queue();
+                                        if should_increment_connections_in_queue {
+                                            monitoring_state.decrement_connections_in_queue();
+                                        }
                                     }
                                     Err(err) => {
                                         debug!("TLS handshake error: {:?}", err);
@@ -213,16 +220,19 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
                             let local_connection_context = connection_context.clone();
 
                             tokio::spawn(async move {
-                                // Increment requests in queue when connection is ready to be served
-                                let monitoring_state = get_monitoring_state().await;
-                                monitoring_state.increment_requests_in_queue();
+                                // Increment connections in queue when connection is ready to be served
+                                if should_increment_connections_in_queue {
+                                    monitoring_state.increment_connections_in_queue();
+                                }
 
                                 if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context, remote_addr_ip)).catch_unwind().await {
                                     handle_connection_panic(panic);
                                 }
 
                                 // Decrement when connection is fully handled
-                                monitoring_state.decrement_requests_in_queue();
+                                if should_increment_connections_in_queue {
+                                    monitoring_state.decrement_connections_in_queue();
+                                }
                             });
                         }
                         Err(err) => {

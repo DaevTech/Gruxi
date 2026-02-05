@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::admin_portal::http_admin_api::*;
 use crate::compression::compression::Compression;
+use crate::core::monitoring::get_monitoring_state;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
 use crate::http::http_server::ConnectionContext;
@@ -86,6 +87,10 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
 
     // Check if the request is for the admin portal - handle these first
     let admin_response = if connection_context.binding.is_admin {
+        // If it was an admin binding, we decrement the requests served, as we dont want to count data from the admin portal in our normal stats
+        let monitoring_state = get_monitoring_state().await;
+        monitoring_state.decrement_requests_served();
+
         match handle_api_routes(&mut gruxi_request, site, &connection_context).await {
             Ok(response) => Some(response),
             Err(e) => {

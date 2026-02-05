@@ -17,7 +17,7 @@ const emit = defineEmits(['logout']);
 // Dashboard state
 const activeView = ref('server-status');
 const sidebarCollapsed = ref(false);
-const refreshRate = ref(5); // Default 5 seconds
+const refreshRateStorageKey = 'gruxi_server_status_refresh_rate';
 const refreshRateOptions = [
     { value: 1, label: '1 sec' },
     { value: 5, label: '5 sec' },
@@ -25,6 +25,8 @@ const refreshRateOptions = [
     { value: 30, label: '30 sec' },
     { value: 60, label: '60 sec' },
 ];
+const defaultRefreshRate = 5;
+const refreshRate = ref(defaultRefreshRate); // Default 5 seconds
 let statsInterval = null;
 const isClearingFileCache = ref(false);
 
@@ -169,7 +171,7 @@ const updateStats = async () => {
             stats.serverStatus = 'Running';
             stats.requests = data.requests_served || 0;
             stats.requestsPerSec = data.requests_per_sec || 0;
-            stats.activeConnections = data.requests_in_progress || 0;
+            stats.activeConnections = data.active_connections || 0;
 
             // Update file cache stats
             if (data.file_cache) {
@@ -255,13 +257,45 @@ const formatRequestCount = (count) => {
     }
 };
 
+const normalizeRefreshRate = (value) => {
+    const parsed = Number.parseInt(value, 10);
+    const allowedValues = refreshRateOptions.map((option) => option.value);
+    if (Number.isNaN(parsed) || !allowedValues.includes(parsed)) {
+        return defaultRefreshRate;
+    }
+    return parsed;
+};
+
+const loadStoredRefreshRate = () => {
+    try {
+        const storedValue = sessionStorage.getItem(refreshRateStorageKey);
+        if (!storedValue) {
+            return defaultRefreshRate;
+        }
+        return normalizeRefreshRate(storedValue);
+    } catch (error) {
+        console.error('Failed to load refresh rate from session storage:', error);
+        return defaultRefreshRate;
+    }
+};
+
+const saveRefreshRate = (value) => {
+    try {
+        sessionStorage.setItem(refreshRateStorageKey, String(value));
+    } catch (error) {
+        console.error('Failed to save refresh rate to session storage:', error);
+    }
+};
+
 // Watch for refresh rate changes
-watch(refreshRate, () => {
+watch(refreshRate, (value) => {
+    saveRefreshRate(value);
     startStatsInterval();
 });
 
 // Initialize dashboard
 onMounted(() => {
+    refreshRate.value = loadStoredRefreshRate();
     updateBasicData();
     updateStats();
     startStatsInterval();
@@ -385,7 +419,7 @@ onUnmounted(() => {
 
                             <div class="stat-card">
                                 <div class="stat-header">
-                                    <h3>In-Progress requests</h3>
+                                    <h3>Active Connections</h3>
                                 </div>
                                 <div class="stat-value">{{ stats.activeConnections }}</div>
                             </div>
