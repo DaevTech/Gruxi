@@ -1,20 +1,12 @@
 use std::time::Duration;
 
 use crate::{
-    error, trace,
-    configuration::site::Site,
-    core::running_state_manager,
-    error::{
-        gruxi_error::GruxiError,
-        gruxi_error_enums::{GruxiErrorKind, ProxyProcessorError},
-    },
-    http::{
-        request_handlers::{
+    configuration::site::Site, error::{gruxi_error::GruxiError, gruxi_error_enums::{GruxiErrorKind, ProxyProcessorError}}, http::{
+        http_server::ConnectionContext, request_handlers::{
             processor_trait::ProcessorTrait,
             processors::load_balancer::{load_balancer::LoadBalancerImpl, round_robin::RoundRobin},
-        },
-        request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
-    },
+        }, request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse}
+    }, trace
 };
 use http::HeaderValue;
 use hyper::Response;
@@ -22,6 +14,7 @@ use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use uuid::Uuid;
+use crate::error;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProxyProcessorRewrite {
@@ -132,7 +125,6 @@ impl ProxyProcessor {
                 self.health_check_interval_seconds as u64,
             ),
             _ => {
-                error!("Unsupported load balancing strategy: {}", self.load_balancing_strategy);
                 panic!("Unsupported load balancing strategy: '{}' - Defined in proxy processor: {}", self.load_balancing_strategy, self.id);
             }
         }
@@ -224,14 +216,11 @@ impl ProcessorTrait for ProxyProcessor {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, _site: &Site) -> Result<GruxiResponse, GruxiError> {
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, _site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError> {
         trace!("ProxyProcessor handling request - {:?}", &self);
 
         // We determine which upstream server to use based on the load balancing strategy.
-        let running_state_manager = running_state_manager::get_running_state_manager().await;
-        let running_state = running_state_manager.get_running_state();
-        let running_state_read_lock = running_state.read().await;
-        let processor_manager = running_state_read_lock.get_processor_manager();
+        let processor_manager = connection_context.running_state.get_processor_manager();
 
         let server_to_handle_request_option = processor_manager.load_balancer_registry.get_next_server(self.id.as_str()).await;
         let server_to_handle_request = match server_to_handle_request_option {
@@ -262,7 +251,7 @@ impl ProcessorTrait for ProxyProcessor {
         };
 
         // Get the client appropriate for TLS verification settings
-        let client = running_state_read_lock.get_http_client().get_client(self.verify_tls_certificates);
+        let client = connection_context.running_state.get_http_client().get_client(self.verify_tls_certificates);
 
         // Get the client-side upgrade on the request side
         let client_upgrade = gruxi_request.take_upgrade();

@@ -179,7 +179,7 @@ pub async fn get_acme_domains_for_binding(binding: &Binding) -> std::collections
         return domains;
     }
 
-    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+    let running_state = get_running_state_manager().await.get_running_state();
     let binding_site_cache = running_state.get_binding_site_cache();
     let sites = binding_site_cache.get_sites_for_binding(&binding.id);
 
@@ -216,7 +216,7 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
     let mut cert_added = false;
 
     // Get sites for this binding
-    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+    let running_state = get_running_state_manager().await.get_running_state();
     let binding_site_cache = running_state.get_binding_site_cache();
     let sites = binding_site_cache.get_sites_for_binding(&binding.id);
 

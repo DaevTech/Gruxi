@@ -2,10 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
-    trace,
-    configuration::{request_handler::RequestHandler, site::Site},
-    error::gruxi_error::GruxiError,
-    http::request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
+    configuration::{request_handler::RequestHandler, site::Site}, error::gruxi_error::GruxiError, http::{http_server::ConnectionContext, request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse}}, trace
 };
 
 pub struct RequestHandlerManager {
@@ -34,7 +31,7 @@ impl RequestHandlerManager {
         new_request_handlers
     }
 
-    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
+    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError> {
         let request_handler_read_lock = self.request_handlers.read().await;
 
         for request_handler_id in site.request_handlers.iter() {
@@ -47,7 +44,7 @@ impl RequestHandlerManager {
                 // Check that it matches
                 if handler.matches_url(&gruxi_request.get_path_and_query()) {
                     // We call the handle request. If we get an error, we continue to the next one
-                    let response_result = handler.handle_request(gruxi_request, site).await;
+                    let response_result = handler.handle_request(gruxi_request, site, connection_context).await;
                     if response_result.is_err() {
                         // Some of the errors are not critical, so we just log and continue
                         continue;

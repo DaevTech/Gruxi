@@ -2,14 +2,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    trace,
-    configuration::site::Site,
-    core::running_state_manager::get_running_state_manager,
-    error::{gruxi_error::GruxiError, gruxi_error_enums::*},
-    http::{
-        request_handlers::processor_trait::ProcessorTrait,
-        request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
-    },
+    configuration::site::Site, error::{gruxi_error::GruxiError, gruxi_error_enums::*}, http::{
+        http_server::ConnectionContext, request_handlers::processor_trait::ProcessorTrait, request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse}
+    }, trace
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -117,9 +112,8 @@ impl RequestHandler {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
-        let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
-        let processor_manager = running_state.get_processor_manager();
+    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError> {
+        let processor_manager = connection_context.running_state.get_processor_manager();
 
         // Depending on request handler type, we get the appropriate processor
         let response_result = match self.processor_type.as_str() {
@@ -127,7 +121,7 @@ impl RequestHandler {
                 trace!("Handling request with static file processor id '{}'", &self.processor_id);
                 let pm_option = processor_manager.get_static_file_processor_by_id(&self.processor_id);
                 match pm_option {
-                    Some(p) => p.handle_request(gruxi_request, &site).await,
+                    Some(p) => p.handle_request(gruxi_request, &site, connection_context).await,
                     None => {
                         return Err(GruxiError::new(
                             GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::Internal),
@@ -140,7 +134,7 @@ impl RequestHandler {
                 trace!("Handling request with PHP processor id '{}'", &self.processor_id);
                 let pm_option = processor_manager.get_php_processor_by_id(&self.processor_id);
                 match pm_option {
-                    Some(p) => p.handle_request(gruxi_request, &site).await,
+                    Some(p) => p.handle_request(gruxi_request, &site, connection_context).await,
                     None => {
                         return Err(GruxiError::new(
                             GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal),
@@ -153,7 +147,7 @@ impl RequestHandler {
                 trace!("Handling request with proxy processor id '{}'", &self.processor_id);
                 let pm_option = processor_manager.get_proxy_processor_by_id(&self.processor_id);
                 match pm_option {
-                    Some(p) => p.handle_request(gruxi_request, &site).await,
+                    Some(p) => p.handle_request(gruxi_request, &site, connection_context).await,
                     None => {
                         return Err(GruxiError::new(
                             GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal),

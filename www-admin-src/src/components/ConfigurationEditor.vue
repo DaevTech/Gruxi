@@ -1417,6 +1417,14 @@ onMounted(() => {
                             <div class="form-grid compact">
                                 <div class="form-field">
                                     <label>
+                                        Max Connection Duration (seconds)
+                                        <span class="help-icon" data-tooltip="Maximum duration for a single client connection, in seconds. Connections exceeding this limit will be closed. This is to prevent resource exhaustion of long living connections.">?</span>
+                                    </label>
+                                    <input v-model.number="config.core.server_settings.max_connection_duration_seconds" type="number" min="1" step="1" />
+                                </div>
+
+                                <div class="form-field">
+                                    <label>
                                         Max Body Size (MB)
                                         <span class="help-icon" data-tooltip="Maximum allowed HTTP request body size, in megabytes. This is applied server-wide.">?</span>
                                     </label>
@@ -2470,7 +2478,7 @@ onMounted(() => {
 
 .form-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(600px, 600px));
     gap: 1.5rem;
 }
 

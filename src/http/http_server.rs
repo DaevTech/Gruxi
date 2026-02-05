@@ -1,12 +1,15 @@
 use crate::configuration::binding::Binding;
 use crate::core::monitoring::get_monitoring_state;
+use crate::core::running_state::RunningState;
+use crate::core::running_state_manager::get_running_state_manager;
 use crate::http::handle_request::handle_request;
 use crate::http::http_util::add_standard_headers_to_response;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::tls::http_tls::build_unified_tls_acceptor;
-use crate::{debug, error, info, trace};
 use crate::tls::shared_acme_manager::initialize_shared_acme_manager;
+use crate::{debug, error, info, trace};
+use arc_swap::Guard;
 use futures::FutureExt;
 use hyper::Request;
 use hyper::body::Incoming;
@@ -14,9 +17,20 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HttpAutoBuilder;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::select;
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
+
+pub struct ConnectionContext {
+    pub binding: Binding,
+    pub hard_connection_timeout: Duration,
+    pub shutdown_token: CancellationToken,
+    pub stop_services_token: CancellationToken,
+    pub running_state: Guard<Arc<RunningState>>,
+}
 
 // Starting all the Gruxi magic
 pub async fn initialize_server() {
@@ -44,9 +58,40 @@ pub async fn initialize_server() {
 
         info!("Starting server on {}", addr);
 
+        // Create the context for this binding to be used in the server task
+        let triggers = crate::core::triggers::get_trigger_handler();
+
+        let shutdown_token_option = triggers.get_token("shutdown").await;
+        let shutdown_token = match shutdown_token_option {
+            Some(token) => token,
+            None => {
+                error!("Failed to get shutdown token - Could not start server binding. Please report a bug");
+                return;
+            }
+        };
+
+        let stop_services_token_option = triggers.get_token("stop_services").await;
+        let stop_services_token = match stop_services_token_option {
+            Some(token) => token,
+            None => {
+                error!("Failed to get stop_services token - Could not start server binding. Please report a bug");
+                return;
+            }
+        };
+
+        // Get the running state
+        let running_state = get_running_state_manager().await.get_running_state();
+
+        let context = ConnectionContext {
+            binding: binding.clone(),
+            hard_connection_timeout: Duration::from_secs(config.core.server_settings.max_connection_duration_seconds),
+            shutdown_token: shutdown_token.clone(),
+            stop_services_token: stop_services_token.clone(),
+            running_state: running_state,
+        };
+
         // Start listening on the specified address - spawn each binding as a separate task
-        let binding_clone = binding.clone();
-        tokio::spawn(start_server_binding(binding_clone));
+        tokio::spawn(start_server_binding(Arc::new(context)));
     }
 }
 
@@ -73,47 +118,26 @@ async fn start_listener_with_retry(addr: SocketAddr) -> TcpListener {
     }
 }
 
-async fn start_server_binding(binding: Binding) {
-    let ip_result = binding.ip.parse::<std::net::IpAddr>();
+async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
+    let ip_result = connection_context.binding.ip.parse::<std::net::IpAddr>();
     let ip = match ip_result {
         Ok(ip_addr) => ip_addr,
         Err(e) => {
-            panic!("Invalid IP address for binding {}: {}. Could not start server", binding.ip, e);
+            panic!("Invalid IP address for binding {}: {}. Could not start server", connection_context.binding.ip, e);
         }
     };
-    let port = binding.port;
+    let port = connection_context.binding.port;
     let addr = SocketAddr::new(ip, port);
 
     let listener = start_listener_with_retry(addr).await;
-    trace!("Listening on binding: {:?}", binding);
+    trace!("Listening on binding: {:?}", connection_context.binding);
 
-    let triggers = crate::core::triggers::get_trigger_handler();
-
-    let shutdown_token_option = triggers.get_token("shutdown").await;
-    let shutdown_token = match shutdown_token_option {
-        Some(token) => token,
-        None => {
-            error!("Failed to get shutdown token - Could not start server binding. Please report a bug");
-            return;
-        }
-    };
-
-    let stop_services_token_option = triggers.get_token("stop_services").await;
-    let stop_services_token = match stop_services_token_option {
-        Some(token) => token,
-        None => {
-            error!("Failed to get stop_services token - Could not start server binding. Please report a bug");
-            return;
-        }
-    };
-
-    if binding.is_tls {
+    if connection_context.binding.is_tls {
         // Build unified TLS acceptor that handles both ACME and manual certificates
-        // Note: ACME polling is handled by the shared manager, no per-binding task needed
-        let tls_acceptor = match build_unified_tls_acceptor(&binding).await {
+        let tls_acceptor = match build_unified_tls_acceptor(&connection_context.binding).await {
             Ok(result) => result,
             Err(e) => {
-                error!("TLS setup failed for {}:{} => {}", binding.ip, binding.port, e);
+                error!("TLS setup failed for {}:{} => {}", connection_context.binding.ip, connection_context.binding.port, e);
                 return;
             }
         };
@@ -121,12 +145,12 @@ async fn start_server_binding(binding: Binding) {
         // Unified TLS accept loop
         loop {
             select! {
-                _ = shutdown_token.cancelled() => {
-                    trace!("Shutdown signal received, stopping server on {}:{}", binding.ip, binding.port);
+                _ = connection_context.shutdown_token.cancelled() => {
+                    trace!("Shutdown signal received, stopping server on {}:{}", connection_context.binding.ip, connection_context.binding.port);
                     break;
                 },
-                _ = stop_services_token.cancelled() => {
-                    trace!("Service cancellation signal received, stopping server on {}:{}", binding.ip, binding.port);
+                _ = connection_context.stop_services_token.cancelled() => {
+                    trace!("Service cancellation signal received, stopping server on {}:{}", connection_context.binding.ip, connection_context.binding.port);
                     break;
                 },
                 result = listener.accept() => {
@@ -137,9 +161,7 @@ async fn start_server_binding(binding: Binding) {
                                 .unwrap_or_else(|_| "<unknown>".to_string());
 
                             let acceptor = tls_acceptor.clone();
-                            let binding = binding.clone();
-                            let shutdown_token = shutdown_token.clone();
-                            let stop_services_token = stop_services_token.clone();
+                            let local_connection_context = connection_context.clone();
 
                             tokio::spawn(async move {
                                 match acceptor.accept(tcp_stream).await {
@@ -149,7 +171,7 @@ async fn start_server_binding(binding: Binding) {
                                         let monitoring_state = get_monitoring_state().await;
                                         monitoring_state.increment_requests_in_queue();
 
-                                        if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token)).catch_unwind().await {
+                                        if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context, remote_addr_ip)).catch_unwind().await {
                                             handle_connection_panic(panic);
                                         }
 
@@ -172,12 +194,12 @@ async fn start_server_binding(binding: Binding) {
     } else {
         loop {
             select! {
-                _ = shutdown_token.cancelled() => {
-                    trace!("Termination signal received, stopping server on {}:{}", binding.ip, binding.port);
+                _ = connection_context.shutdown_token.cancelled() => {
+                    trace!("Termination signal received, stopping server on {}:{}", connection_context.binding.ip, connection_context.binding.port);
                     break;
                 },
-                _ = stop_services_token.cancelled() => {
-                    trace!("Service stop signal received, stopping server on {}:{}", binding.ip, binding.port);
+                _ = connection_context.stop_services_token.cancelled() => {
+                    trace!("Service stop signal received, stopping server on {}:{}", connection_context.binding.ip, connection_context.binding.port);
                     break;
                 },
                 result = listener.accept() => {
@@ -188,16 +210,14 @@ async fn start_server_binding(binding: Binding) {
                                 .unwrap_or_else(|_| "<unknown>".to_string());
 
                             let io = TokioIo::new(tcp_stream);
-                            let binding = binding.clone();
-                            let shutdown_token = shutdown_token.clone();
-                            let stop_services_token = stop_services_token.clone();
+                            let local_connection_context = connection_context.clone();
 
                             tokio::spawn(async move {
                                 // Increment requests in queue when connection is ready to be served
                                 let monitoring_state = get_monitoring_state().await;
                                 monitoring_state.increment_requests_in_queue();
 
-                                if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, binding, remote_addr_ip, shutdown_token, stop_services_token)).catch_unwind().await {
+                                if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context, remote_addr_ip)).catch_unwind().await {
                                     handle_connection_panic(panic);
                                 }
 
@@ -230,24 +250,23 @@ fn handle_connection_panic(panic: Box<dyn std::any::Any + Send>) {
 }
 
 // Helper function to serve a connection (works for both TLS and non-TLS)
-async fn serve_connection<S>(io: TokioIo<S>, binding: Binding, remote_addr_ip: String, shutdown_token: CancellationToken, stop_services_token: CancellationToken)
+async fn serve_connection<S>(io: TokioIo<S>, connection_context: Arc<ConnectionContext>, remote_addr_ip: String)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let shutdown_token_conn = shutdown_token.clone();
-    let stop_services_token_conn = stop_services_token.clone();
+    let local_connection_context = connection_context.clone();
 
     let svc = service_fn(move |req: Request<Incoming>| {
-        let binding = binding.clone();
         let remote_ip = remote_addr_ip.clone();
 
+        let conn_context = local_connection_context.clone();
         async move {
             // Count the request in monitoring
             get_monitoring_state().await.increment_requests_served();
 
             let mut gruxi_request = GruxiRequest::from_hyper(req);
             gruxi_request.set_remote_ip(remote_ip.clone());
-            let gruxi_response_result = handle_request(gruxi_request, binding).await;
+            let gruxi_response_result = handle_request(gruxi_request, conn_context).await;
             let mut response = match gruxi_response_result {
                 Err(err) => {
                     error!("Error handling request from {}: {:?}", &remote_ip, err);
@@ -270,13 +289,14 @@ where
     let connection = HttpAutoBuilder::new(TokioExecutor::new());
 
     // Serve the connection and listen for shutdown signals
+    let conn_context = connection_context.clone();
     let result = tokio::select! {
-        res = connection.serve_connection_with_upgrades(io, svc) => res,
-        _ = shutdown_token_conn.cancelled() => Ok(()),
-        _ = stop_services_token_conn.cancelled() => Ok(()),
+        res = timeout(conn_context.hard_connection_timeout, connection.serve_connection_with_upgrades(io, svc)) => res,
+        _ = conn_context.shutdown_token.cancelled() => return,
+        _ = conn_context.stop_services_token.cancelled() => return,
     };
 
-    if let Err(err) = result {
-        trace!("Connection error: {:?}", err);
+    if let Err(_) = result {
+        trace!("Connection timed out due to hard timeout");
     }
 }

@@ -1,24 +1,11 @@
-use std::sync::Arc;
-
 use http::HeaderValue;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::Bytes;
 
-use crate::core::running_state_manager::get_running_state_manager;
-use crate::file::file_reader_structs::FileEntry;
-use crate::file::normalized_path::NormalizedPath;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 
 pub fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
     Full::new(chunk.into()).map_err(|never| match never {}).boxed()
-}
-
-/// Combine the web root and path, and resolve to a full path
-pub async fn resolve_web_root_and_path_and_get_file(normalized_path: &NormalizedPath) -> Result<Arc<FileEntry>, std::io::Error> {
-    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
-    let file_reader_cache = running_state.get_file_reader_cache();
-    let file_data = file_reader_cache.get_file(&normalized_path.get_full_path()).await?;
-    Ok(file_data)
 }
 
 pub fn empty_response_with_status(status: hyper::StatusCode) -> GruxiResponse {

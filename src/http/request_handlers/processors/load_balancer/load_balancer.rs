@@ -34,8 +34,7 @@ pub trait LoadBalancerImpl: Send + 'static {
             // Get a client from the running state
             let running_state_manager = running_state_manager::get_running_state_manager().await;
             let running_state = running_state_manager.get_running_state();
-            let running_state_read_lock = running_state.read().await;
-            let client = running_state_read_lock.get_http_client().get_client(false);
+            let client = running_state.get_http_client().get_client(false);
 
             // Make the request and make sure it times out after X seconds
             let start_time = tokio::time::Instant::now();

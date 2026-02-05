@@ -313,6 +313,9 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             }
 
             // Server settings
+            "max_connection_duration_seconds" => {
+                core.server_settings.max_connection_duration_seconds = value.parse::<u64>().map_err(|e| format!("Failed to parse max_connection_duration_seconds: {}", e))?;
+            }
             "max_body_size" => {
                 core.server_settings.max_body_size = value.parse::<u64>().map_err(|e| format!("Failed to parse max_body_size: {}", e))?;
             }

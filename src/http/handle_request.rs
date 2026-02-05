@@ -1,9 +1,10 @@
+use std::sync::Arc;
+
 use crate::admin_portal::http_admin_api::*;
 use crate::compression::compression::Compression;
-use crate::configuration::binding::Binding;
-use crate::core::running_state_manager::get_running_state_manager;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
+use crate::http::http_server::ConnectionContext;
 use crate::http::http_util::*;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
@@ -13,7 +14,7 @@ use chrono::Local;
 use hyper::header::HeaderValue;
 
 // Entry point to handle request, as we need to do post-processing, like access logging etc
-pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -> Result<GruxiResponse, GruxiError> {
+pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context: Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
     // Log the request details
     debug!(
         "Received request: hostname={}, method={}, path={}, query={}, body_size={}, headers={:?}",
@@ -26,13 +27,13 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -
     );
 
     // Get the running state
-    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+    let running_state = &connection_context.running_state;
 
     // Get the sites for this binding
     let binding_site_cache = running_state.get_binding_site_cache();
-    let sites = binding_site_cache.get_sites_for_binding(&binding.id);
+    let sites = binding_site_cache.get_sites_for_binding(&connection_context.binding.id);
     if sites.is_empty() {
-        trace!("No sites configured for binding ID: '{}'", &binding.id);
+        trace!("No sites configured for binding ID: '{}'", &connection_context.binding.id);
         return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
     }
 
@@ -42,10 +43,10 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -
         Some(site) => site,
         None => {
             if hostname.is_empty() {
-                trace!("No hostname provided in request on binding ID: '{}'", &binding.id);
+                trace!("No hostname provided in request on binding ID: '{}'", &connection_context.binding.id);
                 return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_REQUEST.as_u16()));
             } else {
-                trace!("No matching site found for hostname: '{}' on binding ID: '{}'", &hostname, &binding.id);
+                trace!("No matching site found for hostname: '{}' on binding ID: '{}'", &hostname, &connection_context.binding.id);
                 return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
             }
         }
@@ -84,8 +85,8 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -
     }
 
     // Check if the request is for the admin portal - handle these first
-    let admin_response = if binding.is_admin {
-        match handle_api_routes(&mut gruxi_request, site).await {
+    let admin_response = if connection_context.binding.is_admin {
+        match handle_api_routes(&mut gruxi_request, site, &connection_context).await {
             Ok(response) => Some(response),
             Err(e) => {
                 // If the error is NoRouteMatched, we continue to normal processing
@@ -114,7 +115,7 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding: Binding) -
 
         // Now we let the request handler manager process the request in the order defined by the site's request_handlers list.
         let request_handler_manager = running_state.get_request_handler_manager();
-        let response_result = request_handler_manager.handle_request(&mut gruxi_request, &site).await;
+        let response_result = request_handler_manager.handle_request(&mut gruxi_request, &site, &connection_context).await;
         if response_result.is_err() {
             trace!("No request handler matched for URL path: {}", &gruxi_request.get_path_and_query());
             return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));

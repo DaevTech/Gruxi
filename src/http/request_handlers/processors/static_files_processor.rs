@@ -1,5 +1,5 @@
+use crate::error;
 use crate::{
-    error, trace, warn,
     configuration::site::Site,
     error::{
         gruxi_error::GruxiError,
@@ -11,10 +11,11 @@ use crate::{
             etag::handle_conditional_headers,
             range::{accept_ranges_bytes, format_content_range_unsatisfiable},
         },
-        http_util::resolve_web_root_and_path_and_get_file,
+        http_server::ConnectionContext,
         request_handlers::processor_trait::ProcessorTrait,
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
+    trace, warn,
 };
 use http::HeaderName;
 use hyper::header::HeaderValue;
@@ -101,7 +102,7 @@ impl ProcessorTrait for StaticFileProcessor {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError> {
         // Check and normalize web root if not already done
         if self.normalized_web_root.is_none() {
             error!("StaticFileProcessor web root is not initialized as expected for id: '{}'", self.id);
@@ -134,7 +135,9 @@ impl ProcessorTrait for StaticFileProcessor {
             }
         };
 
-        let file_data_result = resolve_web_root_and_path_and_get_file(&normalized_path).await;
+        let file_reader_cache = connection_context.running_state.get_file_reader_cache();
+
+        let file_data_result = file_reader_cache.get_file(&normalized_path.get_full_path()).await;
         if let Err(e) = file_data_result {
             // If we fail to get the file, return cant/wont handle
             trace!("We could not get data on the file: {}, so we cannot handle with static file processor", e);
@@ -167,7 +170,7 @@ impl ProcessorTrait for StaticFileProcessor {
                     }
                 };
 
-                let file_data_result = resolve_web_root_and_path_and_get_file(&normalized_path).await;
+                let file_data_result = file_reader_cache.get_file(&normalized_path.get_full_path()).await;
                 file_data = match file_data_result {
                     Ok(data) => data,
                     Err(e) => {
@@ -177,10 +180,7 @@ impl ProcessorTrait for StaticFileProcessor {
                 };
                 file_path = file_data.meta.file_path.clone();
             } else {
-                trace!(
-                    "File does not exist and no rewrite function is applied: {}, so we cannot handle with static file processor",
-                    file_path
-                );
+                trace!("File does not exist and no rewrite function is applied: {}, so we cannot handle with static file processor", file_path);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         }
@@ -202,7 +202,7 @@ impl ProcessorTrait for StaticFileProcessor {
                     }
                 };
 
-                let file_data_result = resolve_web_root_and_path_and_get_file(&normalized_path).await;
+                let file_data_result = file_reader_cache.get_file(&normalized_path.get_full_path()).await;
                 file_data = match file_data_result {
                     Ok(data) => data,
                     Err(_) => {
@@ -293,10 +293,7 @@ impl ProcessorTrait for StaticFileProcessor {
         let header_value = HeaderValue::from_str(content_type);
         match header_value {
             Err(e) => {
-                warn!(
-                    "Failed to set content type header for file: {} with mime type: {}. Error: {}",
-                    file_path, content_type, e
-                );
+                warn!("Failed to set content type header for file: {} with mime type: {}. Error: {}", file_path, content_type, e);
             }
             Ok(value) => {
                 response.headers_mut().insert(hyper::header::CONTENT_TYPE, value);
@@ -350,10 +347,7 @@ impl StaticFileProcessor {
             let header_value = HeaderValue::from_str(header_value_string);
             match header_value {
                 Err(e) => {
-                    warn!(
-                        "Failed to set header: {} for file: {} with value: {}. Error: {}",
-                        header_name, file_path, header_value_string, e
-                    );
+                    warn!("Failed to set header: {} for file: {} with value: {}. Error: {}", header_name, file_path, header_value_string, e);
                 }
                 Ok(value) => {
                     response.headers_mut().insert(header_name, value);

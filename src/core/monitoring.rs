@@ -66,8 +66,7 @@ impl MonitoringState {
             {
                 let running_state_manager = get_running_state_manager().await;
                 let running_state = running_state_manager.get_running_state();
-                let unlocked_running_state = running_state.read().await;
-                let file_reader_cache = unlocked_running_state.get_file_reader_cache();
+                let file_reader_cache = running_state.get_file_reader_cache();
 
                 monitoring_state.file_cache_current_items.store(file_reader_cache.get_current_item_count() as usize, Ordering::Relaxed);
 

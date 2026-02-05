@@ -216,6 +216,7 @@ fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> 
     save_server_settings(connection, "gzip_compressible_content_types", &core.gzip.compressible_content_types.join(","))?;
 
     // Save server settings
+    save_server_settings(connection, "max_connection_duration_seconds", &core.server_settings.max_connection_duration_seconds.to_string())?;
     save_server_settings(connection, "max_body_size", &core.server_settings.max_body_size.to_string())?;
     save_server_settings(connection, "blocked_file_patterns", &core.server_settings.blocked_file_patterns.join(","))?;
 

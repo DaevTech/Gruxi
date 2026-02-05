@@ -4,11 +4,11 @@ use crate::configuration::site::Site;
 use crate::core::admin_user::{LoginRequest, authenticate_user, create_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
-use crate::core::running_state_manager::get_running_state_manager;
 use crate::core::triggers::get_trigger_handler;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
 use crate::file::normalized_path::NormalizedPath;
+use crate::http::http_server::ConnectionContext;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::{debug, error, info, trace};
@@ -19,12 +19,13 @@ use tokio::fs::read_to_string;
 
 use std::fs::{metadata, read_dir};
 use std::path::Path;
+use std::sync::Arc;
 use tokio_util::bytes;
 
 const JSON_HEADER_VALUE: HeaderValue = HeaderValue::from_static("application/json");
 const TEXT_PLAIN_HEADER_VALUE: HeaderValue = HeaderValue::from_static("text/plain");
 
-pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site) -> Result<GruxiResponse, GruxiError> {
+pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
     let path = gruxi_request.get_path();
     let method = gruxi_request.get_http_method();
 
@@ -65,7 +66,7 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site) ->
     } else if path_cleaned == "/operation-mode" && method == "POST" {
         admin_post_operation_mode_endpoint(gruxi_request, site).await
     } else if path_cleaned == "/cache/file/clear" && method == "POST" {
-        admin_post_file_cache_clear_endpoint(gruxi_request, site).await
+        admin_post_file_cache_clear_endpoint(gruxi_request, site, connection_context).await
     } else {
         // If we reach here, no matching admin API route was found
         trace!("No matching admin API route found for path: {}", path_cleaned);
@@ -807,7 +808,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
 }
 
 // Admin file cache clear POST endpoint - clears the file reader cache
-pub async fn admin_post_file_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
+pub async fn admin_post_file_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site, connection_context: &Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
     match require_authentication(&gruxi_request).await {
         Ok(Some(_session)) => {
@@ -823,11 +824,8 @@ pub async fn admin_post_file_cache_clear_endpoint(gruxi_request: &mut GruxiReque
         }
     }
 
-    // Get running state
-    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
-
     // Clear the file reader cache
-    running_state.get_file_reader_cache().clear_cache();
+    connection_context.running_state.get_file_reader_cache().clear_cache();
 
     let return_message = "File reader cache cleared".to_string();
     let success_response = serde_json::json!({

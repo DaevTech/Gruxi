@@ -98,7 +98,7 @@ impl AccessLogBuffer {
             }
         };
 
-        let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+        let running_state = get_running_state_manager().await.get_running_state();
 
         loop {
             select! {

@@ -2,13 +2,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerSettings {
-    pub max_body_size: u64, // in bytes
+    pub max_connection_duration_seconds: u64, // in seconds
+    pub max_body_size: u64,                   // in bytes
     pub blocked_file_patterns: Vec<String>,
 }
 
 impl ServerSettings {
     pub fn new() -> Self {
         ServerSettings {
+            max_connection_duration_seconds: 90,
             max_body_size: 10 * 1024 * 1024, // 10 MB
             blocked_file_patterns: vec![
                 ".tmp".to_string(),

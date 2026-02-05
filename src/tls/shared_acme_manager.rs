@@ -93,7 +93,7 @@ async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<d
     // Collect all ACME-enabled domains across all TLS bindings
     let mut all_domains: BTreeSet<String> = BTreeSet::new();
 
-    let running_state = get_running_state_manager().await.get_running_state_unlocked().await;
+    let running_state = get_running_state_manager().await.get_running_state();
     let binding_site_cache = running_state.get_binding_site_cache();
 
     for binding in &config.bindings {
