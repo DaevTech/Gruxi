@@ -1,6 +1,5 @@
 pub mod handle_request;
 pub mod http_util;
-pub mod http_tls;
 pub mod http_server;
 pub mod request_handlers;
 pub mod request_response;
