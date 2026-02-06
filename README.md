@@ -50,7 +50,10 @@ Gruxi is usable today, but it has not yet reached a 1.0 release. Core functional
 * PHP support via PHP‑FPM
 * Managed PHP‑CGI on Windows, with easy version switching
 
-
+### Logging
+* System logging
+* Access logging
+* Log rotation built‑in, no external tools required
 
 ## Who Gruxi is for — and who it is not
 

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 0.2.0 - 6 Feb 2026
+
+### Added
+
+- Add task id in the syslog, so we can correlate logs for the same connection more easily
+- Add log rotation directly in Gruxi, so we dont have to rely on external tools for that, and it works on all platforms without extra configuration
+- Add a cache clear button in the admin portal, so you can clear the file cache without restarting the server and with ease
+- Add a max connection duration settings, so we can automatically close connections that have been open for too long, which can help with certain types of attacks and also just free up resources in case of hanging connections
+
+### Changed
+
+- Improve the monitoring to run every second and track only non-admin requests, so we can have more accurate and real-time monitoring of the server status without the noise of admin portal requests
+
 # Version 0.1.8 - 2 Feb 2026
 
 ### Added
@@ -37,7 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Introduce painless TLS with LetsEncrypt using the TLS-ALPN-01 challenge
 - Add server software spoof field for PHP
-
 
 # Previous releases < 0.1.7 can be found on GitHub
 
