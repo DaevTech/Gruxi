@@ -189,11 +189,8 @@ impl GruxiRequest {
         self.parts.uri.query().unwrap_or("")
     }
 
-    pub fn get_path_and_query(&self) -> String {
-        match self.parts.uri.query() {
-            Some(query) => format!("{}?{}", self.parts.uri.path(), query),
-            None => self.parts.uri.path().to_string(),
-        }
+    pub fn get_path_and_query(&self) -> &str {
+        self.parts.uri.path_and_query().map(|pq| pq.as_str()).unwrap_or(self.parts.uri.path())
     }
 
     pub fn get_body_size(&self) -> u64 {

@@ -498,6 +498,8 @@ fn load_request_handlers(connection: &Connection) -> Result<Vec<RequestHandler>,
 
         // Parse comma-separated strings
         let url_match = parse_comma_separated_list(&url_match_str.unwrap_or_default(), false);
+        // Make sure to lowercase the url match patterns, since matching should be case insensitive
+        let url_match = url_match.into_iter().map(|s| s.to_lowercase()).collect();
 
         request_handlers.push(RequestHandler {
             id: handler_id,

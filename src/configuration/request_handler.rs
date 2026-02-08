@@ -2,9 +2,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    configuration::site::Site, error::{gruxi_error::GruxiError, gruxi_error_enums::*}, http::{
-        http_server::ConnectionContext, request_handlers::processor_trait::ProcessorTrait, request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse}
-    }, trace
+    configuration::site::Site,
+    error::{gruxi_error::GruxiError, gruxi_error_enums::*},
+    http::{
+        http_server::ConnectionContext,
+        request_handlers::processor_trait::ProcessorTrait,
+        request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
+    },
+    trace,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -32,20 +37,12 @@ impl RequestHandler {
     }
 
     // Check URL match, can be * or /path or /path* or .html or .php*
-    // Input can be path only or path+query, we only care about path here, but if there is query, it will still work
     pub fn matches_url(&self, url_path: &str) -> bool {
-        // If the url_path contains '?', we only care about the part before it
-        let url_path = match url_path.find('?') {
-            Some(pos) => &url_path[..pos],
-            None => url_path,
-        };
-
         // We always compare on lowercase
         let url_path = url_path.to_lowercase();
 
+        // Patterns will be lowercase when loaded as configuration
         for pattern in &self.url_match {
-            let pattern = pattern.to_lowercase();
-
             if pattern == "*" {
                 return true;
             } else if pattern.starts_with('*') {
@@ -60,11 +57,11 @@ impl RequestHandler {
                     return true;
                 }
             } else if pattern.starts_with('/') {
-                if url_path == pattern {
+                if url_path == *pattern {
                     return true;
                 }
             } else {
-                if url_path == pattern {
+                if url_path == *pattern {
                     return true;
                 }
             }
@@ -81,6 +78,9 @@ impl RequestHandler {
 
         // Clean url match patterns: trim, remove empty, ensure proper prefix
         self.url_match = self.url_match.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+
+        // Lowercase url match patterns, since matching should be case insensitive
+        self.url_match = self.url_match.iter().map(|s| s.to_lowercase()).collect();
     }
 
     pub fn validate(&self) -> Result<(), Vec<String>> {
@@ -105,6 +105,13 @@ impl RequestHandler {
                     errors.push(format!("URL match pattern {} cannot be empty", pattern_idx + 1));
                 } else if !(pattern.starts_with('/') || pattern.starts_with('*') || pattern.ends_with('*')) {
                     errors.push(format!("URL match pattern '{}' should start with '/' or '*' or end with '*'", pattern));
+                }
+            }
+
+            // Check patterns for lowercase, since matching is case insensitive
+            for pattern in self.url_match.iter() {
+                if *pattern != pattern.to_lowercase() {
+                    errors.push(format!("URL match pattern '{}' should be lowercase since matching is case insensitive", pattern));
                 }
             }
         }
@@ -199,7 +206,7 @@ impl RequestHandler {
                     }
 
                     // Other errors we have logged, but will continue to the next handler
-                    _ => response_result
+                    _ => response_result,
                 }
             }
         };
