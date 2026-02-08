@@ -43,7 +43,7 @@ impl RequestHandler {
 
         // Patterns will be lowercase when loaded as configuration
         for pattern in &self.url_match {
-            if pattern == "*" {
+            if pattern.eq_ignore_ascii_case("*") {
                 return true;
             } else if pattern.starts_with('*') {
                 let suffix = &pattern[1..]; // Remove the '*' character
@@ -57,11 +57,11 @@ impl RequestHandler {
                     return true;
                 }
             } else if pattern.starts_with('/') {
-                if url_path == *pattern {
+                if url_path.eq_ignore_ascii_case(pattern) {
                     return true;
                 }
             } else {
-                if url_path == *pattern {
+                if url_path.eq_ignore_ascii_case(pattern)  {
                     return true;
                 }
             }
