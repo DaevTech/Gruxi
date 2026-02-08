@@ -130,28 +130,9 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     };
 
     // Consider gzipping content if not already gzipped
-    let content_length = response.get_body_size();
-    let content_type_header_option = response.get_header("Content-Type");
-    let content_type_header = if let Some(cth) = content_type_header_option {
-        cth.to_str().unwrap_or("").to_string()
-    } else {
-        "".to_string()
-    };
-
-    let content_encoding_header_option = response.get_header("Content-Encoding");
-    let content_encoding_header = if let Some(ceh) = content_encoding_header_option {
-        ceh.to_str().unwrap_or("").to_string()
-    } else {
-        "".to_string()
-    };
-
-    let file_reader_cache = running_state.get_file_reader_cache();
-
-    // Only gzip if not already gzipped and if we should compress based on config and sizes
-    if content_encoding_header.to_lowercase() != "gzip" && file_reader_cache.should_compress(&content_type_header, content_length) {
-        let accepted_encodings = gruxi_request.get_accepted_encodings();
+    if running_state.get_file_reader_cache().gzip_enabled {
         let compression = Compression::new();
-        compression.compress_response(&mut response, accepted_encodings, content_encoding_header).await;
+        compression.maybe_compress_response(&gruxi_request, &mut response, running_state.get_file_reader_cache()).await;
     }
 
     // Vector for additional headers to set

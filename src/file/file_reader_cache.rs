@@ -7,18 +7,19 @@ use crate::{
     compression::compression::Compression,
     configuration::cached_configuration::get_cached_configuration,
     core::triggers::get_trigger_handler,
-    debug, error, trace, warn,
+    debug, error,
     file::file_reader_structs::*,
     http::{
         caching::{
             etag::etag_strong_from_metadata,
-            range::{RangeParseResult, format_content_range, build_multipart_body, build_multipart_body_from_parts, parse_range_header, should_process_range, get_range_header},
+            range::{RangeParseResult, build_multipart_body, build_multipart_body_from_parts, format_content_range, get_range_header, parse_range_header, should_process_range},
         },
         request_response::{
             body_error::{BodyError, box_err},
             gruxi_request::GruxiRequest,
         },
     },
+    trace, warn,
 };
 
 use dashmap::DashMap;
@@ -255,7 +256,7 @@ impl FileReaderCache {
     // Check if a MIME type should be compressed
     pub fn should_compress(&self, mime_type: &str, content_length: u64) -> bool {
         if self.gzip_enabled {
-            let check_should_compress = content_length > 1000 && content_length < 10485760 && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
+            let check_should_compress = content_length > 1024 && content_length < 10 * 1024 * 1024 && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
             trace!(
                 "Should compress check for MIME type {} and content_length: {} - Result: {}",
                 mime_type, content_length, check_should_compress
@@ -378,9 +379,7 @@ impl FileEntry {
     /// Contains the body, encoding, optional content-range header, and status code
     pub async fn get_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
         // Check if this is a range request - clone the header value to avoid borrow issues
-        let range_header_value = get_range_header(gruxi_request)
-            .and_then(|h| h.to_str().ok())
-            .map(|s| s.to_string());
+        let range_header_value = get_range_header(gruxi_request).and_then(|h| h.to_str().ok()).map(|s| s.to_string());
 
         if let Some(range_str) = range_header_value {
             // Check If-Range precondition before processing range
@@ -408,10 +407,7 @@ impl FileEntry {
             }
             RangeParseResult::Ranges(ranges) => {
                 // Resolve all ranges against content length
-                let resolved_ranges: Vec<(u64, u64)> = ranges
-                    .iter()
-                    .filter_map(|r| r.resolve(content_length))
-                    .collect();
+                let resolved_ranges: Vec<(u64, u64)> = ranges.iter().filter_map(|r| r.resolve(content_length)).collect();
 
                 if resolved_ranges.is_empty() {
                     // No satisfiable ranges - this will be handled by the caller with 416 response
@@ -493,12 +489,7 @@ impl FileEntry {
 
         // If content is cached, use zero-copy slicing for multipart
         if let Some(raw_content) = &self.content.raw {
-            let (body_bytes, content_type) = build_multipart_body(
-                resolved_ranges,
-                raw_content.as_ref(),
-                &self.meta.mime_type,
-                content_length,
-            );
+            let (body_bytes, content_type) = build_multipart_body(resolved_ranges, raw_content.as_ref(), &self.meta.mime_type, content_length);
             trace!("Serving {} ranges as multipart from cache", resolved_ranges.len());
             let full_body = Full::new(body_bytes).map_err(|never| -> BodyError { match never {} });
             return (BoxBody::new(full_body), format!("MULTIPART:{}", content_type));
@@ -535,12 +526,7 @@ impl FileEntry {
         }
 
         // Build multipart body from the collected ranges
-        let (body_bytes, content_type) = build_multipart_body_from_parts(
-            resolved_ranges,
-            &range_contents,
-            &self.meta.mime_type,
-            content_length,
-        );
+        let (body_bytes, content_type) = build_multipart_body_from_parts(resolved_ranges, &range_contents, &self.meta.mime_type, content_length);
 
         trace!("Serving {} ranges as multipart from disk", resolved_ranges.len());
         let full_body = Full::new(body_bytes).map_err(|never| -> BodyError { match never {} });

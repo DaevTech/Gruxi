@@ -1,12 +1,21 @@
 use std::time::Duration;
 
+use crate::error;
 use crate::{
-    configuration::site::Site, error::{gruxi_error::GruxiError, gruxi_error_enums::{GruxiErrorKind, ProxyProcessorError}}, http::{
-        http_server::ConnectionContext, request_handlers::{
+    configuration::site::Site,
+    error::{
+        gruxi_error::GruxiError,
+        gruxi_error_enums::{GruxiErrorKind, ProxyProcessorError},
+    },
+    http::{
+        http_server::ConnectionContext,
+        request_handlers::{
             processor_trait::ProcessorTrait,
             processors::load_balancer::{load_balancer::LoadBalancerImpl, round_robin::RoundRobin},
-        }, request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse}
-    }, trace
+        },
+        request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
+    },
+    trace,
 };
 use http::HeaderValue;
 use hyper::Response;
@@ -14,7 +23,6 @@ use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use uuid::Uuid;
-use crate::error;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProxyProcessorRewrite {
@@ -242,10 +250,7 @@ impl ProcessorTrait for ProxyProcessor {
         let upstream_uri: hyper::Uri = match rewritten_url.parse() {
             Ok(uri) => uri,
             Err(e) => {
-                error!(
-                    "Could not parse a rewritten URL '{}' for proxy processor with id: {} with error: {:?}",
-                    rewritten_url, self.id, e
-                );
+                error!("Could not parse a rewritten URL '{}' for proxy processor with id: {} with error: {:?}", rewritten_url, self.id, e);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
             }
         };

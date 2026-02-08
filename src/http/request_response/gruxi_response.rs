@@ -7,7 +7,6 @@ use http_body_util::Full;
 use http_body_util::combinators::BoxBody;
 use hyper::Response;
 use hyper::body::{Body, Bytes};
-use std::collections::HashMap;
 
 // Wrapper around hyper responses
 #[derive(Debug)]
@@ -22,7 +21,6 @@ pub struct GruxiResponse {
 #[derive(Debug)]
 struct GruxiResponseData {
     body_size_hint: u64,
-    other: Option<HashMap<String, String>>,
 }
 
 impl GruxiResponse {
@@ -44,7 +42,7 @@ impl GruxiResponse {
         let (parts, _body) = response.into_parts();
         let body = GruxiBody::Buffered(Bytes::new());
 
-        let data = GruxiResponseData { body_size_hint, other: None };
+        let data = GruxiResponseData { body_size_hint };
 
         Self { parts, body, data }
     }
@@ -75,7 +73,7 @@ impl GruxiResponse {
         let body = GruxiBody::Streaming(body);
 
         // Request data
-        let data = GruxiResponseData { body_size_hint, other: None };
+        let data = GruxiResponseData { body_size_hint};
 
         Self { parts, body, data }
     }
@@ -94,7 +92,7 @@ impl GruxiResponse {
         let body = GruxiBody::Buffered(bytes);
 
         // Request data
-        let data = GruxiResponseData { body_size_hint, other: None };
+        let data = GruxiResponseData { body_size_hint};
 
         Self { parts, body, data }
     }
@@ -111,7 +109,7 @@ impl GruxiResponse {
         self.parts.headers.get(header_name)
     }
 
-    pub fn get_body_size(&mut self) -> u64 {
+    pub fn get_body_size(&self) -> u64 {
         self.data.body_size_hint
     }
 
