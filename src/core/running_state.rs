@@ -8,13 +8,10 @@ use crate::{
         site_match::binding_site_cache::BindingSiteCache,
     }, logging::log_rotation::LogRotation,
 };
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
 use crate::logging::access_logging::AccessLogBuffer;
 
 pub struct RunningState {
-    pub access_log_buffer: Arc<RwLock<AccessLogBuffer>>,
+    pub access_log_buffer: AccessLogBuffer,
     pub file_reader_cache: FileReaderCache,
     pub request_handler_manager: RequestHandlerManager,
     pub processor_manager: ProcessorManager,
@@ -59,7 +56,7 @@ impl RunningState {
         let log_rotation = LogRotation::new().await;
 
         RunningState {
-            access_log_buffer: Arc::new(RwLock::new(access_log_buffer)),
+            access_log_buffer: access_log_buffer,
             file_reader_cache: file_reader_cache,
             request_handler_manager: request_handler_manager,
             processor_manager: processor_manager,
@@ -70,8 +67,8 @@ impl RunningState {
         }
     }
 
-    pub fn get_access_log_buffer(&self) -> Arc<RwLock<AccessLogBuffer>> {
-        self.access_log_buffer.clone()
+    pub fn get_access_log_buffer(&self) -> &AccessLogBuffer {
+        &self.access_log_buffer
     }
 
     pub fn get_file_reader_cache(&self) -> &FileReaderCache {

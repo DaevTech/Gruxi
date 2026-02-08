@@ -22,9 +22,9 @@ impl Logging {
             log_rotation_enabled: true, // We enable log rotation by default, as i like that
             rotate_by_size: true,
             max_log_file_size_mb: 100, // 100 MB default
-            rotate_by_time: true,
+            rotate_by_time: false,
             log_time_rotation_type: "daily".to_string(),
-            delete_old_logs: true,
+            delete_old_logs: false,
             max_log_age_days: 30,
         }
     }

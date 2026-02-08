@@ -1167,7 +1167,7 @@ onMounted(() => {
                                                             </div>
 
                                                             <div class="form-field">
-                                                                <label>Server software FastCGI spoof <span class="help-icon" data-tooltip="Gruxi will send 'Gruxi' as the server software string in the FastCGI headers to PHP interpreter. Some systems (looking at you WordPress...) may check this string for compatibility or security reasons. For WordPress, setting this to 'nginx' can help avoid issues with permalinks.">?</span></label>
+                                                                <label>Server software FastCGI spoof <span class="help-icon" data-tooltip="Gruxi will send 'Gruxi' as the server software string in the FastCGI headers to PHP interpreter. Some systems may check this string for compatibility or security reasons. For WordPress, setting this to 'nginx' can help avoid issues with permalinks.">?</span></label>
                                                                 <input v-model="processor.php_config.server_software_spoof" type="text" placeholder="For WordPress, set this to: nginx" />
                                                             </div>
                                                         </div>

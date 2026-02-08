@@ -1,3 +1,4 @@
+use crate::admin_portal::login_rate_limiter::get_login_rate_limiter;
 use crate::configuration::configuration::Configuration;
 use crate::configuration::save_configuration::save_configuration;
 use crate::configuration::site::Site;
@@ -20,6 +21,7 @@ use tokio::fs::read_to_string;
 use std::fs::{metadata, read_dir};
 use std::path::Path;
 use std::sync::Arc;
+
 use tokio_util::bytes;
 
 const JSON_HEADER_VALUE: HeaderValue = HeaderValue::from_static("application/json");
@@ -100,10 +102,26 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
 
     debug!("Login attempt for username: {}", login_request.username);
 
+    // Check rate limiting before attempting authentication
+    let rate_limiter = get_login_rate_limiter();
+    if let Some(retry_after) = rate_limiter.is_rate_limited(&login_request.username).await {
+        info!("Rate-limited login attempt for username: {}", login_request.username);
+        let error_response = serde_json::json!({
+            "error": "Too many failed login attempts. Please try again later."
+        });
+        let mut response = GruxiResponse::new_with_bytes(429, bytes::Bytes::from(error_response.to_string()));
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+        response
+            .headers_mut()
+            .insert("Retry-After", HeaderValue::from_str(&retry_after.to_string()).unwrap_or(HeaderValue::from_static("60")));
+        return Ok(response);
+    }
+
     // Authenticate user
     let user = match authenticate_user(&login_request.username, &login_request.password) {
         Ok(Some(user)) => user,
         Ok(None) => {
+            rate_limiter.record_failed_attempt(&login_request.username).await;
             info!("Failed login attempt for username: {}", login_request.username);
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid username or password"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
@@ -116,6 +134,9 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
             return Ok(response);
         }
     };
+
+    // Clear rate limiting on successful login
+    rate_limiter.clear_attempts(&login_request.username).await;
 
     // Create session
     let session = match create_session(&user) {

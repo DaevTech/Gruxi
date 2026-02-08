@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use crate::admin_portal::http_admin_api::*;
 use crate::compression::compression::Compression;
-use crate::core::monitoring::get_monitoring_state;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
 use crate::http::http_server::ConnectionContext;
@@ -10,9 +7,10 @@ use crate::http::http_util::*;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::http::site_match::site_matcher::find_best_match_site;
+use crate::logging::access_log_entry::AccessLogEntry;
 use crate::{debug, trace};
-use chrono::Local;
 use hyper::header::HeaderValue;
+use std::sync::Arc;
 
 // Entry point to handle request, as we need to do post-processing, like access logging etc
 pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context: Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
@@ -87,10 +85,6 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
 
     // Check if the request is for the admin portal - handle these first
     let admin_response = if connection_context.binding.is_admin {
-        // If it was an admin binding, we decrement the requests served, as we dont want to count data from the admin portal in our normal stats
-        let monitoring_state = get_monitoring_state().await;
-        monitoring_state.decrement_requests_served();
-
         match handle_api_routes(&mut gruxi_request, site, &connection_context).await {
             Ok(response) => Some(response),
             Err(e) => {
@@ -192,23 +186,14 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
 
     // Handle access logging
     if site.access_log_enabled {
-        // Get current date and time in CLF format, which is like 10/Oct/2000:13:55:36 -0700
-        let now = Local::now();
-        let clf_date = now.format("%d/%b/%Y:%H:%M:%S %z").to_string();
-        let log_entry = format!(
-            "{} - - [{}] \"{} {} {}\" {} {}",
-            gruxi_request.get_remote_ip(),
-            clf_date,
-            gruxi_request.get_http_method(),
-            gruxi_request.get_path_and_query(),
-            gruxi_request.get_http_version(),
-            response.get_status(),
-            response.get_body_size()
-        );
-
-        let access_log_buffer_rwlock = running_state.get_access_log_buffer();
-        let access_log_buffer = access_log_buffer_rwlock.read().await;
-        access_log_buffer.add_log(site.id.to_string(), log_entry);
+        let access_log_entry = AccessLogEntry {
+            gruxi_request,
+            site_id: site.id.clone(),
+            log_time: chrono::Utc::now(),
+            status_code: response.get_status(),
+            response_size: response.get_body_size(),
+        };
+        running_state.get_access_log_buffer().add_log(access_log_entry);
     }
 
     Ok(response)

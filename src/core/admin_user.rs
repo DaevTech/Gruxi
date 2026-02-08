@@ -60,12 +60,13 @@ pub fn create_default_admin_user(connection: &Connection) -> Result<(), String> 
 
         let created_at = Utc::now().to_rfc3339();
 
-        connection
-            .execute(format!(
-                "INSERT INTO users (username, password_hash, created_at, is_active) VALUES ('{}', '{}', '{}', 1)",
-                "admin", password_hash, created_at
-            ))
-            .map_err(|e| format!("Failed to create default admin user: {}", e))?;
+        let mut insert_stmt = connection
+            .prepare("INSERT INTO users (username, password_hash, created_at, is_active) VALUES (?, ?, ?, 1)")
+            .map_err(|e| format!("Failed to prepare admin user insert statement: {}", e))?;
+        insert_stmt.bind((1, "admin")).map_err(|e| format!("Failed to bind username: {}", e))?;
+        insert_stmt.bind((2, password_hash.as_str())).map_err(|e| format!("Failed to bind password_hash: {}", e))?;
+        insert_stmt.bind((3, created_at.as_str())).map_err(|e| format!("Failed to bind created_at: {}", e))?;
+        insert_stmt.next().map_err(|e| format!("Failed to create default admin user: {}", e))?;
 
         info!("Default admin user created with username 'admin' and password '{}'", random_password);
         need_to_clear_sessions = true;
@@ -80,9 +81,11 @@ pub fn create_default_admin_user(connection: &Connection) -> Result<(), String> 
 }
 
 fn invalidate_sessions_for_user(connection: &Connection, username: &str) -> Result<(), String> {
-    connection
-        .execute(format!("DELETE FROM sessions WHERE username = '{}'", username))
-        .map_err(|e| format!("Failed to invalidate sessions for user {}: {}", username, e))?;
+    let mut stmt = connection
+        .prepare("DELETE FROM sessions WHERE username = ?")
+        .map_err(|e| format!("Failed to prepare session invalidation statement for user {}: {}", username, e))?;
+    stmt.bind((1, username)).map_err(|e| format!("Failed to bind username: {}", e))?;
+    stmt.next().map_err(|e| format!("Failed to invalidate sessions for user {}: {}", username, e))?;
     Ok(())
 }
 
@@ -97,9 +100,11 @@ pub fn reset_admin_password() -> Result<String, String> {
         }
     };
 
-    connection
-        .execute(format!("UPDATE users SET password_hash = '{}' WHERE username = 'admin'", password_hash))
-        .map_err(|e| format!("Failed to reset admin password: {}", e))?;
+    let mut stmt = connection
+        .prepare("UPDATE users SET password_hash = ? WHERE username = 'admin'")
+        .map_err(|e| format!("Failed to prepare password reset statement: {}", e))?;
+    stmt.bind((1, password_hash.as_str())).map_err(|e| format!("Failed to bind password_hash: {}", e))?;
+    stmt.next().map_err(|e| format!("Failed to reset admin password: {}", e))?;
 
     // Invalidate all existing sessions for admin user
     invalidate_sessions_for_user(&connection, "admin")?;
@@ -154,9 +159,13 @@ pub fn authenticate_user(username: &str, password: &str) -> Result<Option<User>,
 
                 // Update last login time
                 let now = Utc::now().to_rfc3339();
-                connection
-                    .execute(format!("UPDATE users SET last_login = '{}' WHERE id = {}", now, id))
-                    .map_err(|e| format!("Failed to update last login: {}", e))?;
+                drop(statement);
+                let mut update_stmt = connection
+                    .prepare("UPDATE users SET last_login = ? WHERE id = ?")
+                    .map_err(|e| format!("Failed to prepare last login update statement: {}", e))?;
+                update_stmt.bind((1, now.as_str())).map_err(|e| format!("Failed to bind last_login: {}", e))?;
+                update_stmt.bind((2, id)).map_err(|e| format!("Failed to bind user id: {}", e))?;
+                update_stmt.next().map_err(|e| format!("Failed to update last login: {}", e))?;
 
                 Ok(Some(User {
                     id,
@@ -191,17 +200,19 @@ pub fn create_session(user: &User) -> Result<Session, String> {
         created_at,
     };
 
-    connection
-        .execute(format!(
-            "INSERT INTO sessions (id, user_id, username, token, expires_at, created_at) VALUES ('{}', {}, '{}', '{}', '{}', '{}')",
-            session.id,
-            session.user_id,
-            session.username,
-            session.token,
-            session.expires_at.to_rfc3339(),
-            session.created_at.to_rfc3339()
-        ))
-        .map_err(|e| format!("Failed to create session: {}", e))?;
+    let expires_at_str = session.expires_at.to_rfc3339();
+    let created_at_str = session.created_at.to_rfc3339();
+
+    let mut stmt = connection
+        .prepare("INSERT INTO sessions (id, user_id, username, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .map_err(|e| format!("Failed to prepare session insert statement: {}", e))?;
+    stmt.bind((1, session.id.as_str())).map_err(|e| format!("Failed to bind session id: {}", e))?;
+    stmt.bind((2, session.user_id)).map_err(|e| format!("Failed to bind user_id: {}", e))?;
+    stmt.bind((3, session.username.as_str())).map_err(|e| format!("Failed to bind username: {}", e))?;
+    stmt.bind((4, session.token.as_str())).map_err(|e| format!("Failed to bind token: {}", e))?;
+    stmt.bind((5, expires_at_str.as_str())).map_err(|e| format!("Failed to bind expires_at: {}", e))?;
+    stmt.bind((6, created_at_str.as_str())).map_err(|e| format!("Failed to bind created_at: {}", e))?;
+    stmt.next().map_err(|e| format!("Failed to create session: {}", e))?;
 
     info!("Created session for user: {}", user.username);
     Ok(session)
@@ -273,9 +284,12 @@ pub fn invalidate_session(token: &str) -> Result<bool, String> {
     };
 
     if session_exists {
-        connection
-            .execute(format!("DELETE FROM sessions WHERE token = '{}'", token))
-            .map_err(|e| format!("Failed to delete session: {}", e))?;
+        drop(statement);
+        let mut delete_stmt = connection
+            .prepare("DELETE FROM sessions WHERE token = ?")
+            .map_err(|e| format!("Failed to prepare session delete statement: {}", e))?;
+        delete_stmt.bind((1, token)).map_err(|e| format!("Failed to bind token for delete: {}", e))?;
+        delete_stmt.next().map_err(|e| format!("Failed to delete session: {}", e))?;
         Ok(true)
     } else {
         Ok(false)
@@ -284,9 +298,11 @@ pub fn invalidate_session(token: &str) -> Result<bool, String> {
 
 fn cleanup_expired_sessions(connection: &Connection) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
-    connection
-        .execute(format!("DELETE FROM sessions WHERE expires_at < '{}'", now))
-        .map_err(|e| format!("Failed to cleanup expired sessions: {}", e))?;
+    let mut stmt = connection
+        .prepare("DELETE FROM sessions WHERE expires_at < ?")
+        .map_err(|e| format!("Failed to prepare expired sessions cleanup statement: {}", e))?;
+    stmt.bind((1, now.as_str())).map_err(|e| format!("Failed to bind expiration time: {}", e))?;
+    stmt.next().map_err(|e| format!("Failed to cleanup expired sessions: {}", e))?;
 
     Ok(())
 }
@@ -314,9 +330,11 @@ pub fn cleanup_all_expired_sessions() -> Result<u64, String> {
     drop(statement);
 
     // Delete expired sessions
-    connection
-        .execute(format!("DELETE FROM sessions WHERE expires_at < '{}'", now))
-        .map_err(|e| format!("Failed to cleanup expired sessions: {}", e))?;
+    let mut delete_stmt = connection
+        .prepare("DELETE FROM sessions WHERE expires_at < ?")
+        .map_err(|e| format!("Failed to prepare expired sessions delete statement: {}", e))?;
+    delete_stmt.bind((1, now.as_str())).map_err(|e| format!("Failed to bind expiration time: {}", e))?;
+    delete_stmt.next().map_err(|e| format!("Failed to cleanup expired sessions: {}", e))?;
 
     if expired_count > 0 {
         info!("Cleaned up {} expired sessions", expired_count);

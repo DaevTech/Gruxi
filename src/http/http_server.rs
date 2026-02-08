@@ -271,8 +271,10 @@ where
 
         let conn_context = local_connection_context.clone();
         async move {
-            // Count the request in monitoring
-            get_monitoring_state().await.increment_requests_served();
+            // Count the request in monitoring, except for admin bindings
+            if !conn_context.binding.is_admin {
+                get_monitoring_state().await.increment_requests_served();
+            }
 
             let mut gruxi_request = GruxiRequest::from_hyper(req);
             gruxi_request.set_remote_ip(remote_ip.clone());
