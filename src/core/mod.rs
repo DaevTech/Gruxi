@@ -8,3 +8,4 @@ pub mod os_signal;
 pub mod running_state;
 pub mod running_state_manager;
 pub mod triggers;
+pub mod service;

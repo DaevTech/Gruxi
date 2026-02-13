@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::OnceLock};
 
 use clap::{Arg, ArgMatches, Command};
 
-use crate::{configuration::import_export::{export_configuration_to_file, import_configuration_from_file}, core::admin_user::reset_admin_password};
+use crate::{configuration::import_export::{export_configuration_to_file, import_configuration_from_file}, core::{admin_user::reset_admin_password, service::{install_service, remove_service}}};
 
 pub fn load_command_line_args() -> ArgMatches {
     // Parse command line args
@@ -54,6 +54,25 @@ pub fn load_command_line_args() -> ArgMatches {
             Arg::new("benchmark")
                 .long("bench")
                 .help("--bench flag for benchmarking purposes")
+                .hide(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("install-service")
+                .long("install-service")
+                .help("Install Gruxi as a system service and exit")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("remove-service")
+                .long("remove-service")
+                .help("Remove Gruxi system service and exit")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("service")
+                .long("service")
+                .help("Run as a system service (used internally by the service subsystem)")
                 .hide(true)
                 .action(clap::ArgAction::SetTrue),
         )
@@ -137,6 +156,17 @@ pub fn check_for_command_line_actions() {
             Ok(_) => println!("Configuration file is valid: {}", path.display()),
             Err(e) => eprintln!("Error validating configuration file: {}", e),
         }
+        std::process::exit(0);
+    }
+
+
+    // Handle service install/remove before anything else
+    if cli.get_flag("install-service") {
+        install_service();
+        std::process::exit(0);
+    }
+    if cli.get_flag("remove-service") {
+        remove_service();
         std::process::exit(0);
     }
 }

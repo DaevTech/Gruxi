@@ -56,6 +56,21 @@ impl Triggers {
         self.renew_trigger(name).await;
     }
 
+    // Synchronous version of run_trigger for shutdown only, as it does not require renewing
+    pub fn run_shutdown_trigger_synchronous(&self) {
+        if let Some(token_lock) = self.triggers.get("shutdown") {
+            match token_lock.try_read() {
+                Ok(token) => {
+                    trace!("Running trigger (sync): shutdown");
+                    token.cancel();
+                }
+                Err(_) => {
+                    warn!("Failed to acquire read lock for trigger (sync): shutdown");
+                }
+            }
+        }
+    }
+
     async fn renew_trigger(&self, name: &str) {
         if let Some(token_lock) = self.triggers.get(name) {
             let mut token = token_lock.write().await;

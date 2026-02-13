@@ -43,6 +43,7 @@ psl = "2.1.180"
 rustls-acme = { version = "0.15.1", features = ["tokio", "aws-lc-rs", "webpki-roots"] }
 httpdate = "1.0.3"
 arc-swap = "1.8.1"
+qsu = { version = "0.7", features = ["rt", "tokio", "installer", "clap", "systemd"] }
 
 [lib]
 name = "gruxi"
