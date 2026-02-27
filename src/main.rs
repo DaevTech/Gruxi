@@ -1,4 +1,4 @@
-use gruxi::core::command_line_args::{check_for_command_line_actions, get_command_line_args};
+use gruxi::{core::command_line_args::{check_for_command_line_actions, get_command_line_args}};
 use qsu::rt::RunCtx;
 
 

@@ -1,5 +1,6 @@
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::core::triggers::get_trigger_handler;
+use crate::file::app_paths::get_app_paths;
 use crate::{debug, trace};
 use rustls_acme::caches::DirCache;
 use rustls_acme::{AcmeConfig, ResolvesServerCertAcme};
@@ -135,7 +136,8 @@ async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<d
         return Ok(None);
     }
 
-    let cache_dir = "certs/cache".to_string();
+    let app_paths = get_app_paths();
+    let cache_dir = app_paths.certificates_dir.join("cache").display().to_string();
 
     // Ensure cache directory exists.
     fs::create_dir_all(&cache_dir)

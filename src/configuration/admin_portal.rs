@@ -1,6 +1,8 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
-use crate::configuration::site::Site;
+use crate::{configuration::site::Site, file::app_paths::get_app_paths};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AdminPortal {
@@ -42,6 +44,8 @@ impl AdminPortal {
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
+        let app_paths = get_app_paths();
+
         // Validate domain_name if tls_automatic_enabled
         if self.tls_automatic_enabled {
             if !self.domain_name.is_empty() {
@@ -57,13 +61,29 @@ impl AdminPortal {
         // Check TLS paths actually exist if provided (only relevant when not using automatic TLS)
         if !self.tls_automatic_enabled {
             if let Some(cert_path) = &self.tls_certificate_path {
-                if !cert_path.is_empty() && !std::path::Path::new(cert_path).exists() {
-                    errors.push(format!("TLS certificate path does not exist: {}", cert_path));
+                if !cert_path.is_empty() {
+                    let mut cert_path = PathBuf::from(cert_path);
+                    if !cert_path.is_absolute() {
+                        cert_path = app_paths.certificates_dir.join(cert_path);
+                    }
+                    if !cert_path.exists() {
+                        errors.push(format!("TLS certificate path does not exist: {}", cert_path.display()));
+                    } else if !cert_path.is_file() {
+                        errors.push(format!("TLS certificate path is not a file: {}", cert_path.display()));
+                    }
                 }
             }
             if let Some(key_path) = &self.tls_key_path {
-                if !key_path.is_empty() && !std::path::Path::new(key_path).exists() {
-                    errors.push(format!("TLS key path does not exist: {}", key_path));
+                if !key_path.is_empty() {
+                    let mut key_path = PathBuf::from(key_path);
+                    if !key_path.is_absolute() {
+                        key_path = app_paths.certificates_dir.join(key_path);
+                    }
+                    if !key_path.exists() {
+                        errors.push(format!("TLS key path does not exist: {}", key_path.display()));
+                    } else if !key_path.is_file() {
+                        errors.push(format!("TLS key path is not a file: {}", key_path.display()));
+                    }
                 }
             }
         }

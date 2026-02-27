@@ -1,22 +1,26 @@
 use std::path::Path;
 
-pub fn check_file_requirements() -> Result<(), String> {
-    check_dir_path_exist_readable_writable(Path::new("./db"))?;
-    check_dir_path_exist_readable_writable(Path::new("./logs"))?;
-    check_dir_path_exist_readable_writable(Path::new("./certs"))?;
+use crate::file::app_paths::get_app_paths;
 
-    // Additionaliy check that if the ./db/gruxi.db file exist, it is readable and writable
-    let db_file_path = Path::new("./db/gruxi.db");
+pub fn check_file_requirements() -> Result<(), String> {
+    let app_paths = get_app_paths();
+
+    check_dir_path_exist_readable_writable(&app_paths.db_dir)?;
+    check_dir_path_exist_readable_writable(&app_paths.logs_dir)?;
+    check_dir_path_exist_readable_writable(&app_paths.certificates_dir)?;
+
+    // Additionally check that if the gruxi.db file exist, it is readable and writable
+    let db_file_path = app_paths.db_dir.join("gruxi.db");
     if db_file_path.exists() {
         if !db_file_path.is_file() {
-            return Err(format!("./db/gruxi.db exists but is not a file"));
+            return Err(format!("{} exists but is not a file", db_file_path.display()));
         }
 
         // Check that we can read the file
         match std::fs::File::open(&db_file_path) {
             Ok(_) => {}
             Err(e) => {
-                return Err(format!("Failed to read ./db/gruxi.db file: {}", e));
+                return Err(format!("Failed to read {} file: {}", db_file_path.display(), e));
             }
         }
 
@@ -24,7 +28,7 @@ pub fn check_file_requirements() -> Result<(), String> {
         match std::fs::OpenOptions::new().append(true).open(&db_file_path) {
             Ok(_) => {}
             Err(e) => {
-                return Err(format!("Failed to write to ./db/gruxi.db file: {}", e));
+                return Err(format!("Failed to write to {} file: {}", db_file_path.display(), e));
             }
         }
     }

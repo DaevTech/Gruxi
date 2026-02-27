@@ -10,6 +10,7 @@ use crate::configuration::site::Site;
 use crate::configuration::tls_settings::TlsSettings;
 use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship};
 use crate::external_connections::managed_system::php_cgi::PhpCgi;
+use crate::file::app_paths::get_app_paths;
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
 use crate::http::request_handlers::processors::php_processor::PHPProcessor;
 use crate::http::request_handlers::processors::proxy_processor::ProxyProcessor;
@@ -34,7 +35,7 @@ pub struct Configuration {
     pub php_cgi_handlers: Vec<PhpCgi>,
 }
 
-pub static CURRENT_CONFIGURATION_VERSION: i32 = 5;
+pub static CURRENT_CONFIGURATION_VERSION: i32 = 6;
 
 impl Configuration {
     pub fn new() -> Self {
@@ -224,7 +225,8 @@ impl Configuration {
         };
 
         // Static file processor for first site
-        let request1_static_processor = StaticFileProcessor::new("./www-default".to_string(), vec!["index.html".to_string()]);
+        let app_paths = get_app_paths();
+        let request1_static_processor = StaticFileProcessor::new(app_paths.default_www_dir.to_string_lossy().to_string(), vec!["index.html".to_string()]);
 
         // Request handler for first site
         let request_handler1 = RequestHandler {

@@ -12,6 +12,10 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    appPaths: {
+        type: Object,
+        default: null,
+    },
 });
 
 // Define emits
@@ -962,7 +966,7 @@ onMounted(() => {
                                 <div class="form-field">
                                     <label>
                                         Access Log File
-                                        <span class="help-icon" data-tooltip="Path to the access log file. If relative to gruxi base directory, use it like this './logs/mylog.log'. You can also have a full absolute path like '/var/logs/mylog.log' or 'C:/logs/mylog.log'.">?</span>
+                                        <span class="help-icon" data-tooltip="Access log file name. If you want it in the default log location, use it like this 'mysite-access.log'. You can also have a full absolute path like '/var/logs/mylog.log' or 'C:/logs/mylog.log'.">?</span>
                                     </label>
                                     <input v-model="site.access_log_file" type="text" placeholder="Path to log file" />
                                 </div>
@@ -1306,15 +1310,17 @@ onMounted(() => {
                                         <div class="tls-paths-row">
                                             <div class="form-field">
                                                 <label
-                                                    >Certificate Path
-                                                    <span class="help-icon" data-tooltip="Path to the TLS certificate file. You can specify an absolute path or a path relative to the Gruxi server base directory. Such as './certs/mycert.pem' or '/etc/ssl/certs/mycert.pem'.">?</span>
+                                                    >Certificate File Path
+                                                    <span class="help-icon" data-tooltip="TLS certificate file. You can specify an absolute path or a filename inside the certificates directory Such as 'mycert.pem' or '/etc/ssl/certs/mycert.pem'.">?</span>
+                                                    <span class="admin-badge">BASE PATH: {{ appPaths.certificates_dir }}</span>
                                                 </label>
                                                 <input v-model="site.tls_cert_path" type="text" placeholder="Path to certificate file" :disabled="site.tls_automatic_enabled" />
                                             </div>
                                             <div class="form-field">
                                                 <label
-                                                    >Private Key Path
-                                                    <span class="help-icon" data-tooltip="Path to the TLS private key file. You can specify an absolute path or a path relative to the Gruxi server base directory. Such as './certs/mykey.pem' or '/etc/ssl/private/mykey.pem'.">?</span>
+                                                    >Private Key File Path
+                                                    <span class="help-icon" data-tooltip="TLS private key file. You can specify an absolute path or a filename inside the certificates directory Such as 'mykey.pem' or '/etc/ssl/private/mykey.pem'.">?</span>
+                                                    <span class="admin-badge">BASE PATH: {{ appPaths.certificates_dir }}</span>
                                                 </label>
                                                 <input v-model="site.tls_key_path" type="text" placeholder="Path to private key file" :disabled="site.tls_automatic_enabled" />
                                             </div>
@@ -1470,12 +1476,13 @@ onMounted(() => {
                                         <span class="help-icon" data-tooltip="When enabled, Gruxi will automatically obtain and renew TLS certificates from Let's Encrypt for the admin portal. Requires a valid public domain name and proper DNS configuration. Also requires the TLS settings (email) to be configured in the TLS Settings section below.">?</span>
                                     </label>
                                 </div>
+
                                 <div v-if="!config.core.admin_portal.tls_automatic_enabled" class="form-field">
-                                    <label>TLS Certificate Path <span class="help-icon" data-tooltip="Full or relative path (relative to the Gruxi server) to the TLS certificate file for the admin portal. Only used when automatic TLS is disabled.">?</span></label>
+                                    <label>TLS Certificate Path <span class="help-icon" data-tooltip="Absolute or relative path (relative to base path for certificates) to the TLS certificate file for the admin portal. Only used when automatic TLS is disabled.">?</span> <span class="admin-badge">Base Path: {{ appPaths.certificates_dir }}</span></label>
                                     <input v-model="config.core.admin_portal.tls_certificate_path" type="text" />
                                 </div>
                                 <div v-if="!config.core.admin_portal.tls_automatic_enabled" class="form-field">
-                                    <label>TLS Key Path <span class="help-icon" data-tooltip="Full or relative path (relative to the Gruxi server) to the TLS key file for the admin portal. Only used when automatic TLS is disabled.">?</span></label>
+                                    <label>TLS Key Path <span class="help-icon" data-tooltip="Absolute or relative path (relative to base path for certificates) to the TLS key file for the admin portal. Only used when automatic TLS is disabled.">?</span> <span class="admin-badge">Base Path: {{ appPaths.certificates_dir }}</span></label>
                                     <input v-model="config.core.admin_portal.tls_key_path" type="text" />
                                 </div>
                             </div>
@@ -1566,8 +1573,9 @@ onMounted(() => {
                                 <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('tlsSettings') }">▶</span>
                                 <span class="hierarchy-indicator">🔒</span>
                                 <h4>TLS Settings</h4>
-                                <span class="item-summary" v-if="config.core.tls_settings?.account_email">({{ config.core.tls_settings.account_email }})</span>
-                                <span class="item-summary" v-if="config.core.tls_settings?.use_staging_server">(Using Certificate Staging Server)</span>
+                                <span class="admin-badge" v-if="config.core.tls_settings?.account_email">Account: {{ config.core.tls_settings.account_email }}</span>
+                                <span class="admin-badge" v-if="config.core.tls_settings?.use_staging_server">Staging</span>
+                                <span class="admin-badge" v-if="!config.core.tls_settings?.use_staging_server">Production</span>
                             </div>
                         </div>
 
@@ -1626,8 +1634,9 @@ onMounted(() => {
                                 <span v-if="config.core.logging?.log_rotation_enabled" class="default-badge">ROTATION ENABLED</span>
                                 <span v-else class="admin-badge">ROTATION DISABLED</span>
                                 <span class="admin-badge" v-if="config.core.logging?.rotate_by_time && config.core.logging?.log_time_rotation_type">(TIME INTERVAL: {{ config.core.logging.log_time_rotation_type }})</span>
-                                <span class="admin-badge" v-if="config.core.logging?.rotate_by_size && config.core.logging?.max_log_file_size_mb">(BY SIZE: {{ config.core.logging.max_log_file_size_mb }} MB)</span>
+                                <span class="admin-badge" v-if="config.core.logging?.rotate_by_size && config.core.logging?.max_log_file_size_mb">(ROTATE BY SIZE: {{ config.core.logging.max_log_file_size_mb }} MB)</span>
                                 <span class="admin-badge" v-if="config.core.logging?.delete_old_logs && config.core.logging?.max_log_age_days">(DELETE AFTER: {{ config.core.logging.max_log_age_days }} DAYS)</span>
+                                <span class="admin-badge" v-if="appPaths?.logs_dir">LOG PATH: {{ appPaths.logs_dir }}</span>
                             </div>
                         </div>
 

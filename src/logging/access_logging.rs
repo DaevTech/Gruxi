@@ -1,6 +1,8 @@
+use crate::file::app_paths::get_app_paths;
 use crate::file::normalized_path::NormalizedPath;
 use crate::{debug, error, trace};
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Instant;
 use tokio::select;
 
@@ -29,7 +31,8 @@ impl AccessLogBuffer {
         };
 
         // Have a fallback log path in case it could not be resolved
-        let default_log_path_result = NormalizedPath::new("./logs", "");
+        let app_paths = get_app_paths();
+        let default_log_path_result = NormalizedPath::new(&app_paths.logs_dir.display().to_string(), "");
         let mut default_log_available = true;
         let default_log_path = match default_log_path_result {
             Ok(norm) => norm.get_full_path(),
@@ -49,22 +52,31 @@ impl AccessLogBuffer {
             }
 
             let site_id = site.id.clone().to_string();
-            let log_file_path_result = NormalizedPath::new(&site.access_log_file, "");
+
+            // We try to figure out if the access file from configuration is relative or absolute path
+            let test_path = Path::new(&site.access_log_file);
+            let log_file_path_result = if test_path.is_absolute() {
+                // Absolute path
+                NormalizedPath::new(&site.access_log_file, "")
+            } else {
+                // Relative path, so we add the logs directory in front of it
+                NormalizedPath::new(&app_paths.logs_dir.display().to_string(), &site.access_log_file)
+            };
 
             let log_file_path = match log_file_path_result {
                 Ok(path) => path.get_full_path(),
                 Err(_) => {
-                    error!("Invalid access log path for site {}: {}. Using default {}.", site_id, site.access_log_file, default_log_path);
+                    error!("Invalid access log path for site '{}': {}. Using default '{}'.", site_id, site.access_log_file, default_log_path);
                     // We check if the default log path is available
                     if !default_log_available {
-                        panic!("Default log path './logs' and the specified access log path '{}' are both not available.", site.access_log_file);
+                        panic!("Default log path '{}' and the specified access log path '{}' are both not available.", default_log_path, site.access_log_file);
                     }
 
                     let default_log_path_plus_site = format!("{}/{}.log", default_log_path, site_id);
                     default_log_path_plus_site
                 }
             };
-            trace!("Initialized access log buffer for site {} at path {}", &site.id, &log_file_path);
+            trace!("Initialized access log buffer for site '{}' at path '{}'", &site.id, &log_file_path);
             access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(log_file_path, 100000));
         }
 
@@ -94,7 +106,7 @@ impl AccessLogBuffer {
                 buffered_log.add_log(log_entry.format_for_log());
                 logs_received += 1;
             } else {
-                error!("Received log entry for unknown site ID {}: {}", log_entry.site_id, log_entry.format_for_log());
+                error!("Received log entry for unknown site ID '{}': {}", log_entry.site_id, log_entry.format_for_log());
             }
         }
         if logs_received > 0 {

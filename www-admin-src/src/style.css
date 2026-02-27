@@ -109,11 +109,11 @@ button:disabled {
     font-size: 11px;
     font-weight: 700;
     cursor: help;
-    margin-left: 6px;
     transition: all 0.3s ease;
     box-shadow: 0 2px 4px rgba(102, 126, 234, 0.2);
     position: relative;
     text-transform: none;
+    margin: 0px 5px;
 }
 
 .help-icon:hover {

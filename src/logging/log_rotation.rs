@@ -1,4 +1,4 @@
-use crate::{configuration::logging::Logging, core::triggers::get_trigger_handler, error, info, trace, warn};
+use crate::{configuration::logging::Logging, core::triggers::get_trigger_handler, error, file::app_paths::get_app_paths, info, trace, warn};
 use std::path::PathBuf;
 use tokio::select;
 
@@ -13,8 +13,9 @@ impl LogRotation {
         let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration().await;
 
-        // Create pathbuf to ./logs
-        let log_dir = PathBuf::from("./logs");
+        // Create pathbuf to logs dir from environment
+        let app_paths = get_app_paths();
+        let log_dir = app_paths.logs_dir.clone();
 
         LogRotation {
             log_thread: tokio::spawn(Self::do_rotation_wait(config.core.logging.clone(), log_dir)),

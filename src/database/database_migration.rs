@@ -40,6 +40,13 @@ pub fn migrate_database() -> i32 {
         }
         schema_version = 5;
     }
+    if schema_version == 5 {
+        let result = migrate_db_helper(&connection, 5, 6, migrate_db_5_to_6);
+        if let Err(e) = result {
+            panic!("Database migration from version 5 to 6 failed: {}", e);
+        }
+        schema_version = 6;
+    }
 
     schema_version
 }
@@ -93,6 +100,19 @@ fn migrate_db_4_to_5(connection: &Connection) -> Result<(), sqlite::Error> {
     connection.execute("DELETE from server_settings WHERE setting_key = 'file_cache_cache_item_time_between_checks';")?;
     // Update "file_cache_cleanup_thread_interval" to be "file_cache_update_thread_interval" in "server_settings" table
     connection.execute("UPDATE server_settings SET setting_key = 'file_cache_update_thread_interval' WHERE setting_key = 'file_cache_cleanup_thread_interval';")?;
+
+    Ok(())
+}
+
+fn migrate_db_5_to_6(connection: &Connection) -> Result<(), sqlite::Error> {
+    // On sites, for the fields "tls_cert_path" and "tls_key_path", remove any "./certs" part or "certs/" part from the beginning of the path, since we now consider these paths to be relative to the certificates directory if they are not absolute paths. This is to simplify the paths and avoid confusion.
+    connection.execute("UPDATE sites SET tls_cert_path = TRIM(REPLACE(tls_cert_path, './certs', ''), '/') WHERE tls_cert_path LIKE './certs/%';")?;
+    connection.execute("UPDATE sites SET tls_cert_path = TRIM(REPLACE(tls_cert_path, 'certs', ''), '/') WHERE tls_cert_path LIKE 'certs/%';")?;
+    connection.execute("UPDATE sites SET tls_key_path = TRIM(REPLACE(tls_key_path, './certs', ''), '/') WHERE tls_key_path LIKE './certs/%';")?;
+    connection.execute("UPDATE sites SET tls_key_path = TRIM(REPLACE(tls_key_path, 'certs', ''), '/') WHERE tls_key_path LIKE 'certs/%';")?;
+    // Do the same for the "admin_portal_tls_certificate_path" and "admin_portal_tls_key_path" settings in the "server_settings" table
+    connection.execute("UPDATE server_settings SET setting_value = TRIM(REPLACE(setting_value, './certs', ''), '/') WHERE setting_key IN ('admin_portal_tls_certificate_path', 'admin_portal_tls_key_path') AND setting_value LIKE './certs/%';")?;
+    connection.execute("UPDATE server_settings SET setting_value = TRIM(REPLACE(setting_value, 'certs', ''), '/') WHERE setting_key IN ('admin_portal_tls_certificate_path', 'admin_portal_tls_key_path') AND setting_value LIKE 'certs/%';")?;
 
     Ok(())
 }

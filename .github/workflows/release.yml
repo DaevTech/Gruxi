@@ -113,9 +113,25 @@ jobs:
       shell: bash
       run: 7z a -tzip gruxi-${{ steps.version.outputs.version }}-${{ matrix.archive_suffix }}.zip gruxi
 
+    - name: Install cargo-deb (Linux only)
+      if: runner.os == 'Linux'
+      run: cargo install cargo-deb
+
+    - name: Build .deb package (Linux only)
+      if: runner.os == 'Linux'
+      run: cargo deb --no-build --target ${{ matrix.target }}
+
     - name: Upload Release Artifact
       uses: actions/upload-artifact@v4
       with:
         name: gruxi-${{ matrix.archive_suffix }}
         path: release/gruxi-*.${{ matrix.archive_ext }}
+        if-no-files-found: error
+
+    - name: Upload .deb Artifact (Linux only)
+      if: runner.os == 'Linux'
+      uses: actions/upload-artifact@v4
+      with:
+        name: gruxi-deb-${{ matrix.archive_suffix }}
+        path: target/${{ matrix.target }}/debian/*.deb
         if-no-files-found: error

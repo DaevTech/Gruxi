@@ -1,0 +1,74 @@
+[Unit]
+Description=Gruxi Web Server
+Documentation=https://gruxi.org
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Run as dedicated user
+User=gruxi
+Group=gruxi
+
+# Working directory
+WorkingDirectory=/var/lib/gruxi
+
+# Main binary
+ExecStart=/usr/bin/gruxi --service
+
+# Restart policy
+Restart=always
+RestartSec=2
+
+# File descriptor limit
+LimitNOFILE=1048576
+
+# Kill behavior
+KillSignal=SIGTERM
+TimeoutStopSec=10
+KillMode=mixed
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+# Allow writes only where needed
+ReadWritePaths=/var/lib/gruxi /var/log/gruxi
+
+# Call filtering
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+# Minor
+RestrictNamespaces=true
+ProtectClock=true
+
+# Networking
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Capability bounding
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Resource control
+TasksMax=8192
+LimitNPROC=65535
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gruxi
+
+[Install]
+WantedBy=multi-user.target

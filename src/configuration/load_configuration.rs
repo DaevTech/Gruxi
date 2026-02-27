@@ -2,6 +2,7 @@ use crate::configuration::binding_site_relation::BindingSiteRelationship;
 use crate::database::database_migration::migrate_database;
 use crate::database::database_schema::{CURRENT_DB_SCHEMA_VERSION, get_schema_version, set_schema_version};
 use crate::external_connections::managed_system::php_cgi;
+use crate::file::app_paths::get_app_paths;
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
 use crate::http::request_handlers::processors::php_processor::{self, PHPProcessor};
 use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorRewrite};
@@ -78,7 +79,8 @@ fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
     };
 
     // Static file processor for admin site
-    let mut request_static_processor = StaticFileProcessor::new("./www-admin".to_string(), vec!["index.html".to_string()]);
+    let app_paths = get_app_paths();
+    let mut request_static_processor = StaticFileProcessor::new(app_paths.default_admin_portal_dir.to_string_lossy().to_string(), vec!["index.html".to_string()]);
     request_static_processor.initialize();
 
     // Request handler for admin site
@@ -115,7 +117,7 @@ fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
         rewrite_functions: vec![],
         extra_headers: vec![],
         access_log_enabled: true,
-        access_log_file: "./logs/admin-portal-access.log".to_string(),
+        access_log_file: app_paths.logs_dir.to_string_lossy().to_string() + "/admin-portal-access.log",
     };
 
     // Admin site

@@ -1,11 +1,13 @@
 use crate::core::running_state_manager::get_running_state_manager;
-use crate::{debug, error, info, warn};
+use crate::file::app_paths::get_app_paths;
 use crate::tls::shared_acme_manager::{get_shared_acme_domains, get_shared_acme_manager_async};
+use crate::{debug, error, info, warn};
 use rand;
 use rustls::crypto::aws_lc_rs;
 use rustls_acme::ResolvesServerCertAcme;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::BufReader;
+use std::path::Path;
 use tls_listener::rustls as tokio_rustls;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -22,8 +24,9 @@ use crate::core::database_connection::get_database_connection;
 // Persist generated cert/key to disk and update configuration for a specific site
 pub async fn persist_generated_tls_for_site(site: &Site, cert_pem: &str, key_pem: &str, is_admin: bool) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
     // Ensure target directory exists with appropriate permissions
-    let dir = "certs";
-    fs::create_dir_all(dir).await.map_err(|e| format!("Failed to create certs directory '{}': {}", dir, e))?;
+    let app_paths = get_app_paths();
+    let dir = app_paths.certificates_dir.display().to_string();
+    fs::create_dir_all(&dir).await.map_err(|e| format!("Failed to create certs directory '{}': {}", dir, e))?;
 
     // Generate a random number for this cert
     let random_number: u32 = rand::random();
@@ -288,10 +291,7 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
         if certificates.is_none() {
             let generated_certs = generate_self_signed_certificate_and_persist(site, sans.clone(), binding.is_admin).await;
             if let Some(certs) = generated_certs {
-                info!(
-                    "Generated self-signed certificate, because of missing certificates, for site '{}' with hostnames: {:?}",
-                    site.id, sans
-                );
+                info!("Generated self-signed certificate, because of missing certificates, for site '{}' with hostnames: {:?}", site.id, sans);
                 certificates = Some(certs);
             }
         }
@@ -477,19 +477,35 @@ fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static
     }
 
     // Load from PEM files
-    let cert_file_result = std::fs::File::open(&site.tls_cert_path);
+    let path_test = Path::new(&site.tls_cert_path);
+    let cert_file_result = if path_test.is_absolute() {
+        std::fs::File::open(&site.tls_cert_path)
+    } else {
+        // If relative path, we assume it's relative to the certificates directory
+        let app_paths = get_app_paths();
+        let full_path = app_paths.certificates_dir.join(&site.tls_cert_path);
+        std::fs::File::open(full_path)
+    };
+
     let cert_file = match cert_file_result {
         Ok(f) => f,
         Err(e) => {
-            warn!("Site: '{}' Failed to open TLS cert file {}: {}", site.id, site.tls_cert_path, e);
+            warn!("Site: '{}' Failed to open TLS cert file '{}': {}", site.id, site.tls_cert_path, e);
             return None;
         }
     };
-    let key_file_result = std::fs::File::open(&site.tls_key_path);
+
+    let key_file_result = if Path::new(&site.tls_key_path).is_absolute() {
+        std::fs::File::open(&site.tls_key_path)
+    } else {
+        let app_paths = get_app_paths();
+        let full_path = app_paths.certificates_dir.join(&site.tls_key_path);
+        std::fs::File::open(full_path)
+    };
     let key_file = match key_file_result {
         Ok(f) => f,
         Err(e) => {
-            warn!("Site: '{}' Failed to open TLS key file {}: {}", site.id, site.tls_key_path, e);
+            warn!("Site: '{}' Failed to open TLS key file '{}': {}", site.id, site.tls_key_path, e);
             return None;
         }
     };
@@ -501,7 +517,7 @@ fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static
     let cert_chain = match certs_result {
         Ok(certs) => certs,
         Err(e) => {
-            warn!("Site: '{}' Failed to parse TLS cert file {}: {}", site.id, site.tls_cert_path, e);
+            warn!("Site: '{}' Failed to parse TLS cert file '{}': {}", site.id, site.tls_cert_path, e);
             return None;
         }
     };
@@ -510,11 +526,11 @@ fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static
     let priv_key = match key_result {
         Ok(Some(key)) => key,
         Ok(None) => {
-            warn!("Site: '{}' No private key found in {}", site.id, site.tls_key_path);
+            warn!("Site: '{}' No private key found in '{}'", site.id, site.tls_key_path);
             return None;
         }
         Err(e) => {
-            warn!("Site: '{}' Failed to parse TLS key file {}: {}", site.id, site.tls_key_path, e);
+            warn!("Site: '{}' Failed to parse TLS key file '{}': {}", site.id, site.tls_key_path, e);
             return None;
         }
     };

@@ -55,6 +55,7 @@ const stats = reactive({
 // Basic server info (from /basic endpoint)
 const basicData = reactive({
     gruxiVersion: '...',
+    appPaths: null,
 });
 
 // Handle logout
@@ -128,6 +129,7 @@ const updateBasicData = async () => {
         if (response.ok) {
             const data = await response.json();
             basicData.gruxiVersion = data.gruxi_version || '...';
+            basicData.appPaths = data.app_paths || null;
         } else if (response.status === 401) {
             emit('logout');
         } else {
@@ -455,7 +457,7 @@ onUnmounted(() => {
 
                 <!-- Configuration View -->
                 <div v-else-if="activeView === 'configuration'" class="view-content">
-                    <ConfigurationEditor :user="user" :inline="true" />
+                    <ConfigurationEditor :user="user" :inline="true" :appPaths="basicData.appPaths" />
                 </div>
 
                 <!-- Other Views -->

@@ -8,6 +8,7 @@ use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operati
 use crate::core::triggers::get_trigger_handler;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
+use crate::file::app_paths::get_app_paths;
 use crate::file::normalized_path::NormalizedPath;
 use crate::http::http_server::ConnectionContext;
 use crate::http::request_response::gruxi_request::GruxiRequest;
@@ -500,8 +501,11 @@ pub async fn admin_get_basic_data_endpoint(gruxi_request: &mut GruxiRequest, _ad
         }
     }
 
+    let app_paths = get_app_paths();
+
     let response_json = serde_json::json!({
         "gruxi_version": env!("CARGO_PKG_VERSION"),
+        "app_paths": app_paths
     });
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
@@ -553,7 +557,8 @@ pub async fn admin_logs_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: 
 
 // Helper function to list all .log files in the logs directory
 async fn list_log_files() -> Result<GruxiResponse, GruxiError> {
-    let logs_dir = Path::new("logs");
+    let app_paths = get_app_paths();
+    let logs_dir = Path::new(&app_paths.logs_dir);
 
     match read_dir(logs_dir) {
         Ok(entries) => {
@@ -606,6 +611,9 @@ async fn list_log_files() -> Result<GruxiResponse, GruxiError> {
 
 // Helper function to get log file content with 1MB limit
 async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiError> {
+    let app_paths = get_app_paths();
+    let logs_dir = Path::new(&app_paths.logs_dir);
+
     // Validate filename to prevent directory traversal
     if filename.contains("..") || filename.contains("/") || filename.contains("\\") {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid filename"}"#));
@@ -620,7 +628,7 @@ async fn get_log_file_content(filename: &str) -> Result<GruxiResponse, GruxiErro
         return Ok(response);
     }
 
-    let log_path = Path::new("logs").join(filename);
+    let log_path = logs_dir.join(filename);
 
     if !log_path.exists() {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::NOT_FOUND.as_u16(), bytes::Bytes::from(r#"{"error": "Log file not found"}"#));

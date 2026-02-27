@@ -5,6 +5,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 use tokio::select;
 
 use crate::core::operation_mode::OperationMode;
+use crate::file::app_paths::get_app_paths;
 use crate::logging::buffered_log::BufferedLog;
 
 // Atomic flags for fast lock-free log level checks
@@ -61,8 +62,12 @@ impl fmt::Display for LogType {
 
 impl SysLog {
     pub fn new(log_level: LogType, stdout_log_level: LogType) -> Self {
+
+        let app_paths = get_app_paths();
+        let log_file_path = app_paths.logs_dir.join("gruxi.log").display().to_string();
+
         let mut sys_log = SysLog {
-            buffered_log: Arc::new(BufferedLog::new("./logs/gruxi.log".to_string(), 1000000)),
+            buffered_log: Arc::new(BufferedLog::new(log_file_path, 1000000)),
             log_level: log_level.clone(),
             error_enabled: false,
             info_enabled: false,

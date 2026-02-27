@@ -2,7 +2,7 @@ use sqlite::State;
 
 use crate::core::database_connection::get_database_connection;
 
-pub const CURRENT_DB_SCHEMA_VERSION: i32 = 5;
+pub const CURRENT_DB_SCHEMA_VERSION: i32 = 6;
 
 pub struct DatabaseSchema {
     pub version: i32,

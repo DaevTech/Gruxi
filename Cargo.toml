@@ -1,5 +1,6 @@
 [package]
 name = "gruxi"
+description = "Gruxi is a lightweight, modern web server focused on predictable performance under real-world traffic. It’s designed to serve static assets efficiently and provide a clean foundation for handling dynamic routes, reverse proxying, and API workloads without unnecessary overhead. It includes solid PHP support for both production and local development. For more information visit https://gruxi.org"
 version = "0.3.0"
 edition = "2024"
 
@@ -52,6 +53,43 @@ path = "src/lib.rs"
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports", "cargo_bench_support"] }
 tokio-rustls = "0.26"
+
+# ------------------------------------------------------------------------------
+# DEBIAN (.deb) PACKAGING
+# ------------------------------------------------------------------------------
+[package.metadata.deb]
+name = "gruxi"
+maintainer = "Gruxi team <contact@gruxi.org>"
+copyright = "Copyright (c) 2026, Daev.tech / Brian Søgård Jensen (contact@gruxi.org). All rights reserved."
+priority = "optional"
+section = "net"
+license-file = ["LICENSE", "0"]
+maintainer-scripts = "assets/pkg/debian/"
+depends = "systemd"
+assets = [
+    [
+        "target/release/gruxi",
+        "/usr/bin/gruxi",
+        "755",
+    ],
+    [
+        "www-default/*",
+        "/usr/share/gruxi/www-default",
+        "644",
+    ],
+    [
+        "www-admin/*",
+        "/usr/share/gruxi/www-admin",
+        "644",
+    ],
+    [
+        "www-admin/assets/*",
+        "/usr/share/gruxi/www-admin/assets",
+        "644",
+    ]
+]
+systemd-units = { unit-name = "gruxi", unit-scripts = "assets/pkg/systemd", enable = true }
+
 
 #[[bench]]
 #name = "gruxi"
