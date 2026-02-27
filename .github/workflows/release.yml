@@ -3,7 +3,7 @@ name: release
 on: workflow_dispatch
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -135,3 +135,37 @@ jobs:
         name: gruxi-deb-${{ matrix.archive_suffix }}
         path: target/${{ matrix.target }}/debian/*.deb
         if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Extract version from Cargo.toml
+      id: version
+      run: |
+        VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Collect release files
+      run: |
+        mkdir -p release-files
+        find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' \) -exec cp {} release-files/ \;
+        echo "Release files:"
+        ls -lh release-files/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        name: Gruxi v${{ steps.version.outputs.version }}
+        draft: true
+        files: release-files/*
