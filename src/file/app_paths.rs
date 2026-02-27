@@ -27,7 +27,7 @@ impl AppPaths {
         {
             return Self::get_app_paths_win(run_as_service);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "windows"))]
         {
             return Self::get_app_paths_linux(run_as_service);
         }
@@ -58,7 +58,7 @@ impl AppPaths {
     }
 
     // On Linux, if we are running as a service, we detect the paths based on existence
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "windows"))]
     fn get_app_paths_linux(run_as_service: bool) -> Self {
         let current_working_dir = Self::get_current_working_dir();
         let binary_path = Self::get_executable_path();
