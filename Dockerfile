@@ -23,7 +23,7 @@ RUN cargo build --release && \
 ############################
 # Admin portal builder
 ############################
-FROM --platform=$BUILDPLATFORM node:25-alpine3.21 AS admin-portal
+FROM --platform=$BUILDPLATFORM node:latest AS admin-portal
 
 WORKDIR /app
 

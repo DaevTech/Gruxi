@@ -136,6 +136,7 @@ pub fn install_service() {
         .display_name("Gruxi Web Server")
         .description("High performance web server")
         .netservice()
+        .autostart()
         .workdir(workdir.to_string_lossy())
         .arg("--service")
         .register();

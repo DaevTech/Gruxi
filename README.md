@@ -2,7 +2,7 @@
 
 # Gruxi — High‑performance web server
 
-Gruxi is an opinionated web server focused on **high performance**, **operational simplicity**, and **predictable behavior**. It is designed to serve as a reliable foundation for modern web applications without exposing users to excessive configuration complexity.
+Gruxi is a web server focused on **high performance**, **operational simplicity**, and **predictable behavior**. It is designed to serve as a reliable foundation for modern web applications without exposing users to excessive configuration complexity.
 
 The project is built on practical experience from decades of operating and maintaining production web servers. Gruxi deliberately avoids configuration knobs that rarely provide real‑world value, favoring sensible defaults and a clear administration model instead.
 
@@ -55,7 +55,7 @@ Gruxi is usable today, but it has not yet reached a 1.0 release. Core functional
 * Access logging
 * Log rotation built‑in, no external tools required
 
-## Who Gruxi is for — and who it is not
+## Who Gruxi is created for
 
 Gruxi is designed for developers, agencies, and hosting environments that value **clarity, performance, and minimal operational overhead**.
 
@@ -63,13 +63,11 @@ Many existing web servers offer extensive configuration surfaces with hundreds o
 
 Gruxi intentionally removes low‑value configuration choices. For example, internal buffer sizes and similar micro‑optimizations are not exposed. If a setting is unlikely to materially improve outcomes for the majority of users, it is fixed and carefully chosen.
 
-
 ## Documentation
 
 Comprehensive documentation is available at:
 
 [https://gruxi.org](https://gruxi.org)
-
 
 
 ## Admin portal
@@ -116,20 +114,17 @@ The following section documents **performance characteristics** of Gruxi under c
 
 <img src="https://github.com/DaevTech/Gruxi/blob/main/assets/performance-test-260126-static-files.png" alt="Gruxi Performance Test" width="600">
 
-> **Note:** These results reflect local lab conditions with no external network traffic. Performance may differ under real-world scenarios with TLS enabled, external clients, and varied content types.
-
-
+> **Note:** These results reflect local lab conditions with no external network traffic. Performance will differ under real-world scenarios with TLS enabled, external clients, and varied content types. Much higher performance is possible with optimized configurations and production hardware. These numbers are intended to demonstrate Gruxi's potential and should not be taken as guarantees for all environments.
 
 ## Getting started
 
 There are several ways to run Gruxi, depending on your environment and deployment preferences.
 
-- Using prebuilt binaries (recommended for maximum performance)
+- Using prebuilt binaries or install packages (.deb, .rpm, .msi etc.) (recommended for maximum performance)
 - Running with Docker
 - Docker Compose
 
 Detailed instructions are available in the [documentation for Grxui.](https://gruxi.org/docs/introduction/getting-started/).
-
 
 
 ## Screenshots

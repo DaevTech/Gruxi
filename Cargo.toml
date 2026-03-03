@@ -1,6 +1,6 @@
 [package]
 name = "gruxi"
-description = "Gruxi is a lightweight, modern web server focused on predictable performance under real-world traffic. It’s designed to serve static assets efficiently and provide a clean foundation for handling dynamic routes, reverse proxying, and API workloads without unnecessary overhead. It includes solid PHP support for both production and local development. For more information visit https://gruxi.org"
+description = "High‑performance web server"
 version = "0.3.0"
 edition = "2024"
 
