@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 0.3.0 - 3 Mar 2026
+
+### Added
+
+- Added .deb packaging for easy installation on Debian-based systems
+- Added Windows service support, so you can run Gruxi as a service on Windows without extra tools
+    - Added `--install-service` and `--remove-service` command line options for managing the Windows service
+- Added support for running Gruxi as a systemd service on Linux, with a provided systemd unit file for easy setup
+- Add rate limiting on the admin portal, to prevent brute-force attacks on the admin password
+
+### Changed
+
+- Improve the access logging, to not be computed on the hot path, but instead be computed in a separate thread after the response is sent, so it doesnt affect performance as much, especially under extreme load
+
+### Fixed
+
+- Fixed a issue where response length would show as 0 in the access logs for certain types of requests, which made it harder to analyze traffic patterns and detect potential issues
+
 # Version 0.2.0 - 6 Feb 2026
 
 ### Added
