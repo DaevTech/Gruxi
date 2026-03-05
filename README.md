@@ -44,6 +44,7 @@ Gruxi is usable today, but it has not yet reached a 1.0 release. Core functional
 
 * Built‑in web interface for administration, configuration, and monitoring
 * Live metrics and server status
+* Windows Service support and Linux systemd integration
 
 ### Application support
 

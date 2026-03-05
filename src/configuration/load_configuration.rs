@@ -1,19 +1,18 @@
+use crate::admin_portal::init::add_admin_portal_to_configuration;
 use crate::configuration::binding_site_relation::BindingSiteRelationship;
 use crate::database::database_migration::migrate_database;
 use crate::database::database_schema::{CURRENT_DB_SCHEMA_VERSION, get_schema_version, set_schema_version};
 use crate::external_connections::managed_system::php_cgi;
-use crate::file::app_paths::get_app_paths;
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
 use crate::http::request_handlers::processors::php_processor::{self, PHPProcessor};
 use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorRewrite};
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
-use crate::{info, trace};
 use crate::{
     configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::HeaderKV, site::Site},
     core::database_connection::get_database_connection,
 };
+use crate::{info, trace};
 use sqlite::Connection;
-use uuid::Uuid;
 
 // Load the configuration from the database or create a default one if it doesn't exist
 pub fn init() -> Configuration {
@@ -22,10 +21,7 @@ pub fn init() -> Configuration {
 
     // Determine if we need to migrate
     if schema_version > 0 && schema_version < CURRENT_DB_SCHEMA_VERSION {
-        info!(
-            "Database schema version {} is older than current version {}, migrating...",
-            schema_version, CURRENT_DB_SCHEMA_VERSION
-        );
+        info!("Database schema version {} is older than current version {}, migrating...", schema_version, CURRENT_DB_SCHEMA_VERSION);
         migrate_database();
     }
 
@@ -67,69 +63,6 @@ pub fn init() -> Configuration {
     }
 
     configuration
-}
-
-fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
-    let admin_binding = Binding {
-        id: Uuid::new_v4().to_string(),
-        ip: "0.0.0.0".to_string(),
-        port: 8000,
-        is_admin: true,
-        is_tls: true,
-    };
-
-    // Static file processor for admin site
-    let app_paths = get_app_paths();
-    let mut request_static_processor = StaticFileProcessor::new(app_paths.default_admin_portal_dir.to_string_lossy().to_string(), vec!["index.html".to_string()]);
-    request_static_processor.initialize();
-
-    // Request handler for admin site
-    let request_handler = RequestHandler {
-        id: Uuid::new_v4().to_string(),
-        is_enabled: true,
-        name: "Static File Handler".to_string(),
-        processor_type: "static".to_string(),
-        processor_id: request_static_processor.id.clone(),
-        url_match: vec!["*".to_string()],
-    };
-
-    // Get the admin portal configuration
-    // If automatic TLS is enabled and a domain is configured, use that domain
-    // Otherwise use wildcard to match any hostname
-    let admin_hostnames = if configuration.core.admin_portal.tls_automatic_enabled {
-        let domain = &configuration.core.admin_portal.domain_name;
-        if !domain.is_empty() { vec![domain.clone()] } else { vec!["*".to_string()] }
-    } else {
-        vec!["*".to_string()]
-    };
-
-    let admin_site = Site {
-        id: Uuid::new_v4().to_string(),
-        hostnames: admin_hostnames,
-        is_default: true,
-        is_enabled: true,
-        tls_automatic_enabled: configuration.core.admin_portal.tls_automatic_enabled,
-        tls_cert_path: configuration.core.admin_portal.get_tls_certificate_path(),
-        tls_cert_content: "".to_string(),
-        tls_key_path: configuration.core.admin_portal.get_tls_key_path(),
-        tls_key_content: "".to_string(),
-        request_handlers: vec![request_handler.id.clone()],
-        rewrite_functions: vec![],
-        extra_headers: vec![],
-        access_log_enabled: true,
-        access_log_file: app_paths.logs_dir.to_string_lossy().to_string() + "/admin-portal-access.log",
-    };
-
-    // Admin site
-    configuration.binding_sites.push(BindingSiteRelationship {
-        binding_id: admin_binding.id.clone(),
-        site_id: admin_site.id.clone(),
-    });
-    configuration.sites.push(admin_site);
-    configuration.request_handlers.push(request_handler);
-    configuration.static_file_processors.push(request_static_processor);
-
-    configuration.bindings.push(admin_binding);
 }
 
 // Load the configuration from the normalized database tables - Returns the data from db as fresh

@@ -1,5 +1,8 @@
+use crate::{
+    error, info,
+    logging::syslog::{LogType, format_log_entry},
+};
 use chrono::{DateTime, Duration, Utc};
-use crate::{error, info};
 use random_password_generator::generate_password;
 use serde::{Deserialize, Serialize};
 use sqlite::Connection;
@@ -68,7 +71,11 @@ pub fn create_default_admin_user(connection: &Connection) -> Result<(), String> 
         insert_stmt.bind((3, created_at.as_str())).map_err(|e| format!("Failed to bind created_at: {}", e))?;
         insert_stmt.next().map_err(|e| format!("Failed to create default admin user: {}", e))?;
 
-        info!("Default admin user created with username 'admin' and password '{}'", random_password);
+        // We print the error message to stdout, but do not log it to the syslog since the password is sensitive information
+        let admin_log_password_message = format!("Default admin user created with username 'admin' and password '{}'", random_password);
+        let formatted_message = format_log_entry(&LogType::Info, admin_log_password_message);
+        println!("{}", formatted_message);
+
         need_to_clear_sessions = true;
     }
 
@@ -119,7 +126,7 @@ fn get_random_hashed_password() -> Result<(String, String), ()> {
         Ok(hash) => hash,
         Err(_) => {
             error!("Failed to hash password");
-            return Err(())
+            return Err(());
         }
     };
     Ok((random_password, password_hash))
@@ -203,6 +210,10 @@ pub fn create_session(user: &User) -> Result<Session, String> {
     let expires_at_str = session.expires_at.to_rfc3339();
     let created_at_str = session.created_at.to_rfc3339();
 
+    // Make sure to clean existing sessions for this user before creating a new one
+    invalidate_sessions_for_user(&connection, &user.username)?;
+
+    // Insert new session into database
     let mut stmt = connection
         .prepare("INSERT INTO sessions (id, user_id, username, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
         .map_err(|e| format!("Failed to prepare session insert statement: {}", e))?;

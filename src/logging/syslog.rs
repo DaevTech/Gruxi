@@ -62,7 +62,6 @@ impl fmt::Display for LogType {
 
 impl SysLog {
     pub fn new(log_level: LogType, stdout_log_level: LogType) -> Self {
-
         let app_paths = get_app_paths();
         let log_file_path = app_paths.logs_dir.join("gruxi.log").display().to_string();
 
@@ -116,16 +115,7 @@ impl SysLog {
     }
 
     pub fn add_log(&self, log_type: LogType, log: String) {
-        let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-
-        let log_entry = match tokio::task::try_id() {
-            Some(task_id) => {
-                format!("{} - [{}][ID:{}] {}", &ts, &log_type, task_id, &log)
-            }
-            None => {
-                format!("{} - [{}] {}", &ts, &log_type, &log)
-            }
-        };
+        let log_entry = format_log_entry(&log_type, log);
 
         // Print to stdout if enabled for this level
         match log_type {
@@ -276,6 +266,20 @@ fn init_log() -> SysLog {
     let sys_log = SysLog::new(log_level, LogType::Info);
     sys_log.start_flushing_task();
     sys_log
+}
+
+#[inline]
+pub fn format_log_entry(log_type: &LogType, log: String) -> String {
+    let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+
+    match tokio::task::try_id() {
+        Some(task_id) => {
+            format!("{} - [{}][ID:{}] {}", &ts, &log_type, task_id, &log)
+        }
+        None => {
+            format!("{} - [{}] {}", &ts, &log_type, &log)
+        }
+    }
 }
 
 // Check functions that return whether a log level is enabled
