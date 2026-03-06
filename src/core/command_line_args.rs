@@ -61,12 +61,14 @@ pub fn load_command_line_args() -> ArgMatches {
             Arg::new("install-service")
                 .long("install-service")
                 .help("Install Gruxi as a system service and exit")
+                .hide(cfg!(not(target_os = "windows"))) // This option is only relevant on Windows, so hide it on other platforms
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
             Arg::new("remove-service")
                 .long("remove-service")
                 .help("Remove Gruxi system service and exit")
+                .hide(cfg!(not(target_os = "windows"))) // This option is only relevant on Windows, so hide it on other platforms
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
