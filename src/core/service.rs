@@ -74,7 +74,6 @@ impl TokioServiceHandler for GruxiService {
     }
 
     async fn shutdown(&mut self, _tctx: TermCtx) -> Result<(), Self::AppErr> {
-        info!("Service shutdown requested");
         Ok(())
     }
 }
@@ -109,7 +108,6 @@ fn start_gruxi_basics() {
 pub fn svcevt_handler(evt: SvcEvt) {
     match evt {
         SvcEvt::Shutdown(_demise) => {
-            info!("Received shutdown event from service manager");
             let triggers = get_trigger_handler();
             triggers.run_shutdown_trigger_synchronous();
 

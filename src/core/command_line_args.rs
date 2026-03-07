@@ -2,7 +2,13 @@ use std::{path::PathBuf, sync::OnceLock};
 
 use clap::{Arg, ArgMatches, Command};
 
-use crate::{configuration::import_export::{export_configuration_to_file, import_configuration_from_file}, core::{admin_user::reset_admin_password, service::{install_service, remove_service}}};
+use crate::{
+    configuration::import_export::{export_configuration_to_file, import_configuration_from_file},
+    core::{
+        admin_user::reset_admin_password,
+        service::{install_service, remove_service},
+    }, file::app_paths::get_app_paths,
+};
 
 pub fn load_command_line_args() -> ArgMatches {
     // Parse command line args
@@ -21,6 +27,13 @@ pub fn load_command_line_args() -> ArgMatches {
                 .long("reset-admin-password")
                 .help("Reset the admin password and exit")
                 .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("config")
+                .short('c')
+                .long("config")
+                .help("Import specified configuration file and start the server")
+                .value_parser(clap::value_parser!(PathBuf)),
         )
         .arg(
             Arg::new("export-configuration")
@@ -124,13 +137,38 @@ pub fn check_for_command_line_actions() {
             }
         }
     }
+
+    // Check if we should run the server with a specific configuration file - This is done by importing first and let server start like normal
+    // This can happen in two ways. One is using the --config (-c) flag and the other is that we check for a specific filename to exist, which can be used for example in containerized environments where we can mount a configuration file to a specific path and have the server automatically pick it up on startup without needing to specify the --config flag
+    let config_path_from_cli = cli.get_one::<PathBuf>("config").cloned();
+    let app_paths = get_app_paths();
+    let default_config_path = app_paths.working_dir.join("gruxi_config.json");
+
+    if let Some(path) = config_path_from_cli {
+        let import_configuration_result = import_configuration_from_file(&path);
+        match import_configuration_result {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Error importing configuration: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else if default_config_path.exists() {
+        let import_configuration_result = import_configuration_from_file(&default_config_path);
+        match import_configuration_result {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Error importing configuration: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Check for export configuration
     if let Some(path) = cli.get_one::<PathBuf>("export-configuration") {
         let export_configuration_result = export_configuration_to_file(path);
         match export_configuration_result {
-            Ok(_) => {
-                println!("Configuration successfully exported to {}", path.display());
-            }
+            Ok(_) => {}
             Err(e) => {
                 eprintln!("Error exporting configuration: {}", e);
             }
@@ -142,9 +180,7 @@ pub fn check_for_command_line_actions() {
     if let Some(path) = cli.get_one::<PathBuf>("import-configuration") {
         let import_configuration_result = import_configuration_from_file(path);
         match import_configuration_result {
-            Ok(_) => {
-                println!("Configuration successfully imported from {}", path.display());
-            }
+            Ok(_) => {}
             Err(e) => {
                 eprintln!("Error importing configuration: {}", e);
             }
@@ -160,7 +196,6 @@ pub fn check_for_command_line_actions() {
         }
         std::process::exit(0);
     }
-
 
     // Handle service install/remove before anything else
     if cli.get_flag("install-service") {
