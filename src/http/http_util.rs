@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use http::HeaderValue;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::Bytes;
 
-use crate::http::request_response::gruxi_response::GruxiResponse;
+use crate::{file::file_reader_structs::FileEntry, http::request_response::gruxi_response::GruxiResponse, trace};
 
 pub fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
     Full::new(chunk.into()).map_err(|never| match never {}).boxed()
@@ -69,4 +71,24 @@ pub fn get_list_of_hop_by_hop_headers(is_websocket_upgrade: bool) -> Vec<String>
     }
 
     hop_by_hop_headers
+}
+
+// If it exists, we check for that trailing slash logic where if the path ends with a slash, it should be a directory, and if it does not end with a slash, it should not be a directory.
+// If it matches a file with slash, we do 404. If we have a directory without slash, we do 301 redirect to the same path with slash.
+pub fn trailing_slash_check(file_data: Arc<FileEntry>, path: &str) -> Result<(), GruxiResponse> {
+    if file_data.meta.exists {
+        if path.ends_with("/") && !file_data.meta.is_directory {
+            trace!("Request path ends with slash but is not a directory: {}, so we return 404", path);
+            return Err(GruxiResponse::new_empty_with_status(404));
+        } else if !path.ends_with("/") && file_data.meta.is_directory {
+            trace!("Request path does not end with slash but is a directory: {}, so we return 301 redirect to path with slash", path);
+            let mut response = GruxiResponse::new_empty_with_status(301);
+            let location = format!("{}/", path);
+            if let Ok(header_value) = HeaderValue::from_str(&location) {
+                response.headers_mut().insert(hyper::header::LOCATION, header_value);
+            }
+            return Err(response);
+        }
+    }
+    Ok(())
 }

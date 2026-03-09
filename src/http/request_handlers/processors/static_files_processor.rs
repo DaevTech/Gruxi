@@ -1,4 +1,5 @@
 use crate::error;
+use crate::http::http_util::trailing_slash_check;
 use crate::{
     configuration::site::Site,
     error::{
@@ -151,6 +152,16 @@ impl ProcessorTrait for StaticFileProcessor {
             }
         };
         let mut file_path = file_data.meta.file_path.clone();
+
+        // Make sure the trailing slash logic is correct
+        let trailing_slash_result = trailing_slash_check(file_data.clone(), &path);
+        match trailing_slash_result {
+            Ok(_) => {}
+            Err(response) => {
+                // If there is some problem that could be handled, we get a response back, that we just return to the user
+                return Ok(response);
+            }
+        }
 
         // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
         if !file_data.meta.exists {
