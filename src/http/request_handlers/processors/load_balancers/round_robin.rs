@@ -1,4 +1,4 @@
-use crate::http::request_handlers::processors::load_balancer::load_balancer::LoadBalancerImpl;
+use crate::http::request_handlers::processors::load_balancers::load_balancer::LoadBalancerImpl;
 
 use std::{
     collections::HashMap,

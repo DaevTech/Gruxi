@@ -77,7 +77,7 @@ static IS_OPERATION_MODE_LOADED: AtomicBool = AtomicBool::new(false);
 static OPERATION_MODE_SINGLETON: RwLock<OperationMode> = RwLock::new(OperationMode::PRODUCTION);
 
 pub fn get_operation_mode() -> OperationMode {
-    if IS_OPERATION_MODE_LOADED.load(Ordering::SeqCst) == false {
+    if !IS_OPERATION_MODE_LOADED.load(Ordering::SeqCst) {
         let loaded_mode = load_operation_mode();
         let mode_write_result = OPERATION_MODE_SINGLETON.write();
         let mut mode_write = match mode_write_result {
@@ -96,7 +96,7 @@ pub fn get_operation_mode() -> OperationMode {
         Ok(mode_read) => *mode_read,
         Err(e) => {
             error!("Failed to acquire read lock for operation mode: {} - Returning default", e);
-            return OperationMode::PRODUCTION;
+            OperationMode::PRODUCTION
         }
     }
 }
@@ -161,7 +161,7 @@ pub fn set_new_operation_mode(new_mode: String) -> bool {
 
             drop(stmt);
 
-            if let Some(_) = existing_id {
+            if existing_id.is_some() {
                 // Update existing record
                 let update_stmt_result = connection.prepare("UPDATE gruxi SET gruxi_value = ? WHERE gruxi_key = ?");
                 let mut update_stmt = match update_stmt_result {

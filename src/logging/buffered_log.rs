@@ -22,11 +22,10 @@ impl BufferedLog {
 
         // Create the log file and path if it does not exist
         let log_path = &buffered_log.log_file_path;
-        if let Some(parent) = log_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
+        if let Some(parent) = log_path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent) {
                 panic!("Failed to create log directory {}: {}", parent.display(), e);
             }
-        }
 
         // Check if log file is indeed a file or a directory, if directory, add a default filename
         if log_path.exists() && log_path.is_dir() {
@@ -35,11 +34,10 @@ impl BufferedLog {
         }
 
         // Create the log file if it does not exist
-        if !buffered_log.log_file_path.exists() {
-            if let Err(e) = std::fs::File::create(&buffered_log.log_file_path) {
+        if !buffered_log.log_file_path.exists()
+            && let Err(e) = std::fs::File::create(&buffered_log.log_file_path) {
                 panic!("Failed to create log file {}: {}", buffered_log.log_file_path.display(), e);
             }
-        }
 
         buffered_log
     }

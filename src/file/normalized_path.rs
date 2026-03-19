@@ -7,7 +7,7 @@ use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
 use urlencoding::decode;
 
-use crate::debug;
+use crate::{debug, error::{gruxi_error::GruxiError, gruxi_error_enums::GruxiErrorKind}};
 
 #[derive(Clone, Debug)]
 pub struct NormalizedPath {
@@ -23,7 +23,7 @@ const RESERVED_FILENAMES: [&str; 22] = [
 impl NormalizedPath {
     /// Get a new NormalizedPath instance, based on a trusted web_root and a user-supplied path.
     /// We expect web_root to be already sanitized and validated ,as it comes from our configuration.
-    pub fn new(web_root: &str, path: &str) -> Result<Self, ()> {
+    pub fn new(web_root: &str, path: &str) -> Result<Self, GruxiError> {
         let mut normalized_path = NormalizedPath {
             web_root: web_root.trim().to_string(),
             path: path.trim().to_string(),
@@ -32,12 +32,12 @@ impl NormalizedPath {
 
         // Normalize the path part, which is also decoded
         if !path.is_empty() {
-            let normalized_path_cleaned_result = Self::clean_url_path(&path);
+            let normalized_path_cleaned_result = Self::clean_url_path(path);
             normalized_path.path = match normalized_path_cleaned_result {
                 Ok(p) => p,
                 Err(_) => {
                     debug!("Failed to clean URL path in NormalizePath: {:?}", normalized_path);
-                    return Err(());
+                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Failed to clean URL path")));
                 }
             };
         }
@@ -57,7 +57,7 @@ impl NormalizedPath {
             normalized_path.full_path = match full_path_result {
                 Ok(p) => p,
                 Err(_) => {
-                    return Err(());
+                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Failed to resolve relative path")));
                 }
             };
 
@@ -167,13 +167,13 @@ impl NormalizedPath {
             buf = buf.replace("\\", "");
         }
 
-        // Split by slash and process each part
-        let mut parts = Vec::new();
-        for part in buf.split('/') {
-            match part {
-                "" => continue,
-                "." | ".." => return Err("Path traversal segments are not allowed".to_string()),
-                _ => parts.push(part),
+        // Split by slash and collect non-empty segments
+        let parts: Vec<&str> = buf.split('/').filter(|part| !part.is_empty()).collect();
+
+        // Any dot segments should return error (to avoid path traversal), except for .well-known which is allowed to start with dot
+        for &part in &parts {
+            if part.starts_with('.') && part != ".well-known" {
+                return Err("Path traversal segments are not allowed".to_string());
             }
 
             // Check for reserved filenames (Windows)
@@ -183,28 +183,8 @@ impl NormalizedPath {
             }
 
             // No tilde at start or end of segment
-            if part.starts_with("~") || part.ends_with("~") {
+            if part.starts_with('~') || part.ends_with('~') {
                 return Err("Path segments cannot start or end with tilde (~)".to_string());
-            }
-
-            // No segments starting with .
-            if part.starts_with(".") && part != ".well-known" {
-                return Err("Path segments cannot start with a dot".to_string());
-            }
-
-            // No segments starting with .#
-            if part.starts_with(".#") {
-                return Err("Path segments cannot start with .#".to_string());
-            }
-        }
-
-        // Remove any leading dot segments in the start only, such as "..../test.txt"
-        // We dont want dot segments at the start of the path
-        while let Some(first) = parts.first() {
-            if first.starts_with("..") || first == &"." {
-                return Err("Path traversal segments are not allowed".to_string());
-            } else {
-                break;
             }
         }
 
@@ -222,18 +202,20 @@ impl NormalizedPath {
         Ok(result)
     }
 
-    /// Sanitizes and resolves a file path into an absolute path.
-    /// - Expands relative paths to absolute.
-    /// Works on both Windows and Unix.
+    // Sanitizes and resolves a file path into an absolute path.
+    // - Expands relative paths to absolute.
+    //
+    // Works on both Windows and Unix.
     fn resolve_relative_path(input_path: &str) -> Result<String, std::io::Error> {
         let mut path = PathBuf::new();
 
         // If it starts with ./, we replace with current dir
-        if input_path.starts_with("./") {
+        if let Some(stripped) = input_path.strip_prefix("./") {
             let mut current_dir_result = env::current_dir()?;
-            current_dir_result.push(&input_path[2..]);
+            current_dir_result.push(stripped);
             return Ok(current_dir_result.to_string_lossy().to_string());
         }
+
 
         // Treat Unix-rooted paths like "/var/www" as rooted even on Windows,
         // otherwise Path::is_relative() may incorrectly cause us to prepend CWD (and a drive letter).

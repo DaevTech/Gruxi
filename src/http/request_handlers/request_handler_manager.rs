@@ -2,7 +2,7 @@ use dashmap::DashMap;
 use std::collections::HashMap;
 
 use crate::{
-    configuration::{request_handler::RequestHandler, site::Site},
+    config::{request_handler::RequestHandler, site::Site},
     error::gruxi_error::GruxiError,
     http::{
         http_server::ConnectionContext,
@@ -18,7 +18,7 @@ pub struct RequestHandlerManager {
 impl RequestHandlerManager {
     pub async fn new() -> Self {
         // Get the config, to determine what we need
-        let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
+        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration().await;
 
         // Make a hashmap of the request handlers, so we can easily access them by id, before matching with site
@@ -62,11 +62,11 @@ impl RequestHandlerManager {
                         return response_result;
                     }
                 }
-                return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+                Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()))
             }
             None => {
                 trace!("No request handler found for request path '{}'", gruxi_request.get_path());
-                return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+                Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()))
             }
         }
     }

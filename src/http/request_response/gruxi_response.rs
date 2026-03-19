@@ -60,7 +60,7 @@ impl GruxiResponse {
 
     pub fn new_with_body(status_code: u16, body: BoxBody<hyper::body::Bytes, BodyError>) -> Self {
         let mut response = GruxiResponse::new_empty_with_status(status_code);
-        body.size_hint().upper().map(|size| response.data.body_size_hint = size);
+        response.data.body_size_hint = body.size_hint().upper().unwrap_or(0);
         response.body = GruxiBody::StreamingBoxed(body);
         response
     }
@@ -146,8 +146,8 @@ impl GruxiResponse {
             GruxiBody::StreamingBoxed(boxed_body) => boxed_body,
         };
 
-        let response = Response::from_parts(self.parts, body);
-        response
+
+        Response::from_parts(self.parts, body)
     }
 
     pub fn set_body(&mut self, body: GruxiBody) {

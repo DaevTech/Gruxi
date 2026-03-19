@@ -1,14 +1,14 @@
-use crate::configuration::admin_portal::AdminPortal;
-use crate::configuration::core::Core;
-use crate::configuration::file_cache::FileCache;
-use crate::configuration::gzip::Gzip;
-use crate::configuration::http_caching::HttpCaching;
-use crate::configuration::logging::Logging;
-use crate::configuration::request_handler::RequestHandler;
-use crate::configuration::server_settings::ServerSettings;
-use crate::configuration::site::Site;
-use crate::configuration::tls_settings::TlsSettings;
-use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship};
+use crate::config::admin_portal::AdminPortal;
+use crate::config::core::Core;
+use crate::config::file_cache::FileCache;
+use crate::config::gzip::Gzip;
+use crate::config::http_caching::HttpCaching;
+use crate::config::logging::Logging;
+use crate::config::request_handler::RequestHandler;
+use crate::config::server_settings::ServerSettings;
+use crate::config::site::Site;
+use crate::config::tls_settings::TlsSettings;
+use crate::config::{binding::Binding, binding_site_relation::BindingSiteRelationship};
 use crate::external_connections::managed_system::php_cgi::PhpCgi;
 use crate::file::app_paths::get_app_paths;
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
@@ -36,6 +36,12 @@ pub struct Configuration {
 }
 
 pub static CURRENT_CONFIGURATION_VERSION: i32 = 7;
+
+impl Default for Configuration {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Configuration {
     pub fn new() -> Self {
@@ -187,7 +193,7 @@ impl Configuration {
         }
 
         // Validate external systems
-        for (_, php_cgi) in self.php_cgi_handlers.iter().enumerate() {
+        for php_cgi in self.php_cgi_handlers.iter() {
             if let Err(php_cgi_errors) = php_cgi.validate() {
                 for error in php_cgi_errors {
                     errors.push(format!("PHP-CGI Handler '{}': {}", php_cgi.id, error));

@@ -56,14 +56,14 @@ impl RunningState {
         let log_rotation = LogRotation::new().await;
 
         RunningState {
-            access_log_buffer: access_log_buffer,
-            file_reader_cache: file_reader_cache,
-            request_handler_manager: request_handler_manager,
-            processor_manager: processor_manager,
-            external_system_handler: external_system_handler,
-            http_client: http_client,
-            binding_site_cache: binding_site_cache,
-            log_rotation: log_rotation,
+            access_log_buffer,
+            file_reader_cache,
+            request_handler_manager,
+            processor_manager,
+            external_system_handler,
+            http_client,
+            binding_site_cache,
+            log_rotation,
         }
     }
 

@@ -10,12 +10,18 @@ pub struct FileCache {
     pub forced_eviction_threshold: u64,    // 1-99 %
 }
 
+impl Default for FileCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileCache {
     pub fn new() -> Self {
         FileCache {
             is_enabled: true,
             cache_item_size: 1000,
-            cache_max_size_per_file: 1 * 1024 * 1024, // bytes
+            cache_max_size_per_file: 1024 * 1024, // bytes
             cache_update_thread_interval: 30,         // seconds
             max_item_lifetime: 60,                    // seconds
             forced_eviction_threshold: 80,            // 1-99%

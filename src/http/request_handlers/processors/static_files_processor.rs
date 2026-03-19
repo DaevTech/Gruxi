@@ -1,7 +1,7 @@
 use crate::error;
 use crate::http::http_util::trailing_slash_check;
 use crate::{
-    configuration::site::Site,
+    config::site::Site,
     error::{
         gruxi_error::GruxiError,
         gruxi_error_enums::{GruxiErrorKind, StaticFileProcessorError},
@@ -124,7 +124,7 @@ impl ProcessorTrait for StaticFileProcessor {
 
         // Get the file, if it exists
         let normalized_path_result = NormalizedPath::new(&web_root, &path);
-        if let Err(_) = normalized_path_result {
+        if normalized_path_result.is_err() {
             trace!("Failed or rejected to normalize request path: {}", path);
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
         }
@@ -204,7 +204,7 @@ impl ProcessorTrait for StaticFileProcessor {
             let mut found_index = false;
             for file in &self.web_root_index_file_list {
                 // Get the file, if it exists
-                let normalized_path_result = NormalizedPath::new(&file_path, &file);
+                let normalized_path_result = NormalizedPath::new(&file_path, file);
                 let normalized_path = match normalized_path_result {
                     Ok(path) => path,
                     Err(_) => {
@@ -222,7 +222,7 @@ impl ProcessorTrait for StaticFileProcessor {
                     }
                 };
 
-                if file_data.meta.exists == false {
+                if !file_data.meta.exists {
                     trace!("Index files in dir does not exist: {}", file_path);
                     continue;
                 }
@@ -293,14 +293,13 @@ impl ProcessorTrait for StaticFileProcessor {
         }
 
         // Set Content-Range header for single range responses
-        if let Some(content_range) = content_range_header {
-            if let Ok(header_value) = HeaderValue::from_str(&content_range) {
+        if let Some(content_range) = content_range_header
+            && let Ok(header_value) = HeaderValue::from_str(&content_range) {
                 response.headers_mut().insert(hyper::header::CONTENT_RANGE, header_value);
             }
-        }
 
         // Set content type (override for multipart ranges)
-        let content_type = content_type_override.as_ref().map(|s| s.as_str()).unwrap_or(&file_data.meta.mime_type);
+        let content_type = content_type_override.as_deref().unwrap_or(&file_data.meta.mime_type);
         let header_value = HeaderValue::from_str(content_type);
         match header_value {
             Err(e) => {

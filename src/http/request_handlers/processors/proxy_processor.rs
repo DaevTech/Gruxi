@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::error;
 use crate::{
-    configuration::site::Site,
+    config::site::Site,
     error::{
         gruxi_error::GruxiError,
         gruxi_error_enums::{GruxiErrorKind, ProxyProcessorError},
@@ -11,7 +11,7 @@ use crate::{
         http_server::ConnectionContext,
         request_handlers::{
             processor_trait::ProcessorTrait,
-            processors::load_balancer::{load_balancer::LoadBalancerImpl, round_robin::RoundRobin},
+            processors::load_balancers::{load_balancer::LoadBalancerImpl, round_robin::RoundRobin},
         },
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
@@ -50,6 +50,12 @@ pub struct ProxyProcessor {
     pub forced_host_header: String, // If set, this host header will be used instead of the original request's Host header, disregarding preserve_host_header - normally not recommended for normal use
     // SSL/TLS settings
     pub verify_tls_certificates: bool, // Whether to verify TLS certificates (set to false for self-signed certs)
+}
+
+impl Default for ProxyProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ProxyProcessor {
@@ -184,7 +190,7 @@ impl ProcessorTrait for ProxyProcessor {
             }
 
             // Try to parse the URL
-            if let Err(_) = server.parse::<hyper::Uri>() {
+            if server.parse::<hyper::Uri>().is_err() {
                 errors.push(format!("Upstream server '{}' is not a valid URL.", server));
             }
         }
@@ -337,15 +343,15 @@ impl ProcessorTrait for ProxyProcessor {
                 // Wrap response in GruxiResponse
                 let gruxi_response = GruxiResponse::from_hyper(resp);
 
-                return Ok(gruxi_response);
+                Ok(gruxi_response)
             }
             Ok(Err(e)) => {
                 error!("Failed to send request to upstream server: {:?}", e);
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed)));
+                Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::ConnectionFailed)))
             }
             Err(_) => {
                 error!("Request to upstream server '{}' timed out after {} seconds", server_to_handle_request, self.timeout_seconds);
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout)));
+                Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamTimeout)))
             }
         }
     }

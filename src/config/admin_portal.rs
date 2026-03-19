@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{configuration::site::Site, file::app_paths::get_app_paths};
+use crate::{config::site::Site, file::app_paths::get_app_paths};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AdminPortal {
@@ -11,6 +11,12 @@ pub struct AdminPortal {
     pub tls_automatic_enabled: bool,
     pub tls_certificate_path: Option<String>,
     pub tls_key_path: Option<String>,
+}
+
+impl Default for AdminPortal {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AdminPortal {
@@ -50,7 +56,7 @@ impl AdminPortal {
         if self.tls_automatic_enabled {
             if !self.domain_name.is_empty() {
                 // Verify that domain is valid and public
-                if let Err(_) = Site::verify_hostname(&self.domain_name) {
+                if Site::verify_hostname(&self.domain_name).is_err() {
                     errors.push("Admin portal automatic TLS requires a valid public domain name to be configured".to_string());
                 }
             } else {
@@ -60,8 +66,8 @@ impl AdminPortal {
 
         // Check TLS paths actually exist if provided (only relevant when not using automatic TLS)
         if !self.tls_automatic_enabled {
-            if let Some(cert_path) = &self.tls_certificate_path {
-                if !cert_path.is_empty() {
+            if let Some(cert_path) = &self.tls_certificate_path
+                && !cert_path.is_empty() {
                     let mut cert_path = PathBuf::from(cert_path);
                     if !cert_path.is_absolute() {
                         cert_path = app_paths.certificates_dir.join(cert_path);
@@ -72,9 +78,8 @@ impl AdminPortal {
                         errors.push(format!("TLS certificate path is not a file: {}", cert_path.display()));
                     }
                 }
-            }
-            if let Some(key_path) = &self.tls_key_path {
-                if !key_path.is_empty() {
+            if let Some(key_path) = &self.tls_key_path
+                && !key_path.is_empty() {
                     let mut key_path = PathBuf::from(key_path);
                     if !key_path.is_absolute() {
                         key_path = app_paths.certificates_dir.join(key_path);
@@ -85,7 +90,6 @@ impl AdminPortal {
                         errors.push(format!("TLS key path is not a file: {}", key_path.display()));
                     }
                 }
-            }
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }

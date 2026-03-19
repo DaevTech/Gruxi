@@ -1,13 +1,13 @@
-use crate::{trace, configuration::site::Site};
+use crate::{trace, config::site::Site};
 
 // Find a best match site for the requested hostname, comparing case-insensitively
-pub fn find_best_match_site<'a>(sites: &'a Vec<Site>, requested_hostname: &str) -> Option<&'a Site> {
+pub fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &str) -> Option<&'a Site> {
     let requested_hostname_lower = requested_hostname.to_lowercase();
-    let mut site = sites.iter().find(|s| s.hostnames.iter().any(|h| h.to_string() == requested_hostname_lower) && s.is_enabled);
+    let mut site = sites.iter().find(|s| s.hostnames.contains(&requested_hostname_lower) && s.is_enabled);
 
     // We check for star hostnames
     if site.is_none() {
-        site = sites.iter().find(|s| s.hostnames.iter().any(|h| h.to_string() == "*") && s.is_enabled);
+        site = sites.iter().find(|s| s.hostnames.iter().any(|h| *h == "*") && s.is_enabled);
     }
 
     // If we cant find a matching site, we see if there is a default one
@@ -27,7 +27,7 @@ pub fn find_best_match_site<'a>(sites: &'a Vec<Site>, requested_hostname: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::site::Site;
+    use crate::config::site::Site;
 
     #[test]
     fn test_site_matcher_simple_case_insensitive() {

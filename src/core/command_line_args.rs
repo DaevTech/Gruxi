@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::OnceLock};
 use clap::{Arg, ArgMatches, Command};
 
 use crate::{
-    configuration::import_export::{export_configuration_to_file, import_configuration_from_file},
+    config::import_export::{export_configuration_to_file, import_configuration_from_file},
     core::{
         admin_user::reset_admin_password,
         service::{install_service, remove_service},
@@ -190,7 +190,7 @@ pub fn check_for_command_line_actions() {
 
     // Check for validate configuration
     if let Some(path) = cli.get_one::<PathBuf>("validate-configuration") {
-        match crate::configuration::import_export::validate_configuration_file(path) {
+        match crate::config::import_export::validate_configuration_file(path) {
             Ok(_) => println!("Configuration file is valid: {}", path.display()),
             Err(e) => eprintln!("Error validating configuration file: {}", e),
         }
@@ -211,5 +211,5 @@ pub fn check_for_command_line_actions() {
 static COMMAND_LINE_ARGS_SINGLETON: OnceLock<ArgMatches> = OnceLock::new();
 
 pub fn get_command_line_args() -> &'static ArgMatches {
-    COMMAND_LINE_ARGS_SINGLETON.get_or_init(|| load_command_line_args())
+    COMMAND_LINE_ARGS_SINGLETON.get_or_init(load_command_line_args)
 }

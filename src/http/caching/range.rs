@@ -1,13 +1,13 @@
-/// HTTP Range Requests implementation per RFC 9110
-/// https://www.rfc-editor.org/rfc/rfc9110#section-14
-///
-/// Supports:
-/// - Single byte ranges (bytes=0-499, bytes=500-, bytes=-500)
-/// - Multiple byte ranges (bytes=0-499,500-999)
-/// - Accept-Ranges header
-/// - 206 Partial Content responses
-/// - 416 Range Not Satisfiable responses
-/// - Conditional range requests with If-Range header
+// HTTP Range Requests implementation per RFC 9110
+// https://www.rfc-editor.org/rfc/rfc9110#section-14
+//
+// Supports:
+// - Single byte ranges (bytes=0-499, bytes=500-, bytes=-500)
+// - Multiple byte ranges (bytes=0-499,500-999)
+// - Accept-Ranges header
+// - 206 Partial Content responses
+// - 416 Range Not Satisfiable responses
+// - Conditional range requests with If-Range header
 
 use std::time::SystemTime;
 

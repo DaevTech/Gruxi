@@ -1,5 +1,5 @@
 use crate::admin_portal::http_admin_api::*;
-use crate::compression::compression::Compression;
+use crate::compression::response_compression::ResponseCompression;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
 use crate::http::http_server::ConnectionContext;
@@ -35,7 +35,7 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
 
     // Get the hostname and figure out which site matches
     let hostname = gruxi_request.get_hostname();
-    let site = match find_best_match_site(&sites, &hostname) {
+    let site = match find_best_match_site(&sites, hostname) {
         Some(site) => site,
         None => {
             if hostname.is_empty() {
@@ -50,7 +50,7 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     trace!("Matched site with request: {:?}", &site);
 
     // Validate the request
-    if let Err(gruxi_response) = validate_request(&mut gruxi_request, &connection_context.binding, &site).await {
+    if let Err(gruxi_response) = validate_request(&mut gruxi_request, &connection_context.binding, site).await {
         return Ok(gruxi_response);
     }
 
@@ -65,14 +65,13 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     }
 
     // Handle EXPECT: 100-continue header
-    if let Some(expect_header) = gruxi_request.get_headers().get("expect") {
-        if expect_header.to_str().unwrap_or("").eq_ignore_ascii_case("100-continue") {
+    if let Some(expect_header) = gruxi_request.get_headers().get("expect")
+        && expect_header.to_str().unwrap_or("").eq_ignore_ascii_case("100-continue") {
             // Send 100 Continue response
             let mut resp = empty_response_with_status(hyper::StatusCode::CONTINUE);
             add_standard_headers_to_response(&mut resp);
             return Ok(resp);
         }
-    }
 
     // Check if the request is for the admin portal - handle these first
     let admin_response = if connection_context.binding.is_admin {
@@ -105,7 +104,7 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
 
         // Now we let the request handler manager process the request in the order defined by the site's request_handlers list.
         let request_handler_manager = running_state.get_request_handler_manager();
-        let response_result = request_handler_manager.handle_request(&mut gruxi_request, &site, &connection_context).await;
+        let response_result = request_handler_manager.handle_request(&mut gruxi_request, site, &connection_context).await;
         if response_result.is_err() {
             trace!("No request handler matched for URL path: {}", &gruxi_request.get_path_and_query());
             return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
@@ -122,7 +121,7 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
 
     // Consider gzipping content if not already gzipped
     if running_state.get_file_reader_cache().gzip_enabled {
-        let compression = Compression::new();
+        let compression = ResponseCompression::new();
         compression.maybe_compress_response(&gruxi_request, &mut response, running_state.get_file_reader_cache()).await;
     }
 
@@ -130,11 +129,10 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     let mut additional_headers: Vec<(&str, &str)> = vec![];
 
     // If method is OPTIONS, we add the Allow header if not already present
-    if gruxi_request.get_http_method() == "OPTIONS" {
-        if !response.headers().iter().any(|(k, _)| k.as_str().to_lowercase() == "allow") {
+    if gruxi_request.get_http_method() == "OPTIONS"
+        && !response.headers().iter().any(|(k, _)| k.as_str().to_lowercase() == "allow") {
             additional_headers.push(("Allow", "GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT, PATCH"));
         }
-    }
 
     // Set any additional headers
     for (key, value) in additional_headers {
@@ -149,11 +147,10 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
 
     // Apply site-specific extra headers
     for kv in &site.extra_headers {
-        if let Ok(key_name) = hyper::http::HeaderName::from_bytes(kv.key.as_bytes()) {
-            if let Ok(val) = HeaderValue::from_str(kv.value.as_str()) {
+        if let Ok(key_name) = hyper::http::HeaderName::from_bytes(kv.key.as_bytes())
+            && let Ok(val) = HeaderValue::from_str(kv.value.as_str()) {
                 response.headers_mut().insert(key_name, val);
             }
-        }
     }
 
     // Handle access logging

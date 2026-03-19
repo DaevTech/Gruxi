@@ -1,4 +1,4 @@
-use crate::configuration::load_configuration::fetch_configuration_in_db;
+use crate::config::load_configuration::fetch_configuration_in_db;
 use std::path::PathBuf;
 
 pub fn export_configuration_to_file(path: &PathBuf) -> Result<(), String> {
@@ -27,23 +27,23 @@ pub fn import_configuration_from_file(path: &PathBuf) -> Result<(), String> {
     let loose_typed: serde_json::Value = serde_json::from_str(&file_contents).map_err(|e| format!("Failed to parse configuration file {}: {}", path.display(), e))?;
 
     // Check that versions match
-    if loose_typed["version"] != crate::configuration::configuration::CURRENT_CONFIGURATION_VERSION {
+    if loose_typed["version"] != crate::config::configuration::CURRENT_CONFIGURATION_VERSION {
         // Here we could add version migration logic in the future
 
         // If we reach here, versions do not match
         return Err(format!(
             "Configuration version mismatch: expected {}, found {}",
-            crate::configuration::configuration::CURRENT_CONFIGURATION_VERSION,
+            crate::config::configuration::CURRENT_CONFIGURATION_VERSION,
             loose_typed["version"].as_i64().unwrap_or(-1)
         ));
     }
 
     // Deserialize JSON to Configuration struct
-    let mut configuration: crate::configuration::configuration::Configuration =
+    let mut configuration: crate::config::configuration::Configuration =
         serde_json::from_str(&file_contents).map_err(|e| format!("Failed to deserialize configuration from file {}: {}", path.display(), e))?;
 
     // Save configuration to database
-    crate::configuration::save_configuration::save_configuration(&mut configuration, false).map_err(|e| format!("Failed to save imported configuration to database: {:?}", e))?;
+    crate::config::save_configuration::save_configuration(&mut configuration, false).map_err(|e| format!("Failed to save imported configuration to database: {:?}", e))?;
 
     println!("Configuration successfully imported from {}", path.display());
 
@@ -58,16 +58,16 @@ pub fn validate_configuration_file(path: &PathBuf) -> Result<(), String> {
     let loose_typed: serde_json::Value = serde_json::from_str(&file_contents).map_err(|e| format!("Failed to parse configuration file {}: {}", path.display(), e))?;
 
     // Check that versions match
-    if loose_typed["version"] != crate::configuration::configuration::CURRENT_CONFIGURATION_VERSION {
+    if loose_typed["version"] != crate::config::configuration::CURRENT_CONFIGURATION_VERSION {
         return Err(format!(
             "Configuration version mismatch: expected {}, found {}",
-            crate::configuration::configuration::CURRENT_CONFIGURATION_VERSION,
+            crate::config::configuration::CURRENT_CONFIGURATION_VERSION,
             loose_typed["version"].as_i64().unwrap_or(-1)
         ));
     }
 
     // Deserialize JSON to Configuration struct to ensure it's valid
-    let configuration: crate::configuration::configuration::Configuration =
+    let configuration: crate::config::configuration::Configuration =
         serde_json::from_str(&file_contents).map_err(|e| format!("Failed to deserialize configuration from file {}: {}", path.display(), e))?;
 
     configuration.validate().map_err(|e| format!("Configuration validation failed: {:?}", e))?;

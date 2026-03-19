@@ -9,7 +9,7 @@ use crate::http::http_server::ConnectionContext;
 use crate::http::http_util::trailing_slash_check;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::{
-    configuration::site::Site,
+    config::site::Site,
     http::{http_util::empty_response_with_status, request_handlers::processor_trait::ProcessorTrait, request_response::gruxi_request::GruxiRequest},
 };
 use crate::{debug, error, trace};
@@ -36,6 +36,12 @@ pub struct PHPProcessor {
     normalized_local_web_root: Option<NormalizedPath>,
     #[serde(skip)]
     normalized_fastcgi_web_root: Option<NormalizedPath>,
+}
+
+impl Default for PHPProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PHPProcessor {
@@ -246,7 +252,7 @@ impl ProcessorTrait for PHPProcessor {
                 }
             };
 
-            if file_data.meta.exists == false {
+            if !file_data.meta.exists {
                 trace!("Index files in dir does not exist: {}", file_path);
                 return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
             }
@@ -297,16 +303,16 @@ impl ProcessorTrait for PHPProcessor {
             Ok(response) => match response {
                 Ok(resp) => {
                     trace!("PHP Request completed successfully");
-                    return Ok(resp);
+                    Ok(resp)
                 }
                 Err(err) => {
                     error!("PHP Request processing via FastCGI failed");
-                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::FastCgi(err)));
+                    Err(GruxiError::new_with_kind_only(GruxiErrorKind::FastCgi(err)))
                 }
             },
             Err(_) => {
                 debug!("PHP Request timed out - Timeout: {} seconds - Request: {:?}", self.request_timeout, gruxi_request);
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Timeout)));
+                Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Timeout)))
             }
         }
     }
@@ -340,7 +346,7 @@ impl PHPProcessor {
         } else {
             // Unknown type, so we cant and wont handle
             error!("PHP Processor: Unknown served_by_type: {}", self.served_by_type);
-            return Err(());
+            Err(())
         }
     }
 }

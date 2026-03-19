@@ -8,11 +8,17 @@ use http::HeaderValue;
 use hyper::body::Bytes;
 use std::io::Write;
 
-pub struct Compression {}
+pub struct ResponseCompression {}
 
-impl Compression {
+impl Default for ResponseCompression {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ResponseCompression {
     pub fn new() -> Self {
-        Compression {}
+        ResponseCompression {}
     }
 
     pub async fn maybe_compress_response(&self, request: &GruxiRequest, response: &mut GruxiResponse, file_reader_cache: &FileReaderCache) {
@@ -27,15 +33,11 @@ impl Compression {
             None => {
                 // If cache control header has no-transform, we skip compression
                 let cache_control_header_option = response.headers().get(hyper::header::CACHE_CONTROL);
-                match cache_control_header_option {
-                    Some(cache_control_header) => {
-                        if cache_control_header.to_str().unwrap_or("").contains("no-transform") {
-                            // If no-transform is present, we skip compression
-                            return;
-                        }
+                if let Some(cache_control_header) = cache_control_header_option
+                    && cache_control_header.to_str().unwrap_or("").contains("no-transform") {
+                        // If no-transform is present, we skip compression
+                        return;
                     }
-                    None => {}
-                }
                 // If content range is present, we skip compression
                 let content_range_header_option = response.headers().get(hyper::header::CONTENT_RANGE);
                 if content_range_header_option.is_some() {
@@ -45,8 +47,7 @@ impl Compression {
 
                 // If content encoding is not present, we consider compressing if it's a compressible type and size
                 let content_type_header_option = response.get_header(hyper::header::CONTENT_TYPE.as_str());
-                if content_type_header_option.is_some() {
-                    let content_type_header = content_type_header_option.unwrap();
+                if let Some(content_type_header) = content_type_header_option {
                     let accepted_encodings = request.get_accepted_encodings();
                     if accepted_encodings.iter().any(|enc| enc == "gzip") {
                         let content_length = response.get_body_size();

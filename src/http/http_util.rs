@@ -75,6 +75,7 @@ pub fn get_list_of_hop_by_hop_headers(is_websocket_upgrade: bool) -> Vec<String>
 
 // If it exists, we check for that trailing slash logic where if the path ends with a slash, it should be a directory, and if it does not end with a slash, it should not be a directory.
 // If it matches a file with slash, we do 404. If we have a directory without slash, we do 301 redirect to the same path with slash.
+#[allow(clippy::result_large_err)]
 pub fn trailing_slash_check(file_data: Arc<FileEntry>, path: &str) -> Result<(), GruxiResponse> {
     if file_data.meta.exists {
         if path.ends_with("/") && !file_data.meta.is_directory {

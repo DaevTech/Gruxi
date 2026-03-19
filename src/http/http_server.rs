@@ -1,4 +1,4 @@
-use crate::configuration::binding::Binding;
+use crate::config::binding::Binding;
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::running_state::RunningState;
 use crate::core::running_state_manager::get_running_state_manager;
@@ -35,7 +35,7 @@ pub struct ConnectionContext {
 // Starting all the Gruxi magic
 pub async fn initialize_server() {
     // Get configuration from the current configuration
-    let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
+    let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
     let config = cached_configuration.get_configuration().await;
 
     // Initialize shared ACME manager ONCE before starting any bindings.
@@ -87,7 +87,7 @@ pub async fn initialize_server() {
             hard_connection_timeout: Duration::from_secs(config.core.server_settings.max_connection_duration_seconds),
             shutdown_token: shutdown_token.clone(),
             stop_services_token: stop_services_token.clone(),
-            running_state: running_state,
+            running_state,
         };
 
         // Start listening on the specified address - spawn each binding as a separate task
@@ -282,8 +282,8 @@ where
             let mut response = match gruxi_response_result {
                 Err(err) => {
                     error!("Error handling request from {}: {:?}", &remote_ip, err);
-                    let response = GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16());
-                    response
+
+                    GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16())
                 }
                 Ok(response) => response,
             };
@@ -308,7 +308,7 @@ where
         _ = conn_context.stop_services_token.cancelled() => return,
     };
 
-    if let Err(_) = result {
+    if result.is_err() {
         trace!("Connection timed out due to hard timeout");
     }
 }

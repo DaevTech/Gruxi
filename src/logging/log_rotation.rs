@@ -1,4 +1,4 @@
-use crate::{configuration::logging::Logging, core::triggers::get_trigger_handler, error, file::app_paths::get_app_paths, info, trace, warn};
+use crate::{config::logging::Logging, core::triggers::get_trigger_handler, error, file::app_paths::get_app_paths, info, trace, warn};
 use std::path::PathBuf;
 use tokio::select;
 
@@ -10,7 +10,7 @@ pub struct LogRotation {
 impl LogRotation {
     pub async fn new() -> Self {
         // Get the configuration for log rotation from the global config
-        let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
+        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration().await;
 
         // Create pathbuf to logs dir from environment
@@ -139,7 +139,7 @@ impl LogRotation {
             // Check if we need to rotate by size first
             if logging_config.rotate_by_size {
                 let file_size = metadata.len();
-                let max_file_size_bytes = (logging_config.max_log_file_size_mb as u64) * 1024 * 1024;
+                let max_file_size_bytes = logging_config.max_log_file_size_mb * 1024 * 1024;
                 trace!("Log file {:?} considered for rotation with size: {} bytes and max: {} bytes", file_path, file_size, max_file_size_bytes);
                 if file_size >= max_file_size_bytes {
                     // Perform rotation
@@ -165,25 +165,13 @@ impl LogRotation {
 
                 let should_rotate = match logging_config.log_time_rotation_type.as_str() {
                     "daily" => {
-                        if age_duration.num_days() >= 1 {
-                            true
-                        } else {
-                            false
-                        }
+                        age_duration.num_days() >= 1
                     }
                     "weekly" => {
-                        if age_duration.num_days() >= 7 {
-                            true
-                        } else {
-                            false
-                        }
+                        age_duration.num_days() >= 7
                     }
                     "monthly" => {
-                        if age_duration.num_days() >= 30 {
-                            true
-                        } else {
-                            false
-                        }
+                        age_duration.num_days() >= 30
                     }
                     _ => {
                         logging_config.rotate_by_time = false;
@@ -245,8 +233,6 @@ impl LogRotation {
                 }
             }
         }
-
-        return;
     }
 }
 

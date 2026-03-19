@@ -10,6 +10,12 @@ pub struct Triggers {
     pub triggers: HashMap<String, Arc<RwLock<CancellationToken>>>,
 }
 
+impl Default for Triggers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Triggers {
     pub fn new() -> Self {
         let mut triggers = HashMap::new();
@@ -82,5 +88,5 @@ impl Triggers {
 static TRIGGERS_SINGLETON: OnceLock<Triggers> = OnceLock::new();
 
 pub fn get_trigger_handler() -> &'static Triggers {
-    TRIGGERS_SINGLETON.get_or_init(|| Triggers::new())
+    TRIGGERS_SINGLETON.get_or_init(Triggers::new)
 }

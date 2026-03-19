@@ -80,7 +80,7 @@ pub async fn get_shared_acme_domains() -> HashSet<String> {
 
 /// Internal function to create the shared ACME manager
 async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<dyn std::error::Error + Send + Sync>> {
-    let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
+    let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
     let config = cached_configuration.get_configuration().await;
 
     let tls_settings = &config.core.tls_settings;
@@ -195,12 +195,12 @@ fn spawn_acme_polling_task(mut acme_state: rustls_acme::AcmeState<Box<dyn std::f
                 // Use try_read to avoid blocking, fall back to a new token if locked
                 t.try_read().map(|guard| guard.clone()).unwrap_or_else(|_| CancellationToken::new())
             })
-            .unwrap_or_else(|| CancellationToken::new());
+            .unwrap_or_default();
 
         let stop_services_token = triggers
             .get_trigger("stop_services")
             .map(|t| t.try_read().map(|guard| guard.clone()).unwrap_or_else(|_| CancellationToken::new()))
-            .unwrap_or_else(|| CancellationToken::new());
+            .unwrap_or_default();
 
         // Poll the ACME state to handle certificate acquisition and renewal
         loop {

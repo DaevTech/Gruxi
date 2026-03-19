@@ -7,6 +7,12 @@ pub struct TlsSettings {
     pub use_staging_server: bool,
 }
 
+impl Default for TlsSettings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TlsSettings {
     pub fn new() -> Self {
         Self {

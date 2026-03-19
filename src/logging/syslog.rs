@@ -230,7 +230,6 @@ impl SysLog {
         match SYS_LOG.write() {
             Err(_) => {
                 eprintln!("Failed to acquire write lock for syslog when setting new stdout log level");
-                return;
             }
             Ok(mut guard) => {
                 guard.stdout_log_level = new_log_level;

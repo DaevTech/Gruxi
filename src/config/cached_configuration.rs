@@ -1,5 +1,5 @@
 use crate::{
-    configuration::{configuration::Configuration},
+    config::{configuration::Configuration},
     core::triggers::get_trigger_handler,
 };
 use crate::trace;
@@ -8,6 +8,12 @@ use std::sync::{Arc, OnceLock};
 
 pub struct CachedConfiguration {
     pub configuration: Arc<RwLock<Configuration>>,
+}
+
+impl Default for CachedConfiguration {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CachedConfiguration {

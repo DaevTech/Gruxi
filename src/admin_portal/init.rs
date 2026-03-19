@@ -1,16 +1,16 @@
 use uuid::Uuid;
-
-use crate::{configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship, configuration::Configuration, request_handler::RequestHandler, site::{HeaderKV, Site}}, core::admin_user::create_default_admin_user, error, file::app_paths::get_app_paths, http::request_handlers::processors::static_files_processor::StaticFileProcessor};
+use crate::error;
+use crate::{config::{binding::Binding, binding_site_relation::BindingSiteRelationship, configuration::Configuration, request_handler::RequestHandler, site::{HeaderKV, Site}}, core::admin_user::create_default_admin_user, error::{gruxi_error::GruxiError, gruxi_error_enums::{GruxiErrorKind, InitAdminPortalError}}, file::app_paths::get_app_paths, http::request_handlers::processors::static_files_processor::StaticFileProcessor};
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
 
-pub fn initialize_admin_site() -> Result<(), ()>{
+pub fn initialize_admin_site() -> Result<(), GruxiError>{
     // Check if there is at least one admin user
     let connection_result = crate::core::database_connection::get_database_connection();
     let connection = match connection_result {
         Ok(conn) => conn,
         Err(e) => {
             error!("Failed to get database connection: {}", e);
-            return Err(());
+            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::InitAdminPortal(InitAdminPortalError::NoDatabaseConnection(e.to_string()))));
         }
     };
 
@@ -19,7 +19,7 @@ pub fn initialize_admin_site() -> Result<(), ()>{
         Ok(_) => (),
         Err(e) => {
             error!("Failed to create default admin user: {}", e);
-            return Err(());
+            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::InitAdminPortal(InitAdminPortalError::CouldNotCreateAdminUser(e.to_string()))));
         }
     };
 

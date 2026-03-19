@@ -9,6 +9,12 @@ pub struct DatabaseSchema {
     pub init_sql: Vec<String>,
 }
 
+impl Default for DatabaseSchema {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DatabaseSchema {
     pub fn new() -> Self {
         let init_sql = get_init_sql();

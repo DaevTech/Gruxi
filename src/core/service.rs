@@ -1,12 +1,13 @@
+use crate::error;
 use qsu::rt::{InitCtx, RunEnv, SvcEvt, TermCtx, TokioServiceHandler};
 use tokio::select;
 
 use crate::{
     admin_portal::init::initialize_admin_site,
-    configuration::load_configuration,
+    config::load_configuration,
     core::{background_tasks::start_background_tasks, operation_mode::get_operation_mode, running_state_manager::get_running_state_manager, triggers::get_trigger_handler},
     database::database_schema::initialize_database,
-    error,
+    error::gruxi_error_enums::{GruxiErrorKind, InitAdminPortalError},
     http::http_server::initialize_server,
     info,
 };
@@ -98,23 +99,32 @@ fn start_gruxi_basics() {
     // Initialize the admin site
     match initialize_admin_site() {
         Ok(_) => (),
-        Err(_) => {
-            error!("Failed to initialize admin site");
+        Err(err) => {
+            match err.kind {
+                GruxiErrorKind::InitAdminPortal(InitAdminPortalError::NoDatabaseConnection(_)) => {
+                    error!("Failed to initialize admin site due to database connection error. Please check your database configuration and ensure the database server is running.");
+                }
+                GruxiErrorKind::InitAdminPortal(InitAdminPortalError::CouldNotCreateAdminUser(_)) => {
+                    error!(
+                        "Failed to initialize admin site because the default admin user could not be created. This might be due to a database issue or a permissions problem. Please check your database and ensure it is properly configured."
+                    );
+                }
+                _ => {
+                    error!("Failed to initialize admin site: unknown error: {}", err.message);
+                }
+            }
             std::process::exit(1);
         }
     };
 }
 
 pub fn svcevt_handler(evt: SvcEvt) {
-    match evt {
-        SvcEvt::Shutdown(_demise) => {
-            let triggers = get_trigger_handler();
-            triggers.run_shutdown_trigger_synchronous();
+    if let SvcEvt::Shutdown(_demise) = evt {
+        let triggers = get_trigger_handler();
+        triggers.run_shutdown_trigger_synchronous();
 
-            // Wait a little while to allow graceful shutdown before exiting process, otherwise the service manager might think the shutdown failed and force kill the process immediately
-            std::thread::sleep(std::time::Duration::from_millis(1000));
-        }
-        _ => {}
+        // Wait a little while to allow graceful shutdown before exiting process, otherwise the service manager might think the shutdown failed and force kill the process immediately
+        std::thread::sleep(std::time::Duration::from_millis(1000));
     }
 }
 

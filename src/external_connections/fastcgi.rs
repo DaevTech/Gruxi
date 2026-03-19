@@ -1,3 +1,4 @@
+use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::FastCgiError;
 use crate::file::file_util::replace_web_root_in_path;
 use crate::file::file_util::split_path;
@@ -12,6 +13,12 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 
 pub struct FastCgi;
+
+impl Default for FastCgi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FastCgi {
     pub fn new() -> Self {
@@ -231,7 +238,9 @@ impl FastCgi {
         // Now we work on getting a semaphore permit for the connection, if relevant
         let connection_semaphore_option = gruxi_request.get_connection_semaphore();
 
-        let response = match connection_semaphore_option {
+
+
+        match connection_semaphore_option {
             Some(connection_semaphore) => {
                 // We only need a permit, if a connection semaphore is set
                 let available_permits = connection_semaphore.available_permits();
@@ -254,9 +263,7 @@ impl FastCgi {
                 Self::do_fastcgi_request_and_response(gruxi_request, &ip_and_port, &params).await
             }
             None => Self::do_fastcgi_request_and_response(gruxi_request, &ip_and_port, &params).await,
-        };
-
-        response
+        }
     }
 
     pub async fn do_fastcgi_request_and_response(gruxi_request: &mut GruxiRequest, ip_and_port: &str, params: &HashMap<String, String>) -> Result<GruxiResponse, FastCgiError> {
@@ -283,7 +290,7 @@ impl FastCgi {
         }
 
         // Send parameters
-        let params_data = Self::create_fastcgi_params(&params);
+        let params_data = Self::create_fastcgi_params(params);
         if let Err(e) = stream.write_all(&params_data).await {
             error!("FastCGI Error: Failed to send PARAMS: {}", e);
             return Err(FastCgiError::Communication(e));
@@ -298,7 +305,7 @@ impl FastCgi {
 
         // Send body if present
         let body_bytes = gruxi_request.get_body_bytes().await;
-        if body_bytes.len() > 0 {
+        if !body_bytes.is_empty() {
             let stdin_data = Self::create_fastcgi_stdin(&body_bytes);
             if let Err(e) = stream.write_all(&stdin_data).await {
                 error!("FastCGI Error: Failed to send STDIN: {}", e);
@@ -391,20 +398,17 @@ impl FastCgi {
 
                 if key.eq_ignore_ascii_case("status") {
                     // Parse status code
-                    if let Some(space_pos) = value.find(' ') {
-                        if let Ok(code) = value[..space_pos].parse::<u16>() {
-                            if let Ok(status) = hyper::StatusCode::from_u16(code) {
+                    if let Some(space_pos) = value.find(' ')
+                        && let Ok(code) = value[..space_pos].parse::<u16>()
+                            && let Ok(status) = hyper::StatusCode::from_u16(code) {
                                 status_code = status;
                             }
-                        }
-                    }
                 } else {
                     // Add other headers
-                    if let Ok(header_name) = hyper::header::HeaderName::from_bytes(key.as_bytes()) {
-                        if let Ok(header_value) = hyper::header::HeaderValue::from_str(&value) {
+                    if let Ok(header_name) = hyper::header::HeaderName::from_bytes(key.as_bytes())
+                        && let Ok(header_value) = hyper::header::HeaderValue::from_str(value) {
                             response_builder = response_builder.header(header_name, header_value);
                         }
-                    }
                 }
             }
         }
@@ -419,12 +423,12 @@ impl FastCgi {
             }
             Err(e) => {
                 error!("FastCGI - Failed to build HTTP response: {}", e);
-                return Err(FastCgiError::InvalidResponse);
+                Err(FastCgiError::InvalidResponse)
             }
         }
     }
 
-    pub fn generate_fast_cgi_params(gruxi_request: &mut GruxiRequest) -> Result<HashMap<String, String>, ()> {
+    pub fn generate_fast_cgi_params(gruxi_request: &mut GruxiRequest) -> Result<HashMap<String, String>, GruxiError> {
         let mut params: HashMap<String, String> = HashMap::new();
 
         let uri = gruxi_request.get_path().to_string();
@@ -442,16 +446,14 @@ impl FastCgi {
         }
 
         // Set content type and length if present
-        if let Some(content_type) = headers.get("content-type") {
-            if let Ok(content_type) = content_type.to_str() {
+        if let Some(content_type) = headers.get("content-type")
+            && let Ok(content_type) = content_type.to_str() {
                 params.insert("CONTENT_TYPE".to_string(), content_type.to_string());
             }
-        }
-        if let Some(content_length) = headers.get("content-length") {
-            if let Ok(content_length) = content_length.to_str() {
+        if let Some(content_length) = headers.get("content-length")
+            && let Ok(content_length) = content_length.to_str() {
                 params.insert("CONTENT_LENGTH".to_string(), content_length.to_string());
             }
-        }
 
         // Handle web root mapping
         let mut full_script_path = gruxi_request.get_calculated_data("fastcgi_script_file").unwrap_or("").to_string();
@@ -528,8 +530,7 @@ impl FastCgi {
             None => request_uri,
         };
 
-        if path_only.starts_with(script_name) {
-            let path_info = &path_only[script_name.len()..];
+        if let Some(path_info) = path_only.strip_prefix(script_name) {
             if path_info.is_empty() {
                 "".to_string()
             } else {

@@ -41,6 +41,12 @@ pub struct Site {
 // Supported rewrite functions
 pub static REWRITE_FUNCTIONS: &[&str] = &["OnlyWebRootIndexForSubdirs"];
 
+impl Default for Site {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Site {
     pub fn new() -> Self {
         Site {
@@ -152,11 +158,10 @@ impl Site {
                 }
 
                 // Check if parent directory is valid (if the file doesn't exist yet)
-                if let Some(parent) = access_log_file.parent() {
-                    if !parent.as_os_str().is_empty() && parent.exists() && !parent.is_dir() {
+                if let Some(parent) = access_log_file.parent()
+                    && !parent.as_os_str().is_empty() && parent.exists() && !parent.is_dir() {
                         errors.push(format!("Access log file parent path '{}' exists but is not a directory", parent.display()));
                     }
-                }
             }
         }
 

@@ -43,7 +43,7 @@ impl AccessLogBuffer {
         };
 
         // We get the config and add the logs we need
-        let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
+        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration().await;
 
         for site in &config.sites {

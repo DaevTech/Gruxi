@@ -4,12 +4,7 @@ use std::{
 };
 
 use crate::{
-    compression::compression::Compression,
-    configuration::cached_configuration::get_cached_configuration,
-    core::triggers::get_trigger_handler,
-    debug, error,
-    file::file_reader_structs::*,
-    http::{
+    compression::response_compression::ResponseCompression, config::cached_configuration::get_cached_configuration, core::triggers::get_trigger_handler, debug, error, file::file_reader_structs::*, http::{
         caching::{
             etag::etag_strong_from_metadata,
             range::{RangeParseResult, build_multipart_body, build_multipart_body_from_parts, format_content_range, get_range_header, parse_range_header, should_process_range},
@@ -18,8 +13,7 @@ use crate::{
             body_error::{BodyError, box_err},
             gruxi_request::GruxiRequest,
         },
-    },
-    trace, warn,
+    }, trace, warn
 };
 
 use dashmap::DashMap;
@@ -83,14 +77,14 @@ impl FileReaderCache {
         }
 
         FileReaderCache {
-            cache: cache,
+            cache,
             is_caching_enabled,
-            cached_items_last_checked: cached_items_last_checked,
+            cached_items_last_checked,
             max_file_size,
             gzip_enabled: *gzip_enabled,
             compressible_content_types: compressible_content_types.clone(),
             etag_enabled,
-            last_modified_header_enabled: last_modified_header_enabled,
+            last_modified_header_enabled,
             expires_header_enabled,
             cache_control_header_enabled,
         }
@@ -109,12 +103,11 @@ impl FileReaderCache {
     // Get file data
     pub async fn get_file(&self, file_path: &str) -> Result<Arc<FileEntry>, std::io::Error> {
         // Check the cache first
-        if self.is_caching_enabled {
-            if let Some(cached_entry) = self.cache.get(file_path) {
+        if self.is_caching_enabled
+            && let Some(cached_entry) = self.cache.get(file_path) {
                 trace!("File found in cache: {}", file_path);
                 return Ok(cached_entry.value().clone());
             }
-        }
 
         // Not found in cache, so we populate it, maybe saving it to cache if enabled
         trace!("File/dir not found in cache, reading from disk: {}", file_path);
@@ -127,7 +120,7 @@ impl FileReaderCache {
         // Determine MIME type, if we have a file
         let mut mime_type = String::new();
         if !is_directory && exists {
-            mime_type = mime_guess::from_path(&file_path).first_or_octet_stream().to_string();
+            mime_type = mime_guess::from_path(file_path).first_or_octet_stream().to_string();
             trace!("Guessed MIME type for {}: {}", file_path, mime_type);
         }
 
@@ -186,7 +179,7 @@ impl FileReaderCache {
                 exists,
                 length,
                 is_too_large_to_store: length > self.max_file_size,
-                mime_type: mime_type,
+                mime_type,
                 last_modified,
                 etag_header,
                 last_modified_header: last_modified_header_value,
@@ -219,7 +212,7 @@ impl FileReaderCache {
                         if content_found {
                             let mut gzip_content = Vec::new();
 
-                            match Compression::compress_content(raw_content, &mut gzip_content) {
+                            match ResponseCompression::compress_content(raw_content, &mut gzip_content) {
                                 Ok(_) => {}
                                 Err(e) => {
                                     warn!("Failed to compress file {}: {}", file_path, e);
@@ -277,7 +270,7 @@ impl FileReaderCache {
         // Time interval for checking cache
         let mut interval = interval(Duration::from_secs(cache_update_thread_interval));
         // Each items max lifetime
-        let max_item_lifetime_duration = Duration::from_secs(max_item_lifetime as u64);
+        let max_item_lifetime_duration = Duration::from_secs(max_item_lifetime);
 
         // Get configuration reload trigger
         let triggers = get_trigger_handler();
@@ -326,7 +319,7 @@ impl FileReaderCache {
 
             trace!("[FileCacheUpdate] Checking for modified timestamps and if known files still exist");
             // Get a list of files to check
-            let files_to_check: Vec<(String, (Instant, Instant, SystemTime))> = cached_items_last_checked.iter().map(|entry| (entry.key().clone(), entry.value().clone())).collect();
+            let files_to_check: Vec<(String, (Instant, Instant, SystemTime))> = cached_items_last_checked.iter().map(|entry| (entry.key().clone(), *entry.value())).collect();
 
             trace!("[FileCacheUpdate] Files found to check for modified timestamps: {}", files_to_check.len());
             // Now we go through the list, to check if the file was modified since last known timestamp
@@ -571,14 +564,13 @@ impl FileEntry {
         }
 
         // We prefer gzip if the client accepts it
-        if accept_encoding_headers.iter().any(|enc| enc.to_lowercase() == "gzip") {
-            if let Some(gzip_content) = &self.content.gzip {
+        if accept_encoding_headers.iter().any(|enc| enc.to_lowercase() == "gzip")
+            && let Some(gzip_content) = &self.content.gzip {
                 trace!("Serving gzipped content from cache");
                 let gzipped_bytes = gzip_content.as_ref().clone();
                 let boxbody = BoxBody::new(Full::new(gzipped_bytes).map_err(|never| -> BodyError { match never {} }));
                 return (boxbody, "gzip".to_string());
             }
-        }
 
         // Otherwise serve raw content
         if let Some(raw_content) = &self.content.raw {
@@ -590,6 +582,6 @@ impl FileEntry {
 
         // If nothing falls to taste, return empty
         let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-        return (BoxBody::new(empty), String::new());
+        (BoxBody::new(empty), String::new())
     }
 }

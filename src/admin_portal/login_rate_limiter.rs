@@ -55,5 +55,5 @@ impl LoginRateLimiter {
 static LOGIN_RATE_LIMITER: OnceLock<LoginRateLimiter> = OnceLock::new();
 
 pub fn get_login_rate_limiter() -> &'static LoginRateLimiter {
-    LOGIN_RATE_LIMITER.get_or_init(|| LoginRateLimiter::new())
+    LOGIN_RATE_LIMITER.get_or_init(LoginRateLimiter::new)
 }

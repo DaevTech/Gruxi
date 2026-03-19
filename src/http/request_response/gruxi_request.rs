@@ -12,6 +12,9 @@ use std::mem;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+use crate::error::gruxi_error::GruxiError;
+use crate::error::gruxi_error_enums::GruxiErrorKind;
+use crate::error::gruxi_error_enums::GruxiRequestError;
 use crate::http::request_response::gruxi_body::GruxiBody;
 
 // Wrapper around hyper Request to add calculated data and serve as a request in Gruxi
@@ -111,11 +114,10 @@ impl GruxiRequest {
         let mut hostname = String::new();
 
         // Host / :authority header
-        if let Some(host) = parts.headers.get(HOST) {
-            if let Ok(host) = host.to_str() {
+        if let Some(host) = parts.headers.get(HOST)
+            && let Ok(host) = host.to_str() {
                 hostname = host.to_string();
             }
-        }
 
         // Absolute-form URI (proxy requests) takes precedence
         if let Some(authority) = parts.uri.authority() {
@@ -234,7 +236,7 @@ impl GruxiRequest {
         }
     }
 
-    pub fn get_streaming_http_request(&mut self) -> Result<Request<BoxBody<Bytes, hyper::Error>>, ()> {
+    pub fn get_streaming_http_request(&mut self) -> Result<Request<BoxBody<Bytes, hyper::Error>>, GruxiError> {
         match mem::replace(&mut self.body, GruxiBody::Buffered(Bytes::new())) {
             GruxiBody::Streaming(incoming_body) => {
                 let request = Request::from_parts(self.parts.clone(), incoming_body.boxed());
@@ -242,7 +244,7 @@ impl GruxiRequest {
             }
             other => {
                 self.body = other;
-                Err(())
+                Err(GruxiError::new_with_kind_only(GruxiErrorKind::GruxiRequest(GruxiRequestError::GetStreamingBodyError)))
             }
         }
     }
@@ -275,9 +277,9 @@ impl GruxiRequest {
         let mut hop_by_hop_headers = crate::http::http_util::get_list_of_hop_by_hop_headers(is_upgrade);
 
         // Check the connection header for any additional hop-by-hop headers, before we remove the connection header itself
-        if !is_upgrade {
-            if let Some(connection_header) = connection_header_option {
-                if let Ok(connection_header_str) = connection_header.to_str() {
+        if !is_upgrade
+            && let Some(connection_header) = connection_header_option
+                && let Ok(connection_header_str) = connection_header.to_str() {
                     for token in connection_header_str.split(',') {
                         let token_trimmed = token.trim();
                         if !token_trimmed.is_empty() {
@@ -285,8 +287,6 @@ impl GruxiRequest {
                         }
                     }
                 }
-            }
-        }
 
         for header in &hop_by_hop_headers {
             self.remove_header(header);
@@ -319,11 +319,10 @@ impl GruxiRequest {
     }
 
     pub fn get_accepted_encodings(&self) -> Vec<String> {
-        if let Some(accept_encoding_header) = self.parts.headers.get("Accept-Encoding") {
-            if let Ok(accept_encoding_str) = accept_encoding_header.to_str() {
+        if let Some(accept_encoding_header) = self.parts.headers.get("Accept-Encoding")
+            && let Ok(accept_encoding_str) = accept_encoding_header.to_str() {
                 return accept_encoding_str.split(',').map(|s| s.trim().to_string()).collect();
             }
-        }
         Vec::new()
     }
 }

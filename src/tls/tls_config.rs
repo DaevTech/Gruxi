@@ -13,7 +13,7 @@ pub fn tls_config() -> ClientConfig {
     // Extend with webpki-roots
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
-    let config = ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
+    
 
-    config
+    ClientConfig::builder().with_root_certificates(roots).with_no_client_auth()
 }

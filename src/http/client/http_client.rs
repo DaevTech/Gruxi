@@ -20,6 +20,12 @@ pub struct HttpClient {
 // Note: responses are still Response<hyper::body::Incoming>.
 type GruxiRequestBody = BoxBody<Bytes, hyper::Error>;
 
+impl Default for HttpClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HttpClient {
     pub fn new() -> Self {
         // Client with TLS certificate verification, for streaming bodies

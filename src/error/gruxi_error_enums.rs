@@ -6,7 +6,9 @@ pub enum GruxiErrorKind {
     HttpRequestValidation(u16), // HTTP status code for request validation errors
     FastCgi(FastCgiError),
     Internal(&'static str),
-    AdminApi(AdminApiError)
+    AdminApi(AdminApiError),
+    InitAdminPortal(InitAdminPortalError),
+    GruxiRequest(GruxiRequestError),
 }
 
 #[derive(Debug)]
@@ -51,4 +53,15 @@ pub enum FastCgiError {
 pub enum AdminApiError {
     NoRouteMatched,
     InvalidRequest,
+}
+
+#[derive(Debug)]
+pub enum InitAdminPortalError {
+    NoDatabaseConnection(String),
+    CouldNotCreateAdminUser(String),
+}
+
+#[derive(Debug)]
+pub enum GruxiRequestError {
+    GetStreamingBodyError,
 }

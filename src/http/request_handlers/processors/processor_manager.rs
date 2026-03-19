@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::http::request_handlers::processors::{
-    load_balancer::load_balancer::LoadBalancerRegistry, php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor,
+    load_balancers::load_balancer::LoadBalancerRegistry, php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor,
 };
 
 pub struct ProcessorManager {
@@ -15,7 +15,7 @@ pub struct ProcessorManager {
 
 impl ProcessorManager {
     pub async fn new() -> Self {
-        let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
+        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration().await;
 
         let mut processor_manager = ProcessorManager {

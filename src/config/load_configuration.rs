@@ -1,5 +1,5 @@
 use crate::admin_portal::init::add_admin_portal_to_configuration;
-use crate::configuration::binding_site_relation::BindingSiteRelationship;
+use crate::config::binding_site_relation::BindingSiteRelationship;
 use crate::database::database_migration::migrate_database;
 use crate::database::database_schema::{CURRENT_DB_SCHEMA_VERSION, get_schema_version, set_schema_version};
 use crate::external_connections::managed_system::php_cgi;
@@ -8,7 +8,7 @@ use crate::http::request_handlers::processors::php_processor::{self, PHPProcesso
 use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorRewrite};
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
 use crate::{
-    configuration::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::HeaderKV, site::Site},
+    config::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::HeaderKV, site::Site},
     core::database_connection::get_database_connection,
 };
 use crate::{info, trace};
@@ -46,13 +46,13 @@ pub fn init() -> Configuration {
         } else {
             // Load existing configuration
             let existing_configuration_result = fetch_configuration_in_db();
-            let existing_configuration = match existing_configuration_result {
+
+            match existing_configuration_result {
                 Ok(conf) => conf,
                 Err(e) => {
                     panic!("Failed to load configuration from database: {:?}", e);
                 }
-            };
-            existing_configuration
+            }
         }
     };
 
@@ -99,7 +99,7 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
         static_file_processors,
         php_processors,
         proxy_processors,
-        php_cgi_handlers: php_cgi_handlers,
+        php_cgi_handlers,
     };
     configuration.sanitize();
 
@@ -416,8 +416,8 @@ fn load_binding_sites_relationships(connection: &Connection) -> Result<Vec<Bindi
         let site_id: String = statement.read(1).map_err(|e| format!("Failed to read site_id: {}", e))?;
 
         binding_sites.push(BindingSiteRelationship {
-            binding_id: binding_id,
-            site_id: site_id,
+            binding_id,
+            site_id,
         });
     }
 

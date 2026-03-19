@@ -102,7 +102,7 @@ impl PhpCgi {
         } else if self.concurrent_threads < 1 {
             1
         } else {
-            self.concurrent_threads as u32
+            self.concurrent_threads
         }
     }
 
@@ -246,14 +246,13 @@ impl PhpCgi {
         } else {
             // Check if we need to send a keep-alive
             let time_since_activity = self.last_activity.elapsed();
-            if time_since_activity >= Duration::from_secs(10) {
-                if !self.send_keep_alive().await {
+            if time_since_activity >= Duration::from_secs(10)
+                && !self.send_keep_alive().await {
                     warn!("Keep-alive failed, restarting PHP-CGI process");
                     self.stop().await;
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                     self.start().await?;
                 }
-            }
         }
         Ok(())
     }

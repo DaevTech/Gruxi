@@ -12,6 +12,12 @@ pub struct HttpCaching {
     pub enable_header_cache_control: bool,
 }
 
+impl Default for HttpCaching {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HttpCaching {
     pub fn new() -> Self {
         Self {

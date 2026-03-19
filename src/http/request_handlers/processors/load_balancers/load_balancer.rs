@@ -105,6 +105,12 @@ pub struct LoadBalancerRegistry {
     inner: RwLock<HashMap<String, mpsc::Sender<LoadBalancerCommand>>>,
 }
 
+impl Default for LoadBalancerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LoadBalancerRegistry {
     pub fn new() -> Self {
         Self { inner: RwLock::new(HashMap::new()) }

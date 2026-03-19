@@ -1,10 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
-
+use crate::error;
 use tokio::sync::Semaphore;
 
 use crate::{
-    error, trace,
-    external_connections::managed_system::php_cgi::PhpCgi,
+    error::{ gruxi_error::GruxiError, gruxi_error_enums::GruxiErrorKind}, external_connections::managed_system::php_cgi::PhpCgi, trace
 };
 
 pub struct ExternalSystemHandler {
@@ -17,7 +16,7 @@ impl ExternalSystemHandler {
         let mut connection_semaphore = HashMap::new();
 
         // Get the config, to determine what we need
-        let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
+        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration().await;
 
         let mut php_cgi_id_to_port = HashMap::new();
@@ -65,8 +64,8 @@ impl ExternalSystemHandler {
         }
     }
 
-    pub fn get_port_for_php_cgi(&self, php_cgi_id: &str) -> Result<u16, ()> {
-        self.php_cgi_id_to_port.get(php_cgi_id).cloned().ok_or(())
+    pub fn get_port_for_php_cgi(&self, php_cgi_id: &str) -> Result<u16, GruxiError> {
+        self.php_cgi_id_to_port.get(php_cgi_id).cloned().ok_or(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("")))
     }
 
     pub fn get_connection_semaphore(&self, external_system_id: &str) -> Option<Arc<Semaphore>> {

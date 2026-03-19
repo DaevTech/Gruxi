@@ -11,6 +11,12 @@ pub struct Binding {
     pub is_tls: bool,
 }
 
+impl Default for Binding {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Binding {
     pub fn new() -> Self {
         Binding {

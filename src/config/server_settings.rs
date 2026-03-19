@@ -7,6 +7,12 @@ pub struct ServerSettings {
     pub blocked_file_patterns: Vec<String>,
 }
 
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ServerSettings {
     pub fn new() -> Self {
         ServerSettings {

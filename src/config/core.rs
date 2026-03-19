@@ -1,9 +1,9 @@
-use crate::configuration::http_caching::HttpCaching;
-use crate::configuration::logging::Logging;
-use crate::configuration::tls_settings::TlsSettings;
-use crate::configuration::{admin_portal::AdminPortal, file_cache::FileCache};
-use crate::configuration::gzip::Gzip;
-use crate::configuration::server_settings::ServerSettings;
+use crate::config::http_caching::HttpCaching;
+use crate::config::logging::Logging;
+use crate::config::tls_settings::TlsSettings;
+use crate::config::{admin_portal::AdminPortal, file_cache::FileCache};
+use crate::config::gzip::Gzip;
+use crate::config::server_settings::ServerSettings;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

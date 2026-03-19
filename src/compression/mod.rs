@@ -1,1 +1,1 @@
-pub mod compression;
+pub mod response_compression;

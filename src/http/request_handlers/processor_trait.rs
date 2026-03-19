@@ -1,5 +1,5 @@
 use crate::{
-    configuration::site::Site,
+    config::site::Site,
     error::gruxi_error::GruxiError, http::{http_server::ConnectionContext, request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse}},
 };
 

@@ -15,6 +15,12 @@ pub struct Logging {
     pub max_log_age_days: u32,
 }
 
+impl Default for Logging {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Logging {
     pub fn new() -> Self {
         Self {
@@ -43,7 +49,7 @@ impl Logging {
 
         // If rotate_by_time is enabled, log_time_rotation_type must be valid
         if self.rotate_by_time {
-            let valid_types = vec!["daily", "weekly", "monthly"];
+            let valid_types = ["daily", "weekly", "monthly"];
             if !valid_types.contains(&self.log_time_rotation_type.as_str()) {
                 errors.push("Log time rotation type must be one of: daily, weekly, monthly.".to_string());
             }

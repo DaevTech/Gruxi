@@ -6,6 +6,12 @@ pub struct Gzip {
     pub compressible_content_types: Vec<String>,
 }
 
+impl Default for Gzip {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Gzip {
     pub fn new() -> Self {
         Gzip {

@@ -2,10 +2,16 @@ use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
 
-use crate::configuration::{binding::Binding, binding_site_relation::BindingSiteRelationship, cached_configuration::get_cached_configuration, site::Site};
+use crate::config::{binding::Binding, binding_site_relation::BindingSiteRelationship, cached_configuration::get_cached_configuration, site::Site};
 
 pub struct BindingSiteCache {
     binding_to_sites: DashMap<String, Arc<Vec<Site>>>,
+}
+
+impl Default for BindingSiteCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BindingSiteCache {
@@ -20,7 +26,7 @@ impl BindingSiteCache {
         self.populate_cache(&configuration.bindings, &configuration.sites, &configuration.binding_sites);
     }
 
-    fn populate_cache(&self, bindings: &Vec<Binding>, sites: &Vec<Site>, binding_sites: &Vec<BindingSiteRelationship>) {
+    fn populate_cache(&self, bindings: &[Binding], sites: &[Site], binding_sites: &[BindingSiteRelationship]) {
         // Clear existing cache
         self.binding_to_sites.clear();
 

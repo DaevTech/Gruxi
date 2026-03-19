@@ -16,6 +16,12 @@ pub struct AppPaths {
     pub default_admin_portal_dir: PathBuf,
 }
 
+impl Default for AppPaths {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppPaths {
     pub fn new() -> Self {
         // Determine if we are running as a service by checking the command line arguments for the "service" flag
@@ -25,7 +31,7 @@ impl AppPaths {
         // Based on Linux/Windows, we try to determine the correct paths
         #[cfg(target_os = "windows")]
         {
-            return Self::get_app_paths_win(run_as_service);
+            Self::get_app_paths_win(run_as_service)
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -44,7 +50,8 @@ impl AppPaths {
         let default_www_dir = current_working_dir.join("www-default");
         let default_admin_portal_dir = current_working_dir.join("www-admin");
 
-        let environment = AppPaths {
+        
+        AppPaths {
             is_service: run_as_service,
             binary_path,
             working_dir: current_working_dir,
@@ -53,8 +60,7 @@ impl AppPaths {
             db_dir,
             default_www_dir,
             default_admin_portal_dir,
-        };
-        environment
+        }
     }
 
     // On Linux, if we are running as a service, we detect the paths based on existence
@@ -121,5 +127,5 @@ impl AppPaths {
 static APP_PATH_SINGLETON: OnceLock<AppPaths> = OnceLock::new();
 
 pub fn get_app_paths() -> &'static AppPaths {
-    APP_PATH_SINGLETON.get_or_init(|| AppPaths::new())
+    APP_PATH_SINGLETON.get_or_init(AppPaths::new)
 }

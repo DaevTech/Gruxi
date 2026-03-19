@@ -45,6 +45,7 @@ pub fn replace_web_root_in_path(original_path: &str, old_web_root: &str, new_web
 /// - The path starts with the base path, to prevent directory traversal attacks
 /// - The path does not contain any of the blocked file patterns
 /// - Returns true if the path is secure, false otherwise
+///
 /// Used primarily by static file processors, to ensure that files being served are safe
 /// Expected that both base_path and test_path are normalized paths without junk!
 pub async fn check_path_secure(base_path: &str, test_path: &str) -> bool {
@@ -59,7 +60,7 @@ pub async fn check_path_secure(base_path: &str, test_path: &str) -> bool {
     trace!("Check if file pattern is blocked because of extension: {}", &file);
 
     // Check the blacklisted file patterns
-    let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
+    let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
     let config = cached_configuration.get_configuration().await;
 
     // Run through blocked patterns and see if any match

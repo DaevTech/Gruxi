@@ -17,8 +17,8 @@ use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
 use tokio_rustls::rustls::sign::CertifiedKey as RustlsCertifiedKey;
 use tokio_rustls::rustls::{self, ServerConfig as RustlsServerConfig};
 
-use crate::configuration::binding::Binding;
-use crate::configuration::site::Site;
+use crate::config::binding::Binding;
+use crate::config::site::Site;
 use crate::core::database_connection::get_database_connection;
 
 // Persist generated cert/key to disk and update configuration for a specific site
@@ -226,7 +226,7 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
     // Skip sites that are disabled or have ACME enabled - they'll be handled by the ACME resolver
     for site in sites.iter().filter(|s| s.is_enabled && !s.tls_automatic_enabled) {
         // Determine SANs for this site
-        let mut sans: Vec<String> = site.hostnames.iter().cloned().filter(|h| !h.trim().is_empty() && h != "*").collect();
+        let mut sans: Vec<String> = site.hostnames.iter().filter(|&h| !h.trim().is_empty() && h != "*").cloned().collect();
         let has_wildcard = site.hostnames.contains(&"*".to_string());
 
         if sans.is_empty() || has_wildcard {
@@ -235,11 +235,10 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
             sans.push("localhost".to_string());
 
             // Add machine's hostname if available
-            if let Ok(hostname) = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")) {
-                if !hostname.is_empty() && !sans.contains(&hostname) {
+            if let Ok(hostname) = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME"))
+                && !hostname.is_empty() && !sans.contains(&hostname) {
                     sans.push(hostname.to_lowercase());
                 }
-            }
         }
 
         // Load or generate certificate, if possible
@@ -329,15 +328,14 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
         }
 
         // For wildcard sites, add localhost
-        if has_wildcard {
-            if !sans.contains(&"localhost".to_string()) {
+        if has_wildcard
+            && !sans.contains(&"localhost".to_string()) {
                 if let Err(e) = resolver.add_manual_cert("localhost", certified_arc.as_ref().clone()) {
                     debug!("Failed to add localhost for wildcard site: {:?}", e);
                 } else {
                     cert_added = true;
                 }
             }
-        }
     }
 
     // If no manual certs were added but we have ACME domains, that's fine
@@ -535,7 +533,7 @@ fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static
         }
     };
 
-    return Some((cert_chain, priv_key));
+    Some((cert_chain, priv_key))
 }
 
 /// Build a unified TLS acceptor that handles both ACME and manual certificates.

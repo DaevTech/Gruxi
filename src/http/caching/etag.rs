@@ -67,9 +67,9 @@ pub fn handle_conditional_headers(grux_request: &GruxiRequest, grux_response: &m
 
     // Handle If-Modified-Since (RFC 7232 Section 3.3)
     // Only applies to GET and HEAD requests (checked by caller context)
-    if let Some(if_modified_since_value) = grux_request.get_headers().get(hyper::header::IF_MODIFIED_SINCE) {
-        if let Ok(if_modified_since_str) = if_modified_since_value.to_str() {
-            if let Ok(if_modified_since_time) = httpdate::parse_http_date(if_modified_since_str) {
+    if let Some(if_modified_since_value) = grux_request.get_headers().get(hyper::header::IF_MODIFIED_SINCE)
+        && let Ok(if_modified_since_str) = if_modified_since_value.to_str()
+            && let Ok(if_modified_since_time) = httpdate::parse_http_date(if_modified_since_str) {
                 // HTTP dates have 1-second resolution, so we truncate to seconds for comparison
                 // If last_modified <= if_modified_since, the resource has not been modified
                 let last_modified_secs = last_modified.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
@@ -91,13 +91,11 @@ pub fn handle_conditional_headers(grux_request: &GruxiRequest, grux_response: &m
                     return true;
                 }
             }
-        }
-    }
 
     // Handle If-Unmodified-Since (RFC 7232 Section 3.4)
-    if let Some(if_unmodified_since_value) = grux_request.get_headers().get(hyper::header::IF_UNMODIFIED_SINCE) {
-        if let Ok(if_unmodified_since_str) = if_unmodified_since_value.to_str() {
-            if let Ok(if_unmodified_since_time) = httpdate::parse_http_date(if_unmodified_since_str) {
+    if let Some(if_unmodified_since_value) = grux_request.get_headers().get(hyper::header::IF_UNMODIFIED_SINCE)
+        && let Ok(if_unmodified_since_str) = if_unmodified_since_value.to_str()
+            && let Ok(if_unmodified_since_time) = httpdate::parse_http_date(if_unmodified_since_str) {
                 // HTTP dates have 1-second resolution, so we truncate to seconds for comparison
                 // If last_modified > if_unmodified_since, the resource has been modified
                 let last_modified_secs = last_modified.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
@@ -109,8 +107,6 @@ pub fn handle_conditional_headers(grux_request: &GruxiRequest, grux_response: &m
                     return true;
                 }
             }
-        }
-    }
 
     false
 }

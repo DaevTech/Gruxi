@@ -5,7 +5,7 @@ pub mod core;
 pub mod http;
 pub mod admin_portal;
 pub mod logging;
-pub mod configuration;
+pub mod config;
 pub mod tls;
 pub mod error;
 pub mod compression;

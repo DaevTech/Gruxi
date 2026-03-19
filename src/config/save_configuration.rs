@@ -1,10 +1,10 @@
-use crate::configuration::binding::Binding;
-use crate::configuration::configuration::Configuration;
-use crate::configuration::core::Core;
-use crate::configuration::load_configuration::fetch_configuration_in_db;
-use crate::configuration::request_handler::RequestHandler;
-use crate::configuration::site::HeaderKV;
-use crate::configuration::site::Site;
+use crate::config::binding::Binding;
+use crate::config::configuration::Configuration;
+use crate::config::core::Core;
+use crate::config::load_configuration::fetch_configuration_in_db;
+use crate::config::request_handler::RequestHandler;
+use crate::config::site::HeaderKV;
+use crate::config::site::Site;
 use crate::core::database_connection::get_database_connection;
 use crate::external_connections::managed_system::php_cgi::PhpCgi;
 use crate::http::request_handlers::processors::php_processor::PHPProcessor;
