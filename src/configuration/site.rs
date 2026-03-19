@@ -31,6 +31,11 @@ pub struct Site {
     // Logs
     pub access_log_enabled: bool,
     pub access_log_file: String,
+    // Enforce TLS
+    pub force_tls: bool,
+    pub force_tls_port: u16,
+    // Canonical host (for redirecting non-canonical hosts to the canonical one - Needs to be one of the hostnames in the hostnames list)
+    pub canonical_host: String,
 }
 
 // Supported rewrite functions
@@ -53,6 +58,9 @@ impl Site {
             extra_headers: Vec::new(),
             access_log_enabled: false,
             access_log_file: String::new(),
+            force_tls: false,
+            force_tls_port: 443,
+            canonical_host: String::new(),
         }
     }
 
@@ -60,6 +68,10 @@ impl Site {
         // Trim whitespace from hostnames
         for hostname in &mut self.hostnames {
             *hostname = hostname.trim().to_string();
+        }
+        // Lowercase hostnames for consistent matching (hostnames are case-insensitive)
+        for hostname in &mut self.hostnames {
+            *hostname = hostname.to_lowercase();
         }
 
         // Trim whitespace from rewrite functions
@@ -75,6 +87,10 @@ impl Site {
             kv.key = kv.key.trim().to_string();
             kv.value = kv.value.trim().to_string();
         }
+
+        // Trim whitespace from canonical host and make it lowercase for consistent matching
+        self.canonical_host = self.canonical_host.trim().to_string();
+        self.canonical_host = self.canonical_host.to_lowercase();
     }
 
     pub fn validate(&self) -> Result<(), Vec<String>> {
@@ -162,6 +178,23 @@ impl Site {
             if kv.value.trim().is_empty() {
                 errors.push(format!("Extra header {} value cannot be empty", idx + 1));
             }
+        }
+
+        // If force TLS is enabled, validate the force_tls_port
+        if self.force_tls {
+            // TLS port needs to be a valid port number (1-65535)
+            if self.force_tls_port == 0 {
+                errors.push(format!("Force TLS port '{}' is not a valid port number (1-65535)", self.force_tls_port));
+            }
+            // Check that it's not the same as the default HTTP port
+            if self.force_tls_port == 80 {
+                errors.push("Force TLS port cannot be 80, as it is the default HTTP port. Please choose a different port that the site is listening on.".to_string());
+            }
+        }
+
+        // If canonical host is set, it must be one of the hostnames in the hostnames list
+        if !self.canonical_host.is_empty() && !self.hostnames.contains(&self.canonical_host) {
+            errors.push(format!("Canonical host '{}' must be one of the hostnames in the hostnames list", self.canonical_host));
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }

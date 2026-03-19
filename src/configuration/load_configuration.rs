@@ -377,6 +377,11 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
         // TLS Automatic Enabled (added in schema version 4)
         let tls_automatic_enabled: i64 = statement.read(13).map_err(|e| format!("Failed to read tls_automatic_enabled: {}", e))?;
 
+        // Force TLS and Canonical host (added in schema version 7)
+        let force_tls: i64 = statement.read(14).map_err(|e| format!("Failed to read force_tls: {}", e))?;
+        let force_tls_port: i64 = statement.read(15).map_err(|e| format!("Failed to read force_tls_port: {}", e))?;
+        let canonical_host: String = statement.read(16).map_err(|e| format!("Failed to read canonical_host: {}", e))?;
+
         sites.push(Site {
             id: site_id,
             hostnames,
@@ -392,6 +397,9 @@ fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
             access_log_enabled: access_log_enabled != 0,
             access_log_file,
             extra_headers,
+            force_tls: force_tls != 0,
+            force_tls_port: force_tls_port as u16,
+            canonical_host,
         });
     }
 

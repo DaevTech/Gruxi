@@ -47,6 +47,13 @@ pub fn migrate_database() -> i32 {
         }
         schema_version = 6;
     }
+    if schema_version == 6 {
+        let result = migrate_db_helper(&connection, 6, 7, migrate_db_6_to_7);
+        if let Err(e) = result {
+            panic!("Database migration from version 6 to 7 failed: {}", e);
+        }
+        schema_version = 7;
+    }
 
     schema_version
 }
@@ -114,5 +121,13 @@ fn migrate_db_5_to_6(connection: &Connection) -> Result<(), sqlite::Error> {
     connection.execute("UPDATE server_settings SET setting_value = TRIM(REPLACE(setting_value, './certs', ''), '/') WHERE setting_key IN ('admin_portal_tls_certificate_path', 'admin_portal_tls_key_path') AND setting_value LIKE './certs/%';")?;
     connection.execute("UPDATE server_settings SET setting_value = TRIM(REPLACE(setting_value, 'certs', ''), '/') WHERE setting_key IN ('admin_portal_tls_certificate_path', 'admin_portal_tls_key_path') AND setting_value LIKE 'certs/%';")?;
 
+    Ok(())
+}
+
+fn migrate_db_6_to_7(connection: &Connection) -> Result<(), sqlite::Error> {
+    // Add "force_tls", "force_tls_port", and "canonical_host" to "sites" table
+    connection.execute("ALTER TABLE sites ADD COLUMN force_tls BOOLEAN NOT NULL DEFAULT 0;")?;
+    connection.execute("ALTER TABLE sites ADD COLUMN force_tls_port INTEGER NOT NULL DEFAULT 443;")?;
+    connection.execute("ALTER TABLE sites ADD COLUMN canonical_host TEXT NOT NULL DEFAULT '';")?;
     Ok(())
 }

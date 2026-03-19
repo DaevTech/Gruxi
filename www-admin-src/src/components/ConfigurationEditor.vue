@@ -934,14 +934,12 @@ onMounted(() => {
                                     <label>
                                         <input v-model="site.is_enabled" type="checkbox" />
                                         Enabled
+                                        <span class="help-icon" data-tooltip="If enabled, this site will be active and accessible.">?</span>
                                     </label>
                                     <label>
                                         <input v-model="site.is_default" type="checkbox" />
                                         Default Site
-                                    </label>
-                                    <label>
-                                        <input v-model="site.access_log_enabled" type="checkbox" />
-                                        Enable Access Logging
+                                        <span class="help-icon" data-tooltip="If enabled, this site will be the default site for requests that do not match any other site.">?</span>
                                     </label>
                                 </div>
                             </div>
@@ -949,6 +947,7 @@ onMounted(() => {
                             <!-- Associated Network Bindings -->
                             <div class="form-grid compact">
                                 <div class="form-field checkbox-grid compact">
+                                    <span>Listen on:</span>
                                     <label v-for="binding in getAvailableBindings()" :key="binding.id">
                                         <input type="checkbox" :checked="getSiteBindings(site.id).includes(binding.id)" @change="(e) => (e.target.checked ? associateSiteWithBinding(site.id, binding.id) : disassociateSiteFromBinding(site.id, binding.id))" />
                                         {{ binding.label }}
@@ -962,16 +961,6 @@ onMounted(() => {
                                 </div>
                             </div>
 
-                            <div v-if="site.access_log_enabled" class="form-grid compact">
-                                <div class="form-field">
-                                    <label>
-                                        Access Log File
-                                        <span class="help-icon" data-tooltip="Access log file name. If you want it in the default log location, use it like this 'mysite-access.log'. You can also have a full absolute path like '/var/logs/mylog.log' or 'C:/logs/mylog.log'.">?</span>
-                                    </label>
-                                    <input v-model="site.access_log_file" type="text" placeholder="Path to log file" />
-                                </div>
-                            </div>
-
                             <!-- Request Processing Section -->
                             <div class="request-processing-section">
                                 <div class="subsection-header compact" @click="toggleSiteSubsection(siteIndex, 'requestProcessing')">
@@ -982,50 +971,62 @@ onMounted(() => {
                                 </div>
 
                                 <div v-if="isSiteSubsectionExpanded(siteIndex, 'requestProcessing')" class="section-top-margin">
-                                    <!-- Hostnames -->
-                                    <div class="form-field">
-                                        <div class="list-field compact">
-                                            <label>Hostnames (use * to match all hostnames)</label>
-                                            <TagInput
-                                                v-model="site.hostnames"
-                                                placeholder="Add hostname and press Enter..."
-                                            />
+                                    <div class="form-grid compact">
+                                        <!-- Hostnames -->
+                                        <div class="form-field">
+                                            <label>
+                                                Hostnames (use * to match all hostnames)
+                                                <span class="help-icon" data-tooltip="Select all the hostnames that the site should respond to. Use * to match all hostnames.">?</span>
+                                            </label>
+                                            <TagInput v-model="site.hostnames" placeholder="Add hostname and press Enter..." />
                                         </div>
-                                    </div>
 
-                                    <div class="two-column-layout">
-                                        <div class="list-field compact half-width">
-                                            <!-- Rewrite Functions -->
-                                            <div class="form-field">
-                                                <label>Rewrite Functions - Pre-defined request rewrites</label>
-                                                <div class="doc-link">
-                                                    <a href="https://gruxi.org/docs/configuration/sites/#rewrite-functions" target="_blank">Documentation on rewrite functions</a>
-                                                </div>
-                                                <div class="list-items">
-                                                    <div v-for="(func, funcIndex) in site.rewrite_functions" :key="funcIndex" class="list-item">
-                                                        <select v-model="site.rewrite_functions[funcIndex]" class="rewrite-select">
-                                                            <option value="">-- Select Function --</option>
-                                                            <option v-for="option in rewriteFunctionOptions" :key="option" :value="option">
-                                                                {{ option }}
-                                                            </option>
-                                                        </select>
-                                                        <button @click="removeRewriteFunction(siteIndex, funcIndex)" class="remove-item-button">×</button>
+                                        <!-- Canonical Hostname -->
+                                        <div class="form-field">
+                                            <label>
+                                                Canonical Hostname
+                                                <span class="help-icon" data-tooltip="Optionally specify a canonical hostname for this site. If set, requests that come in with a different hostname will be redirected to the canonical hostname.">?</span>
+                                            </label>
+                                            <input v-model="site.canonical_host" type="text" placeholder="e.g. www.example.com" class="max500" />
+                                        </div>
+
+                                        <div class="two-column-layout">
+                                            <div class="list-field compact half-width">
+                                                <!-- Rewrite Functions -->
+                                                <div class="form-field">
+                                                    <label>
+                                                        Rewrite Functions - Pre-defined request rewrites
+                                                        <span class="help-icon" data-tooltip="Select a pre-defined function to rewrite requests. See documentation for more details and which to choose.">?</span>
+                                                    </label>
+                                                    <div class="doc-link">
+                                                        <a href="https://gruxi.org/docs/configuration/sites/#rewrite-functions" target="_blank">Documentation on rewrite functions</a>
                                                     </div>
-                                                    <button @click="addRewriteFunction(siteIndex)" class="add-item-button">+ Add Function</button>
+                                                    <div class="list-items">
+                                                        <div v-for="(func, funcIndex) in site.rewrite_functions" :key="funcIndex" class="list-item">
+                                                            <select v-model="site.rewrite_functions[funcIndex]" class="rewrite-select">
+                                                                <option value="">-- Select Function --</option>
+                                                                <option v-for="option in rewriteFunctionOptions" :key="option" :value="option">
+                                                                    {{ option }}
+                                                                </option>
+                                                            </select>
+                                                            <button @click="removeRewriteFunction(siteIndex, funcIndex)" class="remove-item-button">×</button>
+                                                        </div>
+                                                        <button @click="addRewriteFunction(siteIndex)" class="add-item-button">+ Add Function</button>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                        <div class="list-field compact half-width">
-                                            <!-- Extra Headers -->
-                                            <div class="form-field">
-                                                <label>Extra HTTP Headers</label>
-                                                <div class="list-items">
-                                                    <div v-for="(hdr, hdrIndex) in site.extra_headers || []" :key="hdrIndex" class="list-item key-value">
-                                                        <input v-model="site.extra_headers[hdrIndex].key" type="text" placeholder="Header Key" class="key-input" />
-                                                        <input v-model="site.extra_headers[hdrIndex].value" type="text" placeholder="Header Value" class="value-input" />
-                                                        <button @click="removeExtraHeader(siteIndex, hdrIndex)" class="remove-item-button">×</button>
+                                            <div class="list-field compact half-width">
+                                                <!-- Extra Headers -->
+                                                <div class="form-field">
+                                                    <label>Extra HTTP Headers</label>
+                                                    <div class="list-items">
+                                                        <div v-for="(hdr, hdrIndex) in site.extra_headers || []" :key="hdrIndex" class="list-item key-value">
+                                                            <input v-model="site.extra_headers[hdrIndex].key" type="text" placeholder="Header Key" class="key-input" />
+                                                            <input v-model="site.extra_headers[hdrIndex].value" type="text" placeholder="Header Value" class="value-input" />
+                                                            <button @click="removeExtraHeader(siteIndex, hdrIndex)" class="remove-item-button">×</button>
+                                                        </div>
+                                                        <button @click="addExtraHeader(siteIndex)" class="add-item-button">+ Add Header</button>
                                                     </div>
-                                                    <button @click="addExtraHeader(siteIndex)" class="add-item-button">+ Add Header</button>
                                                 </div>
                                             </div>
                                         </div>
@@ -1098,10 +1099,7 @@ onMounted(() => {
 
                                                     <div class="form-field">
                                                         <label>URL Match Patterns <span class="help-icon" data-tooltip="List of url match patterns. * is used to match on all urls and means that this processor will try to serve all urls, if possible. You can add multiple patterns to match for this processor, such as '/assets' and '/static'.">?</span></label>
-                                                        <TagInput
-                                                            v-model="processor.handler.url_match"
-                                                            placeholder="Enter pattern and press Enter"
-                                                        />
+                                                        <TagInput v-model="processor.handler.url_match" placeholder="Enter pattern and press Enter" />
                                                     </div>
 
                                                     <!-- Processor type-specific configuration -->
@@ -1282,12 +1280,12 @@ onMounted(() => {
                                 </div>
                             </div>
 
-                            <!-- TLS Certificate Settings -->
+                            <!-- TLS Settings -->
                             <div class="tls-settings-section">
                                 <div class="subsection-header compact" @click="toggleSiteSubsection(siteIndex, 'tls')">
                                     <div class="header-left">
                                         <span class="section-icon" :class="{ expanded: isSiteSubsectionExpanded(siteIndex, 'tls') }">▶</span>
-                                        <h5 class="subsection-title">TLS Certificate Settings</h5>
+                                        <h5 class="subsection-title">TLS Settings</h5>
                                     </div>
                                 </div>
 
@@ -1299,11 +1297,23 @@ onMounted(() => {
                                                 Enable Automatic TLS Certificates
                                                 <span class="help-icon" data-tooltip="If enabled, Gruxi will automatically obtain and renew TLS certificates for this site. Requires listening on port 443, Core Settings → TLS Settings (account email), and hostnames must be publicly reachable.">?</span>
                                             </label>
+
+                                            <label>
+                                                <input v-model="site.force_tls" type="checkbox" />
+                                                Force TLS
+                                                <span class="help-icon" data-tooltip="If enabled, all HTTP requests will be redirected to TLS on the selected port.">?</span>
+                                            </label>
                                         </div>
                                     </div>
 
-                                    <div class="info-field" v-if="!site.tls_automatic_enabled">
-                                        <p><strong>Note:</strong> You can either specify file paths or paste the certificate/key content directly. If both are provided, the file paths take precedence.</p>
+                                    <div class="form-grid compact" v-if="site.force_tls">
+                                        <div class="form-field compact">
+                                            <label>
+                                                Force TLS Port
+                                                <span class="help-icon" data-tooltip="Select which port to redirect HTTP requests to TLS. By default, this will be 443. If not, specify the desired port. The port needs to be one of the ports the site is listening on.">?</span>
+                                            </label>
+                                            <input v-model="site.force_tls_port" type="number" min="1" max="65535" />
+                                        </div>
                                     </div>
 
                                     <div class="tls-grid-full" v-if="!site.tls_automatic_enabled">
@@ -1334,6 +1344,39 @@ onMounted(() => {
                                                 <label>Private Key Content (PEM format)</label>
                                                 <textarea v-model="site.tls_key_content" placeholder="Paste your private key content here in PEM format (-----BEGIN PRIVATE KEY-----...)" rows="6" class="tls-content-textarea"></textarea>
                                             </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Logging Settings -->
+                            <div class="logging-settings-section">
+                                <div class="subsection-header compact" @click="toggleSiteSubsection(siteIndex, 'logging')">
+                                    <div class="header-left">
+                                        <span class="section-icon" :class="{ expanded: isSiteSubsectionExpanded(siteIndex, 'logging') }">▶</span>
+                                        <h5 class="subsection-title">Logging Settings</h5>
+                                    </div>
+                                </div>
+
+                                <div v-if="isSiteSubsectionExpanded(siteIndex, 'logging')">
+                                    <div class="form-grid compact">
+                                        <div class="form-field checkbox-grid compact">
+                                            <label>
+                                                <input v-model="site.access_log_enabled" type="checkbox" />
+                                                Enable Access Logging
+                                                <span class="help-icon" data-tooltip="If enabled, Gruxi will log all access requests for this site.">?</span>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div class="form-grid compact">
+                                        <div class="form-field">
+                                            <label>
+                                                Access Log File
+                                                <span class="help-icon" data-tooltip="Access log file name. If you want it in the default log location, use it like this 'mysite-access.log'. You can also have a full absolute path like '/var/logs/mylog.log' or 'C:/logs/mylog.log'.">?</span>
+                                                <span class="admin-badge">BASE PATH: {{ appPaths.logs_dir }}</span>
+                                            </label>
+                                            <input v-model="site.access_log_file" type="text" placeholder="Path to log file" />
                                         </div>
                                     </div>
                                 </div>
@@ -1443,10 +1486,7 @@ onMounted(() => {
                                             Blocked File Patterns
                                             <span class="help-icon" data-tooltip="File extensions to block from being served by static file handlers (e.g. .php, .sql). Each value must start with a dot. When a client requests a blocked file they will see a HTTP 404 error, so it just seems like it is not found.">?</span>
                                         </label>
-                                        <TagInput
-                                            v-model="config.core.server_settings.blocked_file_patterns"
-                                            placeholder="Add pattern and press Enter... (e.g. .bak)"
-                                        />
+                                        <TagInput v-model="config.core.server_settings.blocked_file_patterns" placeholder="Add pattern and press Enter... (e.g. .bak)" />
                                     </div>
                                 </div>
                             </div>
@@ -1478,11 +1518,15 @@ onMounted(() => {
                                 </div>
 
                                 <div v-if="!config.core.admin_portal.tls_automatic_enabled" class="form-field">
-                                    <label>TLS Certificate Path <span class="help-icon" data-tooltip="Absolute or relative path (relative to base path for certificates) to the TLS certificate file for the admin portal. Only used when automatic TLS is disabled.">?</span> <span class="admin-badge">Base Path: {{ appPaths.certificates_dir }}</span></label>
+                                    <label
+                                        >TLS Certificate Path <span class="help-icon" data-tooltip="Absolute or relative path (relative to base path for certificates) to the TLS certificate file for the admin portal. Only used when automatic TLS is disabled.">?</span> <span class="admin-badge">Base Path: {{ appPaths.certificates_dir }}</span></label
+                                    >
                                     <input v-model="config.core.admin_portal.tls_certificate_path" type="text" />
                                 </div>
                                 <div v-if="!config.core.admin_portal.tls_automatic_enabled" class="form-field">
-                                    <label>TLS Key Path <span class="help-icon" data-tooltip="Absolute or relative path (relative to base path for certificates) to the TLS key file for the admin portal. Only used when automatic TLS is disabled.">?</span> <span class="admin-badge">Base Path: {{ appPaths.certificates_dir }}</span></label>
+                                    <label
+                                        >TLS Key Path <span class="help-icon" data-tooltip="Absolute or relative path (relative to base path for certificates) to the TLS key file for the admin portal. Only used when automatic TLS is disabled.">?</span> <span class="admin-badge">Base Path: {{ appPaths.certificates_dir }}</span></label
+                                    >
                                     <input v-model="config.core.admin_portal.tls_key_path" type="text" />
                                 </div>
                             </div>
@@ -1557,10 +1601,7 @@ onMounted(() => {
                                 </div>
                                 <div class="form-field full-width">
                                     <label>Compressible Content Types</label>
-                                    <TagInput
-                                        v-model="config.core.gzip.compressible_content_types"
-                                        placeholder="Add content type and press Enter... (e.g. text/html)"
-                                    />
+                                    <TagInput v-model="config.core.gzip.compressible_content_types" placeholder="Add content type and press Enter... (e.g. text/html)" />
                                 </div>
                             </div>
                         </div>
@@ -1641,7 +1682,6 @@ onMounted(() => {
                         </div>
 
                         <div v-if="isCoreSubsectionExpanded('logging')" class="item-content">
-
                             <div class="form-grid compact">
                                 <div class="form-field full-width">
                                     <label>
@@ -1804,7 +1844,7 @@ onMounted(() => {
 }
 
 .width-auto-fit {
-    width:fit-content;
+    width: fit-content;
 }
 
 .binding-summary,
@@ -1890,14 +1930,17 @@ onMounted(() => {
 }
 
 .form-grid.compact {
-    padding: 1rem;
+    padding: 0rem 1rem;
     gap: 1rem;
     width: fit-content;
+    min-width: 600px;
 }
 
 .form-field.checkbox-grid.compact {
     padding: 0.75rem;
-    gap: 3rem;
+    gap: 1.5rem;
+    min-width: auto;
+    width: fit-content;
 }
 
 .form-field select {
@@ -1905,7 +1948,7 @@ onMounted(() => {
 }
 
 .list-field.compact {
-    margin: 0;
+    margin: 1rem 0rem;
     padding: 1rem;
 }
 
@@ -1932,7 +1975,7 @@ onMounted(() => {
 .item-content {
     background: #fefefe;
     border-top: 1px solid #f1f5f9;
-    padding-bottom: 20px;
+    padding: 20px 0px;
 }
 
 .config-header {
@@ -2486,8 +2529,6 @@ onMounted(() => {
 }
 
 .form-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(600px, 600px));
     gap: 1.5rem;
 }
 
@@ -2495,6 +2536,7 @@ onMounted(() => {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    margin-bottom: 1rem;
 }
 
 .form-field.small-field {
@@ -2538,6 +2580,10 @@ onMounted(() => {
     font-size: 0.875rem;
     transition: all 0.2s ease;
     background: white;
+}
+
+.form-field input[type='number'] {
+    max-width: 100px;
 }
 
 .form-field input[type='text']:focus,
@@ -2846,7 +2892,8 @@ onMounted(() => {
 /* Request Processing Section */
 .request-processing-section,
 .processors-section,
-.tls-settings-section {
+.tls-settings-section,
+.logging-settings-section {
     margin: 1rem 1rem;
     padding: 5px;
     background: #f8fafc;

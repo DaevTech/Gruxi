@@ -127,6 +127,9 @@ impl GruxiRequest {
             hostname = hostname[..colon_index].to_string();
         }
 
+        // Make sure to lowercase the hostname for consistent matching
+        hostname = hostname.to_lowercase();
+
         hostname
     }
 

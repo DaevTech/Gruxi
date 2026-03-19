@@ -1,7 +1,7 @@
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::file::app_paths::get_app_paths;
 use crate::tls::shared_acme_manager::{get_shared_acme_domains, get_shared_acme_manager_async};
-use crate::{debug, error, info, warn};
+use crate::{debug, error, warn};
 use rand;
 use rustls::crypto::aws_lc_rs;
 use rustls_acme::ResolvesServerCertAcme;
@@ -291,7 +291,7 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
         if certificates.is_none() {
             let generated_certs = generate_self_signed_certificate_and_persist(site, sans.clone(), binding.is_admin).await;
             if let Some(certs) = generated_certs {
-                info!("Generated self-signed certificate, because of missing certificates, for site '{}' with hostnames: {:?}", site.id, sans);
+                debug!("Generated self-signed certificate, because of missing certificates, for site '{}' with hostnames: {:?}", site.id, sans);
                 certificates = Some(certs);
             }
         }

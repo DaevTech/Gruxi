@@ -325,7 +325,7 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
 
     connection
         .execute(format!(
-            "INSERT INTO sites (id, is_default, is_enabled, hostnames, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, request_handlers, rewrite_functions, access_log_enabled, access_log_file, extra_headers, tls_automatic_enabled) VALUES ('{}', {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}', '{}', {})",
+            "INSERT INTO sites (id, is_default, is_enabled, hostnames, tls_cert_path, tls_cert_content, tls_key_path, tls_key_content, request_handlers, rewrite_functions, access_log_enabled, access_log_file, extra_headers, tls_automatic_enabled, force_tls, force_tls_port, canonical_host) VALUES ('{}', {}, {}, '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}', '{}', {}, {}, {}, '{}')",
             site.id,
             if site.is_default { 1 } else { 0 },
             if site.is_enabled { 1 } else { 0 },
@@ -339,7 +339,10 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
             if site.access_log_enabled { 1 } else { 0 },
             site.access_log_file.replace("'", "''"),
             extra_headers_str,
-            if site.tls_automatic_enabled { 1 } else { 0 }
+            if site.tls_automatic_enabled { 1 } else { 0 },
+            if site.force_tls { 1 } else { 0 },
+            site.force_tls_port,
+            site.canonical_host.replace("'", "''")
         ))
         .map_err(|e| format!("Failed to insert site: {}", e))?;
 

@@ -6,6 +6,7 @@ use crate::http::http_server::ConnectionContext;
 use crate::http::http_util::*;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
+use crate::http::request_response::request_validation::validate_request;
 use crate::http::site_match::site_matcher::find_best_match_site;
 use crate::logging::access_log_entry::AccessLogEntry;
 use crate::{debug, trace};
@@ -31,10 +32,6 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     // Get the sites for this binding
     let binding_site_cache = running_state.get_binding_site_cache();
     let sites = binding_site_cache.get_sites_for_binding(&connection_context.binding.id);
-    if sites.is_empty() {
-        trace!("No sites configured for binding ID: '{}'", &connection_context.binding.id);
-        return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
-    }
 
     // Get the hostname and figure out which site matches
     let hostname = gruxi_request.get_hostname();
@@ -53,14 +50,8 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     trace!("Matched site with request: {:?}", &site);
 
     // Validate the request
-    if let Err(gruxi_error) = validate_request(&mut gruxi_request).await {
-        debug!("Request validation failed: {:?}", gruxi_error);
-        let status_code = match &gruxi_error.kind {
-            GruxiErrorKind::HttpRequestValidation(code) => *code,
-            _ => 500, // Default for other errors
-        };
-        let response = GruxiResponse::new_empty_with_status(status_code);
-        return Ok(response);
+    if let Err(gruxi_response) = validate_request(&mut gruxi_request, &connection_context.binding, &site).await {
+        return Ok(gruxi_response);
     }
 
     // Handle special case for OPTIONS * request, which is stupid but valid
@@ -178,76 +169,4 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     }
 
     Ok(response)
-}
-
-async fn validate_request(gruxi_request: &mut GruxiRequest) -> Result<(), GruxiError> {
-    // Here we can add any request validation logic if needed
-    let cached_configuration = crate::configuration::cached_configuration::get_cached_configuration();
-    let configuration = cached_configuration.get_configuration().await;
-
-    // Validation for HTTP/1.1 only
-    if gruxi_request.get_http_version() == "HTTP/1.1" {
-        // [HTTP1.1] Requires a Host header
-        if !gruxi_request.get_headers().contains_key("Host") {
-            return Err(GruxiError::new(
-                GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::BAD_REQUEST.as_u16()),
-                format!("Failed to get streaming HTTP request for request: {:?}", gruxi_request),
-            ));
-        }
-
-        // [HTTP1.1] If there is multiple host headers, we return a 400 error
-        if gruxi_request.get_headers().get_all("Host").iter().count() > 1 {
-            return Err(GruxiError::new(
-                GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::BAD_REQUEST.as_u16()),
-                format!("Multiple Host headers for request: {:?}", gruxi_request),
-            ));
-        }
-    }
-
-    // [HTTP1.1 and later] Basic validation: check for valid method
-    let http_method = gruxi_request.get_http_method();
-    if http_method != "GET"
-        && http_method != "POST"
-        && http_method != "HEAD"
-        && http_method != "PUT"
-        && http_method != "DELETE"
-        && http_method != "OPTIONS"
-        && http_method != "TRACE"
-        && http_method != "CONNECT"
-        && http_method != "PATCH"
-    {
-        // Return a error for unsupported method
-        return Err(GruxiError::new(
-            GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::NOT_IMPLEMENTED.as_u16()),
-            format!("Unsupported HTTP method for request: {:?}", gruxi_request),
-        ));
-    }
-
-    // Protect our server from overly large bodies
-    let max_body_size = configuration.core.server_settings.max_body_size;
-    if max_body_size > 0 && (http_method == "POST" || http_method == "PUT") {
-        // Check Content-Length header if present
-        if let Some(content_length_header) = gruxi_request.get_headers().get("Content-Length") {
-            if let Ok(content_length_str) = content_length_header.to_str() {
-                if let Ok(content_length) = content_length_str.parse::<u64>() {
-                    if content_length > max_body_size {
-                        return Err(GruxiError::new(
-                            GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::PAYLOAD_TOO_LARGE.as_u16()),
-                            format!("Payload too large for request, based on content-length header: {:?}", gruxi_request),
-                        ));
-                    }
-                }
-            }
-        }
-
-        // Also check the expected body size
-        if gruxi_request.get_body_size() > max_body_size.try_into().unwrap_or(0) {
-            return Err(GruxiError::new(
-                GruxiErrorKind::HttpRequestValidation(hyper::StatusCode::PAYLOAD_TOO_LARGE.as_u16()),
-                format!("Payload too large for request, based on actual body size: {:?}", gruxi_request),
-            ));
-        }
-    }
-
-    Ok(())
 }

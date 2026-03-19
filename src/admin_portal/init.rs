@@ -104,6 +104,9 @@ pub fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
         ],
         access_log_enabled: true,
         access_log_file: app_paths.logs_dir.to_string_lossy().to_string() + "/admin-portal-access.log",
+        force_tls: false,   // No need to force TLS since this site is only served on the admin TLS port
+        force_tls_port: 8000,
+        canonical_host: "".to_string(),
     };
 
     // Admin site
