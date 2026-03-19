@@ -91,9 +91,11 @@ jobs:
         mkdir -p release/gruxi/db
         mkdir -p release/gruxi/logs
         mkdir -p release/gruxi/certs
+        mkdir -p release/gruxi/scripts
         cp target/${{ matrix.target }}/release/gruxi${{ matrix.binary_ext }} release/gruxi/
         cp -r www-admin release/gruxi/
         cp -r www-default release/gruxi/
+        cp -r scripts release/gruxi/scripts
         cp README.md release/gruxi/
         cp LICENSE release/gruxi/
 

@@ -37,12 +37,12 @@ Gruxi is usable today, but it has not yet reached a 1.0 release. Core functional
 
 ### TLS & security
 
-* Native TLS support
+* Built-in TLS support
 * Automatic certificate issuance and renewal via Let’s Encrypt
 
 ### Administration
 
-* Built‑in web interface for administration, configuration, and monitoring
+* Built-in web interface for administration, configuration, and monitoring
 * Live metrics and server status
 * Windows Service support and Linux systemd integration
 
@@ -64,12 +64,21 @@ Many existing web servers offer extensive configuration surfaces with hundreds o
 
 Gruxi intentionally removes low‑value configuration choices. For example, internal buffer sizes and similar micro‑optimizations are not exposed. If a setting is unlikely to materially improve outcomes for the majority of users, it is fixed and carefully chosen.
 
+## Getting started
+
+There are several ways to run Gruxi, depending on your environment and deployment preferences.
+
+- Using prebuilt binaries or install packages (.deb, .rpm, .msi etc.) (recommended for maximum performance)
+- Running with Docker
+- Docker Compose
+
+Detailed instructions are available in the [documentation for Grxui.](https://gruxi.org/docs/introduction/getting-started/).
+
 ## Documentation
 
 Comprehensive documentation is available at:
 
 [https://gruxi.org](https://gruxi.org)
-
 
 ## Admin portal
 
@@ -79,8 +88,6 @@ The admin portal provides configuration management, monitoring, and operational 
 * Password: Generated on first startup and printed to the server output
 
 The initial password is not displayed again after first launch. It can be reset using the --reset-admin-password on command line.
-
-
 
 ## Performance
 
@@ -116,17 +123,6 @@ The following section documents **performance characteristics** of Gruxi under c
 <img src="https://github.com/DaevTech/Gruxi/blob/main/assets/performance-test-260126-static-files.png" alt="Gruxi Performance Test" width="600">
 
 > **Note:** These results reflect local lab conditions with no external network traffic. Performance will differ under real-world scenarios with TLS enabled, external clients, and varied content types. Much higher performance is possible with optimized configurations and production hardware. These numbers are intended to demonstrate Gruxi's potential and should not be taken as guarantees for all environments.
-
-## Getting started
-
-There are several ways to run Gruxi, depending on your environment and deployment preferences.
-
-- Using prebuilt binaries or install packages (.deb, .rpm, .msi etc.) (recommended for maximum performance)
-- Running with Docker
-- Docker Compose
-
-Detailed instructions are available in the [documentation for Grxui.](https://gruxi.org/docs/introduction/getting-started/).
-
 
 ## Screenshots
 

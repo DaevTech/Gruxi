@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 0.4.0 - 20 Mar 2026
+
+### Added
+ - Add security HTTP headers to admin portal, to make it as secure as possible.
+ - Prevent multiple login sessions for the same user in admin portal, to prevent security issues.
+ - Better trailing slash normalization - Add slash for directory requests and give error for file requests with trailing slash, to prevent confusion and potential security issues.
+ - Add support for canonical hostname, so you can specify which hostname should be dominant for a site, so proper redirects can be made and to prevent duplicate content issues.
+ - Add support for enforcing TLS for a site and on a custom port (if different from 443), so you can easily enforce secure connections for your sites.
+ - Make it possible to start Gruxi with a configuration JSON file as parameter (-c) or be automatically loaded when named gruxi_config.json and placed in the working directory. This makes it possible to keep a config in git or similar and load that on both for binaries and in Docker. See documentation on configuration for more details.
+
+### Changed
+ - Make sure the admin portal password is not logged to log file, but only printed to console on startup.
+ - Command line flags --install-service and --remove-service is now only available on Windows. On other platforms, running with systemd is the recommended way to run Gruxi as a service.
+
+
 # Version 0.3.0 - 3 Mar 2026
 
 ### Added
