@@ -3,6 +3,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import LogViewer from './LogViewer.vue';
 import ConfigurationEditor from './ConfigurationEditor.vue';
 import OperationModeSelector from './OperationModeSelector.vue';
+import UserProfile from './UserProfile.vue';
 
 // Define props and emits
 const props = defineProps({
@@ -354,7 +355,7 @@ onUnmounted(() => {
 
                 <div v-if="!sidebarCollapsed" class="footer-separator"></div>
 
-                <div class="user-info" v-if="!sidebarCollapsed">
+                <div class="user-info" v-if="!sidebarCollapsed" @click="setActiveView('user-profile')" role="button" tabindex="0" @keydown.enter="setActiveView('user-profile')">
                     <div class="user-avatar">👤</div>
                     <div class="user-details">
                         <div class="user-name">{{ user.username }}</div>
@@ -370,7 +371,7 @@ onUnmounted(() => {
             <header class="top-header">
                 <div class="header-left">
                     <h1 class="page-title">
-                        {{ menuItems.find((item) => item.id === activeView)?.name || 'Overview' }}
+                        {{ activeView === 'user-profile' ? 'User Profile' : (menuItems.find((item) => item.id === activeView)?.name || 'Overview') }}
                     </h1>
                     <div v-if="activeView === 'server-status'" class="header-status-info">
                         <span class="last-updated">Last updated: {{ lastUpdatedFormatted }}</span>
@@ -458,6 +459,11 @@ onUnmounted(() => {
                 <!-- Configuration View -->
                 <div v-else-if="activeView === 'configuration'" class="view-content">
                     <ConfigurationEditor :user="user" :inline="true" :appPaths="basicData.appPaths" />
+                </div>
+
+                <!-- User Profile View -->
+                <div v-else-if="activeView === 'user-profile'" class="view-content">
+                    <UserProfile :user="user" @logout="handleLogout" />
                 </div>
 
                 <!-- Other Views -->
@@ -598,6 +604,14 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+
+.user-info:hover {
+    background: #374151;
 }
 
 .user-avatar {

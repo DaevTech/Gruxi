@@ -2,7 +2,7 @@ use crate::admin_portal::login_rate_limiter::get_login_rate_limiter;
 use crate::config::configuration::Configuration;
 use crate::config::save_configuration::save_configuration;
 use crate::config::site::Site;
-use crate::core::admin_user::{LoginRequest, authenticate_user, create_session, invalidate_session, verify_session_token};
+use crate::core::admin_user::{LoginRequest, authenticate_user, change_user_password, create_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
 use crate::core::triggers::get_trigger_handler;
@@ -72,6 +72,8 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, co
         admin_post_operation_mode_endpoint(gruxi_request, site).await
     } else if path_cleaned == "/cache/file/clear" && method == "POST" {
         admin_post_file_cache_clear_endpoint(gruxi_request, site, connection_context).await
+    } else if path_cleaned == "/user/password" && method == "POST" {
+        handle_password_change(gruxi_request, site).await
     } else {
         // If we reach here, no matching admin API route was found
         trace!("No matching admin API route found for path: {}", path_cleaned);
@@ -858,4 +860,96 @@ pub async fn admin_post_file_cache_clear_endpoint(gruxi_request: &mut GruxiReque
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(success_response.to_string()));
     response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
     Ok(response)
+}
+
+#[derive(Serialize, Deserialize)]
+struct PasswordChangeRequest {
+    old_password: String,
+    new_password: String,
+}
+
+pub async fn handle_password_change(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
+    // Check authentication
+    let session = match require_authentication(gruxi_request).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            let mut response = GruxiResponse::new_with_bytes(
+                hyper::StatusCode::UNAUTHORIZED.as_u16(),
+                bytes::Bytes::from(r#"{"error": "Authentication required"}"#),
+            );
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            return Ok(response);
+        }
+        Err(auth_response) => return Ok(auth_response),
+    };
+
+    // Read and parse request body
+    if gruxi_request.get_body_size() == 0 {
+        let mut response = GruxiResponse::new_with_bytes(
+            hyper::StatusCode::BAD_REQUEST.as_u16(),
+            bytes::Bytes::from(r#"{"error": "Empty request body"}"#),
+        );
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+        return Ok(response);
+    }
+
+    let body_bytes = gruxi_request.get_body_bytes().await;
+    let pwd_request: PasswordChangeRequest = match serde_json::from_slice(&body_bytes) {
+        Ok(req) => req,
+        Err(e) => {
+            error!("Failed to parse password change request: {}", e);
+            let error_response = serde_json::json!({
+                "error": "Invalid JSON format",
+                "details": e.to_string()
+            });
+            let mut response = GruxiResponse::new_with_bytes(
+                hyper::StatusCode::BAD_REQUEST.as_u16(),
+                bytes::Bytes::from(error_response.to_string()),
+            );
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            return Ok(response);
+        }
+    };
+
+    if pwd_request.new_password.len() < 8 {
+        let mut response = GruxiResponse::new_with_bytes(
+            hyper::StatusCode::BAD_REQUEST.as_u16(),
+            bytes::Bytes::from(r#"{"error": "New password must be at least 8 characters"}"#),
+        );
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+        return Ok(response);
+    }
+
+    match change_user_password(&session.username, &pwd_request.old_password, &pwd_request.new_password) {
+        Ok(true) => {
+            info!("Password changed for user: {}", session.username);
+            let response_json = serde_json::json!({
+                "success": true,
+                "message": "Password changed successfully"
+            });
+            let mut response = GruxiResponse::new_with_bytes(
+                hyper::StatusCode::OK.as_u16(),
+                bytes::Bytes::from(response_json.to_string()),
+            );
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            Ok(response)
+        }
+        Ok(false) => {
+            let mut response = GruxiResponse::new_with_bytes(
+                hyper::StatusCode::UNAUTHORIZED.as_u16(),
+                bytes::Bytes::from(r#"{"error": "Incorrect current password"}"#),
+            );
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            Ok(response)
+        }
+        Err(e) => {
+            error!("Failed to change password: {}", e);
+            let mut response = GruxiResponse::new_with_bytes(
+                hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                bytes::Bytes::from(r#"{"error": "Failed to change password"}"#),
+            );
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            Ok(response)
+        }
+    }
 }

@@ -307,6 +307,40 @@ pub fn invalidate_session(token: &str) -> Result<bool, String> {
     }
 }
 
+pub fn change_user_password(
+    username: &str,
+    old_password: &str,
+    new_password: &str,
+) -> Result<bool, String> {
+    // Verify old password first
+    let user = match authenticate_user(username, old_password) {
+        Ok(Some(u)) => u,
+        Ok(None) => return Ok(false),
+        Err(e) => return Err(e),
+    };
+
+    let new_password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
+        .map_err(|e| format!("Failed to hash password: {}", e))?;
+
+    let connection = get_database_connection()?;
+
+    let mut stmt = connection
+        .prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+        .map_err(|e| format!("Failed to prepare password update statement: {}", e))?;
+    stmt.bind((1, new_password_hash.as_str()))
+        .map_err(|e| format!("Failed to bind new password hash: {}", e))?;
+    stmt.bind((2, user.id))
+        .map_err(|e| format!("Failed to bind user id: {}", e))?;
+    stmt.next()
+        .map_err(|e| format!("Failed to update password: {}", e))?;
+
+    // Invalidate all existing sessions for this user
+    invalidate_sessions_for_user(&connection, username)?;
+
+    info!("Password changed for user: {}", username);
+    Ok(true)
+}
+
 fn cleanup_expired_sessions(connection: &Connection) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
     let mut stmt = connection
