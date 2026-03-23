@@ -111,33 +111,40 @@ const confirmReloadConfiguration = async () => {
     reloadError.value = '';
     showReloadModal.value = false;
 
-    try {
-        const response = await fetch('/configuration/reload', {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${props.user.sessionToken}`,
-                'Content-Type': 'application/json',
-            },
-        });
+    const maxRetries = 5;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const response = await fetch('/configuration/reload', {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${props.user.sessionToken}`,
+                    'Content-Type': 'application/json',
+                },
+            });
 
-        if (response.ok) {
-            successMessage.value = 'Configuration reload initiated. The server is restarting...';
-            // Optionally reload the page after a short delay
-            setTimeout(() => {
-                window.location.reload();
-            }, 3000);
-        } else {
-            const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-            reloadError.value = errorData.error || 'Failed to reload configuration';
-            showReloadModal.value = true; // Show modal again to display error
+            if (response.ok) {
+                successMessage.value = 'Configuration reload initiated. The server is restarting...';
+                setTimeout(() => {
+                    window.location.reload();
+                }, 3000);
+                isReloading.value = false;
+                return;
+            } else {
+                const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                reloadError.value = errorData.error || 'Failed to reload configuration';
+            }
+        } catch (err) {
+            console.error(`Config reload error (attempt ${attempt}/${maxRetries}):`, err);
+            reloadError.value = 'Network error while reloading configuration';
         }
-    } catch (err) {
-        console.error('Config reload error:', err);
-        reloadError.value = 'Network error while reloading configuration';
-        showReloadModal.value = true; // Show modal again to display error
-    } finally {
-        isReloading.value = false;
+
+        if (attempt < maxRetries) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
     }
+
+    showReloadModal.value = true;
+    isReloading.value = false;
 };
 
 // Save configuration
@@ -428,6 +435,9 @@ const addSite = () => {
         extra_headers: [],
         access_log_enabled: false,
         access_log_file: '',
+        force_tls: false,
+        force_tls_port: 443,
+        canonical_host: '',
     });
 };
 
