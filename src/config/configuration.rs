@@ -7,6 +7,7 @@ use crate::config::logging::Logging;
 use crate::config::request_handler::RequestHandler;
 use crate::config::server_settings::ServerSettings;
 use crate::config::site::Site;
+use crate::config::telemetry::Telemetry;
 use crate::config::tls_settings::TlsSettings;
 use crate::config::{binding::Binding, binding_site_relation::BindingSiteRelationship};
 use crate::external_connections::managed_system::php_cgi::PhpCgi;
@@ -35,7 +36,7 @@ pub struct Configuration {
     pub php_cgi_handlers: Vec<PhpCgi>,
 }
 
-pub static CURRENT_CONFIGURATION_VERSION: i32 = 7;
+pub static CURRENT_CONFIGURATION_VERSION: i32 = 8;
 
 impl Default for Configuration {
     fn default() -> Self {
@@ -55,6 +56,7 @@ impl Configuration {
                 gzip: Gzip::new(),
                 server_settings: ServerSettings::new(),
                 admin_portal: AdminPortal::new(),
+                telemetry: Telemetry::new(),
                 tls_settings: TlsSettings::new(),
                 http_caching: HttpCaching::new(),
                 logging: Logging::new(),
@@ -219,6 +221,7 @@ impl Configuration {
             ip: "0.0.0.0".to_string(),
             port: 80,
             is_admin: false,
+            is_telemetry: false,
             is_tls: false,
         };
 
@@ -227,6 +230,7 @@ impl Configuration {
             ip: "0.0.0.0".to_string(),
             port: 443,
             is_admin: false,
+            is_telemetry: false,
             is_tls: true,
         };
 

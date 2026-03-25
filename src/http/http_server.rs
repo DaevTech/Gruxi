@@ -134,7 +134,7 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
 
     // Get the monitoring state to update active connections
     let monitoring_state = get_monitoring_state().await;
-    let should_increment_connections_in_queue = !connection_context.binding.is_admin;
+    let should_increment_connections_in_queue = !connection_context.binding.is_admin && !connection_context.binding.is_telemetry;
 
     if connection_context.binding.is_tls {
         // Build unified TLS acceptor that handles both ACME and manual certificates

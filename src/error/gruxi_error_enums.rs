@@ -7,6 +7,7 @@ pub enum GruxiErrorKind {
     FastCgi(FastCgiError),
     Internal(&'static str),
     AdminApi(AdminApiError),
+    TelemetryApi(TelemetryApiError),
     InitAdminPortal(InitAdminPortalError),
     GruxiRequest(GruxiRequestError),
 }
@@ -53,6 +54,11 @@ pub enum FastCgiError {
 pub enum AdminApiError {
     NoRouteMatched,
     InvalidRequest,
+}
+
+#[derive(Debug)]
+pub enum TelemetryApiError {
+    NoRouteMatched,
 }
 
 #[derive(Debug)]

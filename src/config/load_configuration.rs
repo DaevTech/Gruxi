@@ -1,4 +1,5 @@
 use crate::admin_portal::init::add_admin_portal_to_configuration;
+use crate::telemetry::init::add_telemetry_to_configuration;
 use crate::config::binding_site_relation::BindingSiteRelationship;
 use crate::database::database_migration::migrate_database;
 use crate::database::database_schema::{CURRENT_DB_SCHEMA_VERSION, get_schema_version, set_schema_version};
@@ -60,6 +61,12 @@ pub fn init() -> Configuration {
     if configuration.core.admin_portal.is_enabled {
         trace!("Admin portal is enabled, adding it to configuration");
         add_admin_portal_to_configuration(&mut configuration);
+    }
+
+    // Add telemetry binding if a bearer token is configured
+    if configuration.core.telemetry.bearer_token.is_some() {
+        trace!("Telemetry bearer token configured, adding telemetry binding");
+        add_telemetry_to_configuration(&mut configuration);
     }
 
     configuration
@@ -271,6 +278,11 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             "admin_portal_tls_key_path" => {
                 core.admin_portal.tls_key_path = Some(value);
             }
+            "telemetry_bearer_token" => {
+                if !value.is_empty() {
+                    core.telemetry.bearer_token = Some(value);
+                }
+            }
 
             // TLS settings
             "tls_account_email" => {
@@ -325,13 +337,15 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
         let ip: String = statement.read(1).map_err(|e| format!("Failed to read ip: {}", e))?;
         let port: i64 = statement.read(2).map_err(|e| format!("Failed to read port: {}", e))?;
         let is_admin: i64 = statement.read(3).map_err(|e| format!("Failed to read is_admin: {}", e))?;
-        let is_tls: i64 = statement.read(4).map_err(|e| format!("Failed to read is_tls: {}", e))?;
+        let is_telemetry: i64 = statement.read(4).map_err(|e| format!("Failed to read is_telemetry: {}", e))?;
+        let is_tls: i64 = statement.read(5).map_err(|e| format!("Failed to read is_tls: {}", e))?;
 
         bindings.push(Binding {
             id: binding_id,
             ip,
             port: port as u16,
             is_admin: is_admin != 0,
+            is_telemetry: is_telemetry != 0,
             is_tls: is_tls != 0,
         });
     }

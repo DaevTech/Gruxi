@@ -1,5 +1,6 @@
 use crate::config::http_caching::HttpCaching;
 use crate::config::logging::Logging;
+use crate::config::telemetry::Telemetry;
 use crate::config::tls_settings::TlsSettings;
 use crate::config::{admin_portal::AdminPortal, file_cache::FileCache};
 use crate::config::gzip::Gzip;
@@ -12,6 +13,7 @@ pub struct Core {
     pub gzip: Gzip,
     pub server_settings: ServerSettings,
     pub admin_portal: AdminPortal,
+    pub telemetry: Telemetry,
     pub tls_settings: TlsSettings,
     pub http_caching: HttpCaching,
     pub logging: Logging,
@@ -23,6 +25,7 @@ impl Core {
         self.gzip.sanitize();
         self.server_settings.sanitize();
         self.admin_portal.sanitize();
+        self.telemetry.sanitize();
         self.tls_settings.sanitize();
         self.http_caching.sanitize();
         self.logging.sanitize();
@@ -56,6 +59,13 @@ impl Core {
         if let Err(admin_portal_errors) = self.admin_portal.validate() {
             for error in admin_portal_errors {
                 errors.push(format!("Admin Portal: {}", error));
+            }
+        }
+
+        // Validate telemetry settings
+        if let Err(telemetry_errors) = self.telemetry.validate() {
+            for error in telemetry_errors {
+                errors.push(format!("Telemetry: {}", error));
             }
         }
 

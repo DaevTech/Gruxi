@@ -54,6 +54,13 @@ pub fn migrate_database() -> i32 {
         }
         schema_version = 7;
     }
+    if schema_version == 7 {
+        let result = migrate_db_helper(&connection, 7, 8, migrate_db_7_to_8);
+        if let Err(e) = result {
+            panic!("Database migration from version 7 to 8 failed: {}", e);
+        }
+        schema_version = 8;
+    }
 
     schema_version
 }
@@ -129,5 +136,11 @@ fn migrate_db_6_to_7(connection: &Connection) -> Result<(), sqlite::Error> {
     connection.execute("ALTER TABLE sites ADD COLUMN force_tls BOOLEAN NOT NULL DEFAULT 0;")?;
     connection.execute("ALTER TABLE sites ADD COLUMN force_tls_port INTEGER NOT NULL DEFAULT 443;")?;
     connection.execute("ALTER TABLE sites ADD COLUMN canonical_host TEXT NOT NULL DEFAULT '';")?;
+    Ok(())
+}
+
+fn migrate_db_7_to_8(connection: &Connection) -> Result<(), sqlite::Error> {
+    // Add "is_telemetry" to "bindings" table
+    connection.execute("ALTER TABLE bindings ADD COLUMN is_telemetry BOOLEAN NOT NULL DEFAULT 0;")?;
     Ok(())
 }

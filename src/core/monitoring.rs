@@ -120,6 +120,30 @@ impl MonitoringState {
         self.active_connections.fetch_sub(1, Ordering::Relaxed);
     }
 
+    pub fn get_active_connections(&self) -> usize {
+        self.active_connections.load(Ordering::Relaxed)
+    }
+
+    pub fn get_requests_per_sec(&self) -> f64 {
+        f64::from_bits(self.requests_served_per_sec.load(Ordering::Relaxed) as u64)
+    }
+
+    pub fn get_uptime_seconds(&self) -> u64 {
+        self.server_start_time.elapsed().as_secs()
+    }
+
+    pub fn get_file_cache_enabled(&self) -> bool {
+        self.file_cache_enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn get_file_cache_current_items(&self) -> usize {
+        self.file_cache_current_items.load(Ordering::Relaxed)
+    }
+
+    pub fn get_file_cache_max_items(&self) -> usize {
+        self.file_cache_max_items.load(Ordering::Relaxed)
+    }
+
     pub async fn get_json(&self) -> serde_json::Value {
         let monitoring_state = get_monitoring_state().await;
 

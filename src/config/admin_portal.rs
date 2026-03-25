@@ -45,6 +45,7 @@ impl AdminPortal {
         if let Some(key_path) = &mut self.tls_key_path {
             *key_path = key_path.trim().to_string();
         }
+
     }
 
     pub fn validate(&self) -> Result<(), Vec<String>> {

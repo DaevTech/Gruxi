@@ -1,7 +1,7 @@
 use crate::admin_portal::http_admin_api::*;
 use crate::compression::response_compression::ResponseCompression;
 use crate::error::gruxi_error::GruxiError;
-use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
+use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind, TelemetryApiError};
 use crate::http::http_server::ConnectionContext;
 use crate::http::http_util::*;
 use crate::http::request_response::gruxi_request::GruxiRequest;
@@ -9,6 +9,7 @@ use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::http::request_response::request_validation::validate_request;
 use crate::http::site_match::site_matcher::find_best_match_site;
 use crate::logging::access_log_entry::AccessLogEntry;
+use crate::telemetry::http_telemetry_api::handle_telemetry_routes;
 use crate::{debug, trace};
 use hyper::header::HeaderValue;
 use std::sync::Arc;
@@ -73,6 +74,24 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
             return Ok(resp);
         }
 
+    // Check if the request is for the telemetry endpoint - handle these first
+    let telemetry_response = if connection_context.binding.is_telemetry {
+        match handle_telemetry_routes(&mut gruxi_request, site, &connection_context).await {
+            Ok(response) => Some(response),
+            Err(e) => {
+                match e.kind {
+                    GruxiErrorKind::TelemetryApi(TelemetryApiError::NoRouteMatched) => {
+                        trace!("No matching telemetry API route found, continuing to normal request handling");
+                    }
+                    _ => {}
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Check if the request is for the admin portal - handle these first
     let admin_response = if connection_context.binding.is_admin {
         match handle_api_routes(&mut gruxi_request, site, &connection_context).await {
@@ -94,7 +113,9 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
         None
     };
 
-    let mut response = if let Some(admin_response) = admin_response {
+    let mut response = if let Some(telemetry_response) = telemetry_response {
+        telemetry_response
+    } else if let Some(admin_response) = admin_response {
         admin_response
     } else {
         // If no handler wants it, we return 404

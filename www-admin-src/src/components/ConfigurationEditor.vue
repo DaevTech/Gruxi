@@ -33,6 +33,7 @@ const saveErrors = ref([]);
 const successMessage = ref('');
 const originalConfig = ref(null);
 const config = ref(null);
+const suggestedTelemetryToken = ref(Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(8).padStart(2, '0')).join(''));
 
 // Track which sections are expanded (all collapsed by default)
 const expandedSections = reactive({
@@ -396,6 +397,7 @@ const addBinding = () => {
         ip: '0.0.0.0',
         port: 80,
         is_admin: false,
+        is_telemetry: false,
         is_tls: false,
     });
 };
@@ -541,7 +543,7 @@ const getAvailableBindings = () => {
     return (
         config.value.bindings?.map((b) => ({
             id: b.id,
-            label: `${b.ip}:${b.port}${b.is_admin ? ' (Admin)' : ''}${b.is_tls ? ' (TLS)' : ''}`,
+            label: `${b.ip}:${b.port}${b.is_admin ? ' (Admin)' : ''}${b.is_telemetry ? ' (Telemetry)' : ''}${b.is_tls ? ' (TLS)' : ''}`,
         })) || []
     );
 };
@@ -872,6 +874,7 @@ onMounted(() => {
                                 <span class="hierarchy-indicator binding-indicator">🔌</span>
                                 <h4>{{ binding.ip }}:{{ binding.port }}</h4>
                                 <span v-if="binding.is_admin" class="admin-badge">ADMIN</span>
+                                <span v-if="binding.is_telemetry" class="admin-badge">TELEMETRY</span>
                                 <span v-if="binding.is_tls" class="tls-badge">TLS</span>
                             </div>
                             <button @click.stop="removeBinding(bindingIndex)" class="remove-button compact" :disabled="config.bindings.length === 1">Remove</button>
@@ -1543,6 +1546,26 @@ onMounted(() => {
                         </div>
                     </div>
 
+                    <!-- Telemetry Settings -->
+                    <div class="binding-item">
+                        <div class="item-header compact" @click="toggleCoreSubsection('telemetry')">
+                            <div class="header-left">
+                                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('telemetry') }">▶</span>
+                                <span class="hierarchy-indicator">📊</span>
+                                <h4>Telemetry</h4>
+                            </div>
+                        </div>
+
+                        <div v-if="isCoreSubsectionExpanded('telemetry')" class="item-content">
+                            <div class="form-grid compact">
+                                <div class="form-field full-width">
+                                    <label>Bearer Token <span class="help-icon" data-tooltip="The bearer token required to access the telemetry endpoints on the telemetry binding (port 8001). When set, a dedicated TLS binding is created automatically. Leave empty to disable the telemetry endpoints.">?</span> <span class="admin-badge admin-badge-no-upper">RANDOM SUGGESTION: {{ suggestedTelemetryToken }}</span></label>
+                                    <input v-model="config.core.telemetry.bearer_token" type="text" placeholder="Enter bearer token for telemetry endpoints" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- File Cache Settings -->
                     <div class="binding-item">
                         <div class="item-header compact" @click="toggleCoreSubsection('fileCache')">
@@ -1881,6 +1904,10 @@ onMounted(() => {
 .admin-badge {
     background: #ddd6fe;
     color: #6b21a8;
+}
+
+.admin-badge-no-upper {
+    text-transform: none;
 }
 
 .default-badge {

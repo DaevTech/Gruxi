@@ -61,6 +61,6 @@ COPY www-default/ /app/www-default/
 
 USER gruxi
 
-EXPOSE 80 443 8000
+EXPOSE 80 443 8000 8001
 
 CMD ["./gruxi"]

@@ -32,6 +32,7 @@ pub fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
         ip: "0.0.0.0".to_string(),
         port: 8000,
         is_admin: true,
+        is_telemetry: false,
         is_tls: true,
     };
 

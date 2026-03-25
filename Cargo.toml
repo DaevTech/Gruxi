@@ -46,7 +46,13 @@ psl = "2.1.180"
 rustls-acme = { version = "0.15.1", features = ["tokio", "aws-lc-rs", "webpki-roots"] }
 httpdate = "1.0.3"
 arc-swap = "1.8.1"
+# Service implementation
 qsu = { version = "0.10.1", features = ["rt", "tokio", "installer", "clap", "systemd"] }
+# Telemetry
+opentelemetry = { version = "0.28", features = ["metrics"] }
+opentelemetry_sdk = { version = "0.28", features = ["metrics", "rt-tokio"] }
+opentelemetry-prometheus = "0.28"
+prometheus = "0.13"
 
 [lib]
 name = "gruxi"

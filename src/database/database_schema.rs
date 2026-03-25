@@ -2,7 +2,7 @@ use sqlite::State;
 
 use crate::core::database_connection::get_database_connection;
 
-pub const CURRENT_DB_SCHEMA_VERSION: i32 = 7;
+pub const CURRENT_DB_SCHEMA_VERSION: i32 = 8;
 
 pub struct DatabaseSchema {
     pub version: i32,
@@ -107,6 +107,7 @@ fn get_init_sql() -> Vec<String> {
         ip TEXT NOT NULL,
         port INTEGER NOT NULL,
         is_admin BOOLEAN NOT NULL DEFAULT 0,
+        is_telemetry BOOLEAN NOT NULL DEFAULT 0,
         is_tls BOOLEAN NOT NULL DEFAULT 0
     );"
         .to_string(),

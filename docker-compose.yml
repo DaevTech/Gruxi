@@ -5,6 +5,7 @@ services:
       - "80:80"     # HTTP
       - "443:443"   # HTTPS
       - "8000:8000" # Admin/API port
+      - "8001:8001" # Telemetry/metrics port
     volumes:
       # Mount project directories for development
       - ./db:/app/db

@@ -8,6 +8,7 @@ pub struct Binding {
     pub ip: String,
     pub port: u16,
     pub is_admin: bool,
+    pub is_telemetry: bool,
     pub is_tls: bool,
 }
 
@@ -24,6 +25,7 @@ impl Binding {
             ip: "0.0.0.0".to_string(),
             port: 80,
             is_admin: false,
+            is_telemetry: false,
             is_tls: false,
         }
     }
@@ -60,6 +62,13 @@ impl Binding {
             // Admin bindings should typically use TLS for security
             if !self.is_tls {
                 errors.push("Admin binding should use TLS for security".to_string());
+            }
+        }
+
+        // Telemetry binding specific validations
+        if self.is_telemetry {
+            if !self.is_tls {
+                errors.push("Telemetry binding should use TLS for security".to_string());
             }
         }
 

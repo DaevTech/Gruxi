@@ -4,6 +4,7 @@ pub mod network;
 pub mod core;
 pub mod http;
 pub mod admin_portal;
+pub mod telemetry;
 pub mod logging;
 pub mod config;
 pub mod tls;
