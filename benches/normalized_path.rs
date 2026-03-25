@@ -1,6 +1,6 @@
 use criterion::Criterion;
 use gruxi::file::normalized_path::NormalizedPath;
-use rand::Rng;
+use rand::RngExt;
 
 const RANDOM_WEB_ROOT_LIST: [&str; 5] = ["/var/www", "/usr/share/nginx/html", "/srv/http", "/home/user/public_html", "/opt/web/content"];
 

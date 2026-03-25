@@ -47,7 +47,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Setup Rust
       uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -61,7 +61,7 @@ jobs:
         sudo apt-get install -y gcc-aarch64-linux-gnu
 
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
         node-version: 'latest'
 
@@ -123,8 +123,16 @@ jobs:
       if: runner.os == 'Linux'
       run: cargo deb --no-build --target ${{ matrix.target }}
 
+    - name: Install cargo-generate-rpm (Linux only)
+      if: runner.os == 'Linux'
+      run: cargo install cargo-generate-rpm
+
+    - name: Build .rpm package (Linux only)
+      if: runner.os == 'Linux'
+      run: cargo generate-rpm --target ${{ matrix.target }}
+
     - name: Upload Release Artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: gruxi-${{ matrix.archive_suffix }}
         path: release/gruxi-*.${{ matrix.archive_ext }}
@@ -132,10 +140,18 @@ jobs:
 
     - name: Upload .deb Artifact (Linux only)
       if: runner.os == 'Linux'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: gruxi-deb-${{ matrix.archive_suffix }}
         path: target/${{ matrix.target }}/debian/*.deb
+        if-no-files-found: error
+
+    - name: Upload .rpm Artifact (Linux only)
+      if: runner.os == 'Linux'
+      uses: actions/upload-artifact@v5
+      with:
+        name: gruxi-rpm-${{ matrix.archive_suffix }}
+        path: target/${{ matrix.target }}/generate-rpm/*.rpm
         if-no-files-found: error
 
   release:
@@ -143,7 +159,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Extract version from Cargo.toml
       id: version
@@ -153,14 +169,14 @@ jobs:
         echo "Version: $VERSION"
 
     - name: Download all artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         path: artifacts
 
     - name: Collect release files
       run: |
         mkdir -p release-files
-        find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' \) -exec cp {} release-files/ \;
+        find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} release-files/ \;
         echo "Release files:"
         ls -lh release-files/
 

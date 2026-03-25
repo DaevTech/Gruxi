@@ -1,0 +1,32 @@
+#!/bin/sh
+set -e
+
+GRUXI_HOME="/var/lib/gruxi/"
+GRUXI_USER="gruxi"
+GRUXI_LOG_DIR="/var/log/gruxi/"
+GRUXI_USR_SHARE_DIR="/usr/share/gruxi/"
+
+create_user() {
+    if ! getent group "${GRUXI_USER}" > /dev/null 2>&1; then
+        groupadd --system "${GRUXI_USER}"
+    fi
+
+    if id "${GRUXI_USER}" > /dev/null 2>&1; then return; fi
+
+    useradd --system --home-dir "${GRUXI_HOME}" --gid "${GRUXI_USER}" --no-create-home "${GRUXI_USER}"
+}
+
+ensure_ownership() {
+    # Ensure that the home directory exist and is owned by the gruxi user
+    mkdir -p "${GRUXI_HOME}"
+    chown "${GRUXI_USER}:${GRUXI_USER}" "${GRUXI_HOME}" -R
+    # Ensure that the log directory exist and is owned by the gruxi user
+    mkdir -p "${GRUXI_LOG_DIR}"
+    chown "${GRUXI_USER}:${GRUXI_USER}" "${GRUXI_LOG_DIR}" -R
+    # Ensure that the usr share directory exist and is owned by the gruxi user
+    mkdir -p "${GRUXI_USR_SHARE_DIR}"
+    chown "${GRUXI_USER}:${GRUXI_USER}" "${GRUXI_USR_SHARE_DIR}" -R
+}
+
+create_user
+ensure_ownership

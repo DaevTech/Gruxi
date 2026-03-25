@@ -18,7 +18,7 @@ pub struct GruxiService;
 impl TokioServiceHandler for GruxiService {
     type AppErr = Box<dyn std::error::Error + Send + Sync>;
 
-    async fn init(&mut self, _ictx: InitCtx) -> Result<(), Self::AppErr> {
+    async fn init(&mut self, _ictx: &mut InitCtx) -> Result<(), Self::AppErr> {
         start_gruxi_basics();
         Ok(())
     }
@@ -74,7 +74,7 @@ impl TokioServiceHandler for GruxiService {
         Ok(())
     }
 
-    async fn shutdown(&mut self, _tctx: TermCtx) -> Result<(), Self::AppErr> {
+    async fn shutdown(&mut self, _tctx: &mut TermCtx) -> Result<(), Self::AppErr> {
         Ok(())
     }
 }

@@ -1,7 +1,9 @@
 [package]
 name = "gruxi"
+homepage = "https://gruxi.org"
 description = "High‑performance web server"
-version = "0.4.0"
+version = "0.5.0"
+license = "MIT"
 edition = "2024"
 
 [dependencies]
@@ -14,15 +16,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.141"
 mime_guess = "2.0.5"
 futures = "0.3.31"
-bcrypt = "0.15"
+bcrypt = "0.19"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 flate2 = "1.0"
 tls-listener = { version = "0.11", features = ["rustls-core", "rustls-ring", "rt", "tokio-net"] }
 rcgen = { version = "0.14", features = ["ring", "pem"] }
-rand = "0.9.2"
+rand = "0.10.0"
 clap = "4.5.48"
-cached = "0.56.0"
+cached = "0.59.0"
 num_cpus = "1.17.0"
 rustls-pemfile = "2.2.0"
 random_password_generator = "0.1.0"
@@ -44,7 +46,7 @@ psl = "2.1.180"
 rustls-acme = { version = "0.15.1", features = ["tokio", "aws-lc-rs", "webpki-roots"] }
 httpdate = "1.0.3"
 arc-swap = "1.8.1"
-qsu = { version = "0.7", features = ["rt", "tokio", "installer", "clap", "systemd"] }
+qsu = { version = "0.10.1", features = ["rt", "tokio", "installer", "clap", "systemd"] }
 
 [lib]
 name = "gruxi"
@@ -89,6 +91,26 @@ assets = [
     ]
 ]
 systemd-units = { unit-name = "gruxi", unit-scripts = "scripts/pkg/systemd", enable = true }
+
+# ------------------------------------------------------------------------------
+# Redhat/Fedora etc (.rpm) PACKAGING
+# ------------------------------------------------------------------------------
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/gruxi", dest = "/usr/bin/gruxi", mode = "755" },
+    { source = "www-default/*", dest = "/usr/share/gruxi/www-default/", mode = "644" },
+    { source = "www-admin/*", dest = "/usr/share/gruxi/www-admin/", mode = "644" },
+    { source = "www-admin/assets/*", dest = "/usr/share/gruxi/www-admin/assets/", mode = "644" },
+    { source = "scripts/pkg/systemd/gruxi.service", dest = "/usr/lib/systemd/system/gruxi.service", mode = "644" },
+    { source = "scripts/pkg/systemd/gruxi.service", dest = "/opt/gruxi/systemd/gruxi.service", mode = "644" },
+    { source = "scripts/pkg/rpm/postinst", dest = "/usr/share/gruxi/rpm/postinst", mode = "755" },
+]
+auto-req = "disabled"
+post_install_script = "/usr/share/gruxi/rpm/postinst"
+
+# Ensure that the useradd tool is present by depending on its package
+[package.metadata.generate-rpm.requires]
+shadow-utils = "*"
 
 
 #[[bench]]
