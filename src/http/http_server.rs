@@ -1,5 +1,5 @@
 use crate::config::binding::Binding;
-use crate::core::monitoring::get_monitoring_state;
+use crate::core::monitoring::{MonitoringState, get_monitoring_state};
 use crate::core::running_state::RunningState;
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::http::handle_request::handle_request;
@@ -30,6 +30,7 @@ pub struct ConnectionContext {
     pub shutdown_token: CancellationToken,
     pub stop_services_token: CancellationToken,
     pub running_state: Guard<Arc<RunningState>>,
+    pub monitoring_state: &'static MonitoringState,
 }
 
 // Starting all the Gruxi magic
@@ -88,6 +89,7 @@ pub async fn initialize_server() {
             shutdown_token: shutdown_token.clone(),
             stop_services_token: stop_services_token.clone(),
             running_state,
+            monitoring_state: get_monitoring_state().await,
         };
 
         // Start listening on the specified address - spawn each binding as a separate task
@@ -133,7 +135,7 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
     trace!("Listening on binding: {:?}", connection_context.binding);
 
     // Get the monitoring state to update active connections
-    let monitoring_state = get_monitoring_state().await;
+
     let should_increment_connections_in_queue = !connection_context.binding.is_admin && !connection_context.binding.is_telemetry;
 
     if connection_context.binding.is_tls {
@@ -148,13 +150,15 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
 
         // Unified TLS accept loop
         loop {
+            let local_connection_context = connection_context.clone();
+
             select! {
-                _ = connection_context.shutdown_token.cancelled() => {
-                    trace!("Shutdown signal received, stopping server on {}:{}", connection_context.binding.ip, connection_context.binding.port);
+                _ = local_connection_context.shutdown_token.cancelled() => {
+                    trace!("Shutdown signal received, stopping server on {}:{}", local_connection_context.binding.ip, local_connection_context.binding.port);
                     break;
                 },
-                _ = connection_context.stop_services_token.cancelled() => {
-                    trace!("Service cancellation signal received, stopping server on {}:{}", connection_context.binding.ip, connection_context.binding.port);
+                _ = local_connection_context.stop_services_token.cancelled() => {
+                    trace!("Service cancellation signal received, stopping server on {}:{}", local_connection_context.binding.ip, local_connection_context.binding.port);
                     break;
                 },
                 result = listener.accept() => {
@@ -165,7 +169,7 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
                                 .unwrap_or_else(|_| "<unknown>".to_string());
 
                             let acceptor = tls_acceptor.clone();
-                            let local_connection_context = connection_context.clone();
+                            let local_connection_context = local_connection_context.clone();
 
                             tokio::spawn(async move {
                                 match acceptor.accept(tcp_stream).await {
@@ -173,16 +177,16 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
                                         let io = TokioIo::new(tls_stream);
                                         // Increment connections in queue when connection is ready to be served
                                         if should_increment_connections_in_queue {
-                                            monitoring_state.increment_connections_in_queue();
+                                            local_connection_context.monitoring_state.increment_connections_in_queue();
                                         }
 
-                                        if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context, remote_addr_ip)).catch_unwind().await {
+                                        if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context.clone(), remote_addr_ip)).catch_unwind().await {
                                             handle_connection_panic(panic);
                                         }
 
                                         // Decrement when connection is fully handled
                                         if should_increment_connections_in_queue {
-                                            monitoring_state.decrement_connections_in_queue();
+                                            local_connection_context.monitoring_state.decrement_connections_in_queue();
                                         }
                                     }
                                     Err(err) => {
@@ -200,13 +204,15 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
         }
     } else {
         loop {
+            let local_connection_context = connection_context.clone();
+
             select! {
-                _ = connection_context.shutdown_token.cancelled() => {
-                    trace!("Termination signal received, stopping server on {}:{}", connection_context.binding.ip, connection_context.binding.port);
+                _ = local_connection_context.shutdown_token.cancelled() => {
+                    trace!("Termination signal received, stopping server on {}:{}", local_connection_context.binding.ip, local_connection_context.binding.port);
                     break;
                 },
-                _ = connection_context.stop_services_token.cancelled() => {
-                    trace!("Service stop signal received, stopping server on {}:{}", connection_context.binding.ip, connection_context.binding.port);
+                _ = local_connection_context.stop_services_token.cancelled() => {
+                    trace!("Service stop signal received, stopping server on {}:{}", local_connection_context.binding.ip, local_connection_context.binding.port);
                     break;
                 },
                 result = listener.accept() => {
@@ -217,21 +223,21 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
                                 .unwrap_or_else(|_| "<unknown>".to_string());
 
                             let io = TokioIo::new(tcp_stream);
-                            let local_connection_context = connection_context.clone();
+                            let local_connection_context = local_connection_context.clone();
 
                             tokio::spawn(async move {
                                 // Increment connections in queue when connection is ready to be served
                                 if should_increment_connections_in_queue {
-                                    monitoring_state.increment_connections_in_queue();
+                                    local_connection_context.monitoring_state.increment_connections_in_queue();
                                 }
 
-                                if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context, remote_addr_ip)).catch_unwind().await {
+                                if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context.clone(), remote_addr_ip)).catch_unwind().await {
                                     handle_connection_panic(panic);
                                 }
 
                                 // Decrement when connection is fully handled
                                 if should_increment_connections_in_queue {
-                                    monitoring_state.decrement_connections_in_queue();
+                                    local_connection_context.monitoring_state.decrement_connections_in_queue();
                                 }
                             });
                         }
@@ -272,8 +278,8 @@ where
         let conn_context = local_connection_context.clone();
         async move {
             // Count the request in monitoring, except for admin bindings
-            if !conn_context.binding.is_admin {
-                get_monitoring_state().await.increment_requests_served();
+            if !conn_context.binding.is_admin && !conn_context.binding.is_telemetry {
+                 conn_context.monitoring_state.increment_requests_served();
             }
 
             let mut gruxi_request = GruxiRequest::from_hyper(req);
