@@ -42,11 +42,9 @@ impl RequestHandler {
         }
     }
 
-    // Check URL match, can be * or /path or /path* or .html or .php*
+    /// Check URL match, can be * or /path or /path* or .html or .php*
+    /// Input is expected to be already lowercased, since matching is case insensitive
     pub fn matches_url(&self, url_path: &str) -> bool {
-        // We always compare on lowercase
-        let url_path = url_path.to_lowercase();
-
         // Patterns will be lowercase when loaded as configuration
         for pattern in &self.url_match {
             if pattern.eq_ignore_ascii_case("*") {

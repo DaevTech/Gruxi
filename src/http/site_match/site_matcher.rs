@@ -1,9 +1,9 @@
 use crate::{trace, config::site::Site};
 
-// Find a best match site for the requested hostname, comparing case-insensitively
+/// Find a best match site for the requested hostname, comparing case-insensitively
+/// Expect hostname to be lowercase, as we do case-insensitive matching
 pub fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &str) -> Option<&'a Site> {
-    let requested_hostname_lower = requested_hostname.to_lowercase();
-    let mut site = sites.iter().find(|s| s.hostnames.contains(&requested_hostname_lower) && s.is_enabled);
+    let mut site = sites.iter().find(|s| s.hostnames.iter().any(|h| h == requested_hostname) && s.is_enabled);
 
     // We check for star hostnames
     if site.is_none() {

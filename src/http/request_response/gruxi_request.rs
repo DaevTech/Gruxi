@@ -318,11 +318,10 @@ impl GruxiRequest {
         self.parts.headers.insert("X-Forwarded-Host", HeaderValue::from_str(hostname).unwrap_or(HeaderValue::from_static("")));
     }
 
-    pub fn get_accepted_encodings(&self) -> Vec<String> {
-        if let Some(accept_encoding_header) = self.parts.headers.get("Accept-Encoding")
-            && let Ok(accept_encoding_str) = accept_encoding_header.to_str() {
-                return accept_encoding_str.split(',').map(|s| s.trim().to_string()).collect();
-            }
-        Vec::new()
+    pub fn check_accepted_encoding(&self, encoding: &str) -> bool {
+        if let Some(accept_encoding_header) = self.parts.headers.get("Accept-Encoding") && let Ok(accept_encoding_str) = accept_encoding_header.to_str() {
+            return accept_encoding_str.split(',').any(|e| e.trim().eq_ignore_ascii_case(encoding));
+        }
+        false
     }
 }

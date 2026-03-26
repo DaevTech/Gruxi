@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    compression::response_compression::ResponseCompression, config::cached_configuration::get_cached_configuration, core::triggers::get_trigger_handler, debug, error, file::file_reader_structs::*, http::{
+    compression::response_compression::compress_content, config::cached_configuration::get_cached_configuration, core::triggers::get_trigger_handler, debug, error, file::file_reader_structs::*, http::{
         caching::{
             etag::etag_strong_from_metadata,
             range::{RangeParseResult, build_multipart_body, build_multipart_body_from_parts, format_content_range, get_range_header, parse_range_header, should_process_range},
@@ -212,7 +212,7 @@ impl FileReaderCache {
                         if content_found {
                             let mut gzip_content = Vec::new();
 
-                            match ResponseCompression::compress_content(raw_content, &mut gzip_content) {
+                            match compress_content(raw_content, &mut gzip_content) {
                                 Ok(_) => {}
                                 Err(e) => {
                                     warn!("Failed to compress file {}: {}", file_path, e);
@@ -528,7 +528,6 @@ impl FileEntry {
 
     /// Get the full content stream
     async fn get_full_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
-        let accept_encoding_headers = gruxi_request.get_accepted_encodings();
 
         if self.content.raw.is_none() && self.content.gzip.is_none() {
             trace!("No cached file data content is present, so we return from the filesystem instead (full if small and stream if big)");
@@ -564,7 +563,7 @@ impl FileEntry {
         }
 
         // We prefer gzip if the client accepts it
-        if accept_encoding_headers.iter().any(|enc| enc.to_lowercase() == "gzip")
+        if gruxi_request.check_accepted_encoding("gzip")
             && let Some(gzip_content) = &self.content.gzip {
                 trace!("Serving gzipped content from cache");
                 let gzipped_bytes = gzip_content.as_ref().clone();

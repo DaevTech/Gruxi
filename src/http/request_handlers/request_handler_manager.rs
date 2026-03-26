@@ -43,6 +43,7 @@ impl RequestHandlerManager {
 
     pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError> {
         let rh = self.request_handlers.get(&site.id);
+        let lowercased_path = gruxi_request.get_path().to_lowercase();
         match rh {
             Some(handlers) => {
                 for handler in handlers.iter() {
@@ -52,7 +53,7 @@ impl RequestHandlerManager {
                     }
 
                     // Check that it matches
-                    if handler.matches_url(gruxi_request.get_path()) {
+                    if handler.matches_url(&lowercased_path) {
                         // We call the handle request. If we get an error, we continue to the next one
                         let response_result = handler.handle_request(gruxi_request, site, connection_context).await;
                         if response_result.is_err() {
@@ -65,7 +66,7 @@ impl RequestHandlerManager {
                 Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()))
             }
             None => {
-                trace!("No request handler found for request path '{}'", gruxi_request.get_path());
+                trace!("No request handler found for request path '{}'", lowercased_path);
                 Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()))
             }
         }

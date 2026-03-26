@@ -31,6 +31,7 @@ pub struct ConnectionContext {
     pub stop_services_token: CancellationToken,
     pub running_state: Guard<Arc<RunningState>>,
     pub monitoring_state: &'static MonitoringState,
+    pub http_builder: HttpAutoBuilder<TokioExecutor>,
 }
 
 // Starting all the Gruxi magic
@@ -90,6 +91,7 @@ pub async fn initialize_server() {
             stop_services_token: stop_services_token.clone(),
             running_state,
             monitoring_state: get_monitoring_state().await,
+            http_builder: HttpAutoBuilder::new(TokioExecutor::new()),
         };
 
         // Start listening on the specified address - spawn each binding as a separate task
@@ -304,12 +306,10 @@ where
         }
     });
 
-    let connection = HttpAutoBuilder::new(TokioExecutor::new());
-
     // Serve the connection and listen for shutdown signals
     let conn_context = connection_context.clone();
     let result = tokio::select! {
-        res = timeout(conn_context.hard_connection_timeout, connection.serve_connection_with_upgrades(io, svc)) => res,
+        res = timeout(conn_context.hard_connection_timeout, connection_context.http_builder.serve_connection_with_upgrades(io, svc)) => res,
         _ = conn_context.shutdown_token.cancelled() => return,
         _ = conn_context.stop_services_token.cancelled() => return,
     };
