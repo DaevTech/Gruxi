@@ -204,7 +204,7 @@ impl ProcessorTrait for PHPProcessor {
         // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
         if !file_data.meta.exists {
             trace!("File does not exist: {}", file_path);
-            if site.get_rewrite_functions_hashmap().contains_key("OnlyWebRootIndexForSubdirs") {
+            if site.has_rewrite_function("OnlyWebRootIndexForSubdirs") {
                 trace!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path);
                 // We rewrite the path to just "/" which will make it serve the index file
                 path = "/index.php".to_string();

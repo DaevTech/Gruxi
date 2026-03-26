@@ -205,12 +205,8 @@ impl Site {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    pub fn get_rewrite_functions_hashmap(&self) -> std::collections::HashMap<String, ()> {
-        let mut hashmap = std::collections::HashMap::new();
-        for func in &self.rewrite_functions {
-            hashmap.insert(func.clone(), ());
-        }
-        hashmap
+    pub fn has_rewrite_function(&self, func_name: &str) -> bool {
+        self.rewrite_functions.iter().any(|f| f == func_name)
     }
 
     pub fn verify_hostname(hostname: &str) -> Result<(), String> {
