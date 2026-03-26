@@ -9,7 +9,7 @@ use crate::{
 pub async fn validate_request(gruxi_request: &mut GruxiRequest, binding: &Binding, site: &Site) -> Result<(), GruxiResponse> {
     // Here we can add any request validation logic if needed
     let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-    let configuration = cached_configuration.get_configuration().await;
+    let configuration = cached_configuration.get_configuration();
 
     // Validation for HTTP/1.1 only
     if gruxi_request.get_http_version() == "HTTP/1.1" {

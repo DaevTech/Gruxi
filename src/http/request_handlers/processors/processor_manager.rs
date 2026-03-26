@@ -16,7 +16,7 @@ pub struct ProcessorManager {
 impl ProcessorManager {
     pub async fn new() -> Self {
         let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration().await;
+        let config = cached_configuration.get_configuration();
 
         let mut processor_manager = ProcessorManager {
             static_file_processors: HashMap::new(),

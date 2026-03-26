@@ -60,7 +60,7 @@ pub async fn check_path_secure(base_path: &str, test_path: &str) -> bool {
 
     // Check the blacklisted file patterns
     let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-    let config = cached_configuration.get_configuration().await;
+    let config = cached_configuration.get_configuration();
 
     // Run through blocked patterns and see if any match
     let file_lowercase = file.to_lowercase();

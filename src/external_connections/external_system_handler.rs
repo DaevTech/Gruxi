@@ -17,7 +17,7 @@ impl ExternalSystemHandler {
 
         // Get the config, to determine what we need
         let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration().await;
+        let config = cached_configuration.get_configuration();
 
         let mut php_cgi_id_to_port = HashMap::new();
 

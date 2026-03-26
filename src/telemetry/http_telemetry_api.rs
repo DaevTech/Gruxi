@@ -50,7 +50,7 @@ async fn handle_metrics_endpoint(
 ) -> Result<GruxiResponse, GruxiError> {
     // Get the configured bearer token
     let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-    let configuration = cached_configuration.get_configuration().await;
+    let configuration = cached_configuration.get_configuration();
     let configured_token = &configuration.core.telemetry.bearer_token;
 
     let configured_token = match configured_token {

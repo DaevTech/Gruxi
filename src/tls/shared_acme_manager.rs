@@ -81,7 +81,7 @@ pub async fn get_shared_acme_domains() -> HashSet<String> {
 /// Internal function to create the shared ACME manager
 async fn create_shared_acme_manager() -> Result<Option<SharedAcmeManager>, Box<dyn std::error::Error + Send + Sync>> {
     let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-    let config = cached_configuration.get_configuration().await;
+    let config = cached_configuration.get_configuration();
 
     let tls_settings = &config.core.tls_settings;
 

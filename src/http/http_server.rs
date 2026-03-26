@@ -37,7 +37,7 @@ pub struct ConnectionContext {
 pub async fn initialize_server() {
     // Get configuration from the current configuration
     let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-    let config = cached_configuration.get_configuration().await;
+    let config = cached_configuration.get_configuration();
 
     // Initialize shared ACME manager ONCE before starting any bindings.
     // This ensures all TLS bindings share a single ACME client, resolver, and polling task.

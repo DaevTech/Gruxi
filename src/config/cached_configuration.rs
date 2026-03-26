@@ -3,11 +3,11 @@ use crate::{
     core::triggers::get_trigger_handler,
 };
 use crate::trace;
-use tokio::sync::RwLock;
+use arc_swap::ArcSwap;
 use std::sync::{Arc, OnceLock};
 
 pub struct CachedConfiguration {
-    pub configuration: Arc<RwLock<Configuration>>,
+    configuration: ArcSwap<Configuration>,
 }
 
 impl Default for CachedConfiguration {
@@ -20,12 +20,12 @@ impl CachedConfiguration {
     pub fn new() -> Self {
         let configuration = super::load_configuration::init();
         CachedConfiguration {
-            configuration: Arc::new(RwLock::new(configuration)),
+            configuration: ArcSwap::from_pointee(configuration),
         }
     }
 
-    pub async fn get_configuration(&self) -> tokio::sync::RwLockReadGuard<'_, Configuration> {
-        self.configuration.read().await
+    pub fn get_configuration(&self) -> Arc<Configuration> {
+        self.configuration.load_full()
     }
 
     pub async fn check_if_cached_configuration_should_be_refreshed() {
@@ -48,8 +48,7 @@ impl CachedConfiguration {
             {
                 let new_configuration = super::load_configuration::init();
                 let cached_configuration = get_cached_configuration();
-                let mut config_write_guard = cached_configuration.configuration.write().await;
-                *config_write_guard = new_configuration;
+                cached_configuration.configuration.store(Arc::new(new_configuration));
             }
 
             // Get new token for next time

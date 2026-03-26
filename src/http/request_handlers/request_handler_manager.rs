@@ -19,7 +19,7 @@ impl RequestHandlerManager {
     pub async fn new() -> Self {
         // Get the config, to determine what we need
         let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration().await;
+        let config = cached_configuration.get_configuration();
 
         // Make a hashmap of the request handlers, so we can easily access them by id, before matching with site
         let mut request_handlers = HashMap::new();

@@ -11,7 +11,7 @@ impl LogRotation {
     pub async fn new() -> Self {
         // Get the configuration for log rotation from the global config
         let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration().await;
+        let config = cached_configuration.get_configuration();
 
         // Create pathbuf to logs dir from environment
         let app_paths = get_app_paths();

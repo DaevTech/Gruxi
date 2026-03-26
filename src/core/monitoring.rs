@@ -17,7 +17,7 @@ pub struct MonitoringState {
 impl MonitoringState {
     pub async fn new() -> Self {
         let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let configuration = cached_configuration.get_configuration().await;
+        let configuration = cached_configuration.get_configuration();
 
         MonitoringState {
             requests_served: AtomicUsize::new(0),      // Updated from http server
@@ -73,7 +73,7 @@ impl MonitoringState {
                 // Clone the configuration values we need, then drop the guard
                 let (file_cache_enabled, file_cache_max_items) = {
                     let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-                    let configuration = cached_configuration.get_configuration().await;
+                    let configuration = cached_configuration.get_configuration();
                     (configuration.core.file_cache.is_enabled, configuration.core.file_cache.cache_item_size as usize)
                 };
                 monitoring_state.file_cache_enabled.store(file_cache_enabled, Ordering::Relaxed);

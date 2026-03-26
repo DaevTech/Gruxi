@@ -22,7 +22,7 @@ impl BindingSiteCache {
     pub async fn init(&self) {
         // Get the configuration
         let cached_configuration = get_cached_configuration();
-        let configuration = cached_configuration.get_configuration().await;
+        let configuration = cached_configuration.get_configuration();
         self.populate_cache(&configuration.bindings, &configuration.sites, &configuration.binding_sites);
     }
 

@@ -34,7 +34,7 @@ impl FileReaderCache {
     pub async fn new() -> Self {
         // Get configuration
         let cached_configuration = get_cached_configuration();
-        let config = cached_configuration.get_configuration().await;
+        let config = cached_configuration.get_configuration();
 
         let file_data_config = &config.core.file_cache;
 
