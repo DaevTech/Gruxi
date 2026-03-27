@@ -1,5 +1,4 @@
-use dashmap::DashMap;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     config::{request_handler::RequestHandler, site::Site},
@@ -12,7 +11,7 @@ use crate::{
 };
 
 pub struct RequestHandlerManager {
-    pub request_handlers: DashMap<String, Vec<RequestHandler>>,
+    pub request_handlers: Arc<HashMap<String, Vec<RequestHandler>>>,
 }
 
 impl RequestHandlerManager {
@@ -27,7 +26,7 @@ impl RequestHandlerManager {
             request_handlers.insert(handler.id.clone(), handler.clone());
         }
 
-        let new_request_handlers = DashMap::new();
+        let mut new_request_handlers = HashMap::new();
         for site in &config.sites {
             for request_handler_id in &site.request_handlers {
                 if let Some(handler) = request_handlers.get(request_handler_id) {
@@ -37,7 +36,7 @@ impl RequestHandlerManager {
         }
 
         RequestHandlerManager {
-            request_handlers: new_request_handlers,
+            request_handlers: Arc::new(new_request_handlers),
         }
     }
 
