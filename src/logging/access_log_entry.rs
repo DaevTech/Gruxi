@@ -15,7 +15,7 @@ impl AccessLogEntry {
     pub fn format_for_log(&self) -> String {
         let log_entry = format!(
             "{} - - [{}] \"{} {} {}\" {} {}",
-            self.gruxi_request.get_remote_ip(),
+            self.gruxi_request.get_remote_ip_pretty(),
             self.log_time.format(LOG_TIMESTAMP_FORMAT),
             self.gruxi_request.get_http_method(),
             self.gruxi_request.get_path_and_query(),

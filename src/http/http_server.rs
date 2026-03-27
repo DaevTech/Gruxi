@@ -95,7 +95,6 @@ pub async fn initialize_server() {
             running_state,
             monitoring_state: get_monitoring_state().await,
             http_builder: HttpAutoBuilder::new(TokioExecutor::new()),
-
         };
 
         // Start listening on the specified address - spawn each binding as a separate task
@@ -140,8 +139,6 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
     let listener = start_listener_with_retry(addr).await;
     trace!("Listening on binding: {:?}", connection_context.binding);
 
-    // Get the monitoring state to update active connections
-
     let should_increment_connections_in_queue = !connection_context.binding.is_admin && !connection_context.binding.is_telemetry;
 
     if connection_context.binding.is_tls {
@@ -170,9 +167,7 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
                 result = listener.accept() => {
                     match result {
                         Ok((tcp_stream, _)) => {
-                            let remote_addr_ip = tcp_stream.peer_addr()
-                                .map(|addr| addr.ip().to_string())
-                                .unwrap_or_else(|_| "<unknown>".to_string());
+                            let remote_socket = tcp_stream.peer_addr();
 
                             let acceptor = tls_acceptor.clone();
                             let local_connection_context = local_connection_context.clone();
@@ -186,7 +181,7 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
                                             local_connection_context.monitoring_state.increment_connections_in_queue();
                                         }
 
-                                        if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context.clone(), remote_addr_ip)).catch_unwind().await {
+                                        if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context.clone(), remote_socket)).catch_unwind().await {
                                             handle_connection_panic(panic);
                                         }
 
@@ -224,9 +219,7 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
                 result = listener.accept() => {
                     match result {
                         Ok((tcp_stream, _)) => {
-                            let remote_addr_ip = tcp_stream.peer_addr()
-                                .map(|addr| addr.ip().to_string())
-                                .unwrap_or_else(|_| "<unknown>".to_string());
+                            let remote_socket = tcp_stream.peer_addr();
 
                             let io = TokioIo::new(tcp_stream);
                             let local_connection_context = local_connection_context.clone();
@@ -237,7 +230,7 @@ async fn start_server_binding(connection_context: Arc<ConnectionContext>) {
                                     local_connection_context.monitoring_state.increment_connections_in_queue();
                                 }
 
-                                if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context.clone(), remote_addr_ip)).catch_unwind().await {
+                                if let Err(panic) = std::panic::AssertUnwindSafe(serve_connection(io, local_connection_context.clone(), remote_socket)).catch_unwind().await {
                                     handle_connection_panic(panic);
                                 }
 
@@ -272,14 +265,15 @@ fn handle_connection_panic(panic: Box<dyn std::any::Any + Send>) {
 }
 
 // Helper function to serve a connection (works for both TLS and non-TLS)
-async fn serve_connection<S>(io: TokioIo<S>, connection_context: Arc<ConnectionContext>, remote_addr_ip: String)
+async fn serve_connection<S>(io: TokioIo<S>, connection_context: Arc<ConnectionContext>, remote_addr: Result<SocketAddr, std::io::Error>)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let local_connection_context = connection_context.clone();
+    let remote_addr_arc = Arc::new(remote_addr);
 
     let svc = service_fn(move |req: Request<Incoming>| {
-        let remote_ip = remote_addr_ip.clone();
+        let remote_addr_local = remote_addr_arc.clone();
 
         let conn_context = local_connection_context.clone();
         async move {
@@ -289,11 +283,13 @@ where
             }
 
             let mut gruxi_request = GruxiRequest::from_hyper(req);
-            gruxi_request.set_remote_ip(remote_ip.clone());
+            if let Ok(remote_ip) = &*remote_addr_local {
+                gruxi_request.set_remote_ip(*remote_ip);
+            }
             let gruxi_response_result = handle_request(gruxi_request, conn_context).await;
             let mut response = match gruxi_response_result {
                 Err(err) => {
-                    error!("Error handling request from {}: {:?}", &remote_ip, err);
+                    error!("Error handling request from {:?}: {:?}", &remote_addr_local, err);
 
                     GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16())
                 }

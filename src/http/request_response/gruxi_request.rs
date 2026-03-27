@@ -9,6 +9,7 @@ use hyper::body::Body;
 use hyper::body::Bytes;
 use std::collections::HashMap;
 use std::mem;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -35,7 +36,7 @@ pub struct GruxiRequest {
 struct GruxiRequestData {
     body_size_hint: u64,
     hostname: String,
-    remote_ip: Option<String>,
+    remote_ip: Option<SocketAddr>,
     other: Option<HashMap<String, String>>,
 }
 
@@ -147,12 +148,28 @@ impl GruxiRequest {
         self.connection_semaphore = Some(semaphore);
     }
 
-    pub fn set_remote_ip(&mut self, remote_ip: String) {
+    pub fn set_remote_ip(&mut self, remote_ip: SocketAddr) {
         self.data.remote_ip = Some(remote_ip);
     }
 
-    pub fn get_remote_ip(&self) -> &str {
-        self.data.remote_ip.as_deref().unwrap_or("")
+    pub fn get_remote_ip(&self) -> Option<SocketAddr> {
+        self.data.remote_ip
+    }
+
+    pub fn get_remote_ip_string(&self) -> String {
+        if let Some(remote_ip) = self.data.remote_ip {
+            remote_ip.to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    pub fn get_remote_ip_pretty(&self) -> String {
+        if let Some(remote_ip) = self.data.remote_ip {
+            remote_ip.to_string()
+        } else {
+            "<unknown>".to_string()
+        }
     }
 
     pub fn get_hostname(&self) -> &str {
@@ -295,7 +312,7 @@ impl GruxiRequest {
 
     pub fn add_forwarded_headers(&mut self) {
         // Add X-Forwarded-For header
-        let remote_ip = self.data.remote_ip.as_deref().unwrap_or("");
+        let remote_ip = self.get_remote_ip_string();
         if !remote_ip.is_empty() {
             let x_forwarded_for_value = if let Some(existing_xff) = self.parts.headers.get("X-Forwarded-For") {
                 format!("{}, {}", existing_xff.to_str().unwrap_or(""), remote_ip)

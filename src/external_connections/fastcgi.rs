@@ -507,7 +507,7 @@ impl FastCgi {
         params.insert("HTTPS".to_string(), if gruxi_request.is_https() { "on" } else { "off" }.to_string());
         params.insert("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string());
         params.insert("SERVER_PROTOCOL".to_string(), gruxi_request.get_http_version().to_string());
-        params.insert("REMOTE_ADDR".to_string(), gruxi_request.get_remote_ip().to_string());
+        params.insert("REMOTE_ADDR".to_string(), gruxi_request.get_remote_ip_pretty());
         params.insert("REMOTE_HOST".to_string(), "".to_string());
         params.insert("PATH_INFO".to_string(), path_info);
         params.insert("REDIRECT_STATUS".to_string(), "200".to_string());
