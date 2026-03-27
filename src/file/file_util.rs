@@ -47,7 +47,7 @@ pub fn replace_web_root_in_path(original_path: &str, old_web_root: &str, new_web
 ///
 /// Used primarily by static file processors, to ensure that files being served are safe
 /// Expected that both base_path and test_path are normalized paths without junk!
-pub async fn check_path_secure(base_path: &str, test_path: &str) -> bool {
+pub async fn check_path_secure(base_path: &str, test_path: &str, blocked_file_patterns: &[String]) -> bool {
     // Check that the test_path starts with the base_path
     if !test_path.starts_with(base_path) {
         trace!("Path is blocked, as it does not start with the web root: {} file: {}", base_path, test_path);
@@ -58,13 +58,9 @@ pub async fn check_path_secure(base_path: &str, test_path: &str) -> bool {
 
     trace!("Check if file pattern is blocked because of extension: {}", &file);
 
-    // Check the blacklisted file patterns
-    let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-    let config = cached_configuration.get_configuration();
-
     // Run through blocked patterns and see if any match
     let file_lowercase = file.to_lowercase();
-    for pattern in &config.core.server_settings.blocked_file_patterns {
+    for pattern in blocked_file_patterns {
         if file_lowercase.contains(pattern) {
             trace!("Path is blocked due to blocked file pattern: {} file: {}", pattern, test_path);
             return false;
@@ -80,17 +76,22 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_check_path_secure_blocked_extensions_matching() {
-        assert!(check_path_secure("/var/www", "/var/www/index.html").await);
-        assert!(check_path_secure("/var/www", "/var/www/styles.css").await);
-        assert!(check_path_secure("/var/www", "/var/www/mysubdir/styles.css").await);
+        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
+        let config = cached_configuration.get_configuration();
 
-        assert!(!check_path_secure("/var/www", "/var/www/index.php").await);
-        assert!(!check_path_secure("/var/www", "/var/index.html").await);
-        assert!(!check_path_secure("/var/www/html", "/var/www/index.php").await);
-        assert!(!check_path_secure("/var/www/html", "/index.php").await);
-        assert!(!check_path_secure("/var/www/html", "/etc/passwd").await);
-        assert!(!check_path_secure("/var/www", "/var/www/index.key").await);
-        assert!(!check_path_secure("/var/www", "/var/www/index.pem").await);
+        let blocked_file_patterns = &config.core.server_settings.blocked_file_patterns;
+
+        assert!(check_path_secure("/var/www", "/var/www/index.html", blocked_file_patterns).await);
+        assert!(check_path_secure("/var/www", "/var/www/styles.css", blocked_file_patterns).await);
+        assert!(check_path_secure("/var/www", "/var/www/mysubdir/styles.css", blocked_file_patterns).await);
+
+        assert!(!check_path_secure("/var/www", "/var/www/index.php", blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", "/var/index.html", blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www/html", "/var/www/index.php", blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www/html", "/index.php", blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www/html", "/etc/passwd", blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", "/var/www/index.key", blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", "/var/www/index.pem", blocked_file_patterns).await);
     }
 
     #[test]

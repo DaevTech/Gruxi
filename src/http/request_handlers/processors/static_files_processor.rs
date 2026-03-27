@@ -240,7 +240,7 @@ impl ProcessorTrait for StaticFileProcessor {
         }
 
         // Do a safety check of the path, make sure it's still under the web root and not blocked file extension
-        if !check_path_secure(&web_root, &file_path).await {
+        if !check_path_secure(&web_root, &file_path, &connection_context.configuration.core.server_settings.blocked_file_patterns).await {
             trace!("File path is not secure: {}", file_path);
             // We should probably not reveal that the file is blocked, so we return a 404
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(

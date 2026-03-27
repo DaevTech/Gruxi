@@ -1,4 +1,5 @@
 use crate::config::binding::Binding;
+use crate::config::configuration::Configuration;
 use crate::core::monitoring::{MonitoringState, get_monitoring_state};
 use crate::core::running_state::RunningState;
 use crate::core::running_state_manager::get_running_state_manager;
@@ -26,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 
 pub struct ConnectionContext {
     pub binding: Binding,
+    pub configuration: Arc<Configuration>,
     pub hard_connection_timeout: Duration,
     pub shutdown_token: CancellationToken,
     pub stop_services_token: CancellationToken,
@@ -86,12 +88,14 @@ pub async fn initialize_server() {
 
         let context = ConnectionContext {
             binding: binding.clone(),
+            configuration: config.clone(),
             hard_connection_timeout: Duration::from_secs(config.core.server_settings.max_connection_duration_seconds),
             shutdown_token: shutdown_token.clone(),
             stop_services_token: stop_services_token.clone(),
             running_state,
             monitoring_state: get_monitoring_state().await,
             http_builder: HttpAutoBuilder::new(TokioExecutor::new()),
+
         };
 
         // Start listening on the specified address - spawn each binding as a separate task

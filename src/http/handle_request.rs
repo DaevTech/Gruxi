@@ -51,7 +51,7 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     trace!("Matched site with request: {:?}", &site);
 
     // Validate the request
-    if let Err(gruxi_response) = validate_request(&mut gruxi_request, &connection_context.binding, site).await {
+    if let Err(gruxi_response) = validate_request(&mut gruxi_request, &connection_context.binding, site, &connection_context.configuration).await {
         return Ok(gruxi_response);
     }
 
