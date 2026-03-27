@@ -145,6 +145,7 @@ impl LogRotation {
                     // Perform rotation
                     let file_path = file_path.clone();
                     Self::rotate_file(&file_path).await;
+                    continue;
                 }
             }
 
@@ -184,6 +185,7 @@ impl LogRotation {
                     // Perform rotation
                     let file_path = file_path.clone();
                     Self::rotate_file(&file_path).await;
+                    continue;
                 }
             }
         }

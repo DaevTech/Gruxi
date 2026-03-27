@@ -55,7 +55,7 @@ impl fmt::Display for LogType {
             LogType::Warn => write!(f, "WARN"),
             LogType::Debug => write!(f, "DEBUG"),
             LogType::Trace => write!(f, "TRACE"),
-            _ => write!(f, "UNKNOWN"),
+            _ => write!(f, "UNKNOWN"), // Includes Off and any future variants
         }
     }
 }

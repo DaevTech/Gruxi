@@ -4,7 +4,12 @@ use std::{
 };
 
 use crate::{
-    compression::response_compression::compress_content, config::cached_configuration::get_cached_configuration, core::triggers::get_trigger_handler, debug, error, file::file_reader_structs::*, http::{
+    compression::response_compression::compress_content,
+    config::cached_configuration::get_cached_configuration,
+    core::triggers::get_trigger_handler,
+    debug, error,
+    file::file_reader_structs::*,
+    http::{
         caching::{
             etag::etag_strong_from_metadata,
             range::{RangeParseResult, build_multipart_body, build_multipart_body_from_parts, format_content_range, get_range_header, parse_range_header, should_process_range},
@@ -13,7 +18,8 @@ use crate::{
             body_error::{BodyError, box_err},
             gruxi_request::GruxiRequest,
         },
-    }, trace, warn
+    },
+    trace, warn,
 };
 
 use dashmap::DashMap;
@@ -104,10 +110,11 @@ impl FileReaderCache {
     pub async fn get_file(&self, file_path: &str) -> Result<Arc<FileEntry>, std::io::Error> {
         // Check the cache first
         if self.is_caching_enabled
-            && let Some(cached_entry) = self.cache.get(file_path) {
-                trace!("File found in cache: {}", file_path);
-                return Ok(cached_entry.value().clone());
-            }
+            && let Some(cached_entry) = self.cache.get(file_path)
+        {
+            trace!("File found in cache: {}", file_path);
+            return Ok(cached_entry.value().clone());
+        }
 
         // Not found in cache, so we populate it, maybe saving it to cache if enabled
         trace!("File/dir not found in cache, reading from disk: {}", file_path);
@@ -528,7 +535,6 @@ impl FileEntry {
 
     /// Get the full content stream
     async fn get_full_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
-
         if self.content.raw.is_none() && self.content.gzip.is_none() {
             trace!("No cached file data content is present, so we return from the filesystem instead (full if small and stream if big)");
 
@@ -564,12 +570,13 @@ impl FileEntry {
 
         // We prefer gzip if the client accepts it
         if gruxi_request.check_accepted_encoding("gzip")
-            && let Some(gzip_content) = &self.content.gzip {
-                trace!("Serving gzipped content from cache");
-                let gzipped_bytes = gzip_content.as_ref().clone();
-                let boxbody = BoxBody::new(Full::new(gzipped_bytes).map_err(|never| -> BodyError { match never {} }));
-                return (boxbody, "gzip".to_string());
-            }
+            && let Some(gzip_content) = &self.content.gzip
+        {
+            trace!("Serving gzipped content from cache");
+            let gzipped_bytes = gzip_content.as_ref().clone();
+            let boxbody = BoxBody::new(Full::new(gzipped_bytes).map_err(|never| -> BodyError { match never {} }));
+            return (boxbody, "gzip".to_string());
+        }
 
         // Otherwise serve raw content
         if let Some(raw_content) = &self.content.raw {

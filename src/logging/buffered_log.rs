@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use tokio::io::AsyncWriteExt;
 
+use crate::logging::logging_util::sanitize_log_entry;
+
 pub struct BufferedLog {
     capacity: u64,
     log_file_path: PathBuf,
@@ -71,7 +73,8 @@ impl BufferedLog {
         let total_len: usize = logs_to_write.iter().map(|s| s.len() + 1).sum();
         let mut log_data = String::with_capacity(total_len);
         for entry in &logs_to_write {
-            log_data.push_str(entry);
+            // Sanitize log entry before writing to disk to prevent log injection attacks
+            log_data.push_str(&sanitize_log_entry(entry));
             log_data.push('\n');
         }
 
