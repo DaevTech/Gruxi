@@ -35,7 +35,7 @@ impl AccessLogBuffer {
         let default_log_path_result = NormalizedPath::new(&app_paths.logs_dir.display().to_string(), "");
         let mut default_log_available = true;
         let default_log_path = match default_log_path_result {
-            Ok(norm) => norm.get_full_path(),
+            Ok(norm) => norm.get_full_path().to_string(),
             Err(_) => {
                 default_log_available = false;
                 "".to_string()
@@ -64,7 +64,7 @@ impl AccessLogBuffer {
             };
 
             let log_file_path = match log_file_path_result {
-                Ok(path) => path.get_full_path(),
+                Ok(path) => path.get_full_path().to_string(),
                 Err(_) => {
                     error!("Invalid access log path for site '{}': {}. Using default '{}'.", site_id, site.access_log_file, default_log_path);
                     // We check if the default log path is available
@@ -72,12 +72,11 @@ impl AccessLogBuffer {
                         panic!("Default log path '{}' and the specified access log path '{}' are both not available.", default_log_path, site.access_log_file);
                     }
 
-                    let default_log_path_plus_site = format!("{}/{}.log", default_log_path, site_id);
-                    default_log_path_plus_site
+                    format!("{}/{}.log", default_log_path, site_id)
                 }
             };
             trace!("Initialized access log buffer for site '{}' at path '{}'", &site.id, &log_file_path);
-            access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(log_file_path, 100000));
+            access_log_buffer.buffered_logs.insert(site_id.clone(), BufferedLog::new(log_file_path.to_string(), 100000));
         }
 
         access_log_buffer

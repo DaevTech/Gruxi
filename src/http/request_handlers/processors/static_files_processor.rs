@@ -244,7 +244,7 @@ impl ProcessorTrait for StaticFileProcessor {
             trace!("File path is not secure: {}", file_path);
             // We should probably not reveal that the file is blocked, so we return a 404
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(
-                file_path,
+                file_path.to_string(),
             ))));
         }
 
@@ -352,7 +352,7 @@ impl ProcessorTrait for StaticFileProcessor {
 }
 
 impl StaticFileProcessor {
-    fn add_caching_headers(header_value_option: Option<&String>, header_name: HeaderName, response: &mut GruxiResponse, file_path: &String) {
+    fn add_caching_headers(header_value_option: Option<&String>, header_name: HeaderName, response: &mut GruxiResponse, file_path: &str) {
         if let Some(header_value_string) = header_value_option {
             let header_value = HeaderValue::from_str(header_value_string);
             match header_value {

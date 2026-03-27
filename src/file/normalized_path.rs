@@ -69,16 +69,16 @@ impl NormalizedPath {
         Ok(normalized_path)
     }
 
-    pub fn get_full_path(&self) -> String {
-        self.full_path.to_string()
+    pub fn get_full_path(&self) -> &str {
+        &self.full_path
     }
 
-    pub fn get_web_root(&self) -> String {
-        self.web_root.to_string()
+    pub fn get_web_root(&self) -> &str {
+        &self.web_root
     }
 
-    pub fn get_path(&self) -> String {
-        self.path.to_string()
+    pub fn get_path(&self) -> &str {
+        &self.path
     }
 
     fn decode_string_until_no_percentage(path: &str) -> Result<String, ()> {
