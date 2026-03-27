@@ -320,8 +320,134 @@ impl GruxiRequest {
 
     pub fn check_accepted_encoding(&self, encoding: &str) -> bool {
         if let Some(accept_encoding_header) = self.parts.headers.get("Accept-Encoding") && let Ok(accept_encoding_str) = accept_encoding_header.to_str() {
-            return accept_encoding_str.split(',').any(|e| e.trim().eq_ignore_ascii_case(encoding));
+            return accept_encoding_str.split(',').any(|entry| {
+                let mut parts = entry.trim().splitn(2, ';');
+                let name = parts.next().unwrap_or("").trim();
+                if !name.eq_ignore_ascii_case(encoding) {
+                    return false;
+                }
+                // If there's a quality value of 0, the encoding is explicitly not accepted
+                if let Some(params) = parts.next() {
+                    if let Some(q) = params.trim().strip_prefix("q=").or_else(|| params.trim().strip_prefix("Q=")) {
+                        if let Ok(quality) = q.trim().parse::<f32>() {
+                            return quality > 0.0;
+                        }
+                    }
+                }
+                true
+            });
         }
         false
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyper::Request;
+
+    fn make_request_with_accept_encoding(value: &str) -> GruxiRequest {
+        let req = Request::builder()
+            .uri("http://localhost/")
+            .header("Accept-Encoding", value)
+            .body(Bytes::new())
+            .unwrap();
+        GruxiRequest::new(req)
+    }
+
+    fn make_request_without_accept_encoding() -> GruxiRequest {
+        let req = Request::builder()
+            .uri("http://localhost/")
+            .body(Bytes::new())
+            .unwrap();
+        GruxiRequest::new(req)
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_simple_match() {
+        let req = make_request_with_accept_encoding("gzip, deflate, br");
+        assert!(req.check_accepted_encoding("gzip"));
+        assert!(req.check_accepted_encoding("deflate"));
+        assert!(req.check_accepted_encoding("br"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_case_insensitive() {
+        let req = make_request_with_accept_encoding("Gzip, Deflate");
+        assert!(req.check_accepted_encoding("gzip"));
+        assert!(req.check_accepted_encoding("GZIP"));
+        assert!(req.check_accepted_encoding("Gzip"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_not_present() {
+        let req = make_request_with_accept_encoding("gzip, deflate");
+        assert!(!req.check_accepted_encoding("br"));
+        assert!(!req.check_accepted_encoding("zstd"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_no_header() {
+        let req = make_request_without_accept_encoding();
+        assert!(!req.check_accepted_encoding("gzip"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_with_quality_one() {
+        let req = make_request_with_accept_encoding("gzip;q=1, br;q=1.0");
+        assert!(req.check_accepted_encoding("gzip"));
+        assert!(req.check_accepted_encoding("br"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_with_quality_partial() {
+        let req = make_request_with_accept_encoding("gzip;q=0.5, br;q=0.1");
+        assert!(req.check_accepted_encoding("gzip"));
+        assert!(req.check_accepted_encoding("br"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_with_quality_zero_rejected() {
+        let req = make_request_with_accept_encoding("gzip;q=0, br;q=0.0, deflate;q=0.000");
+        assert!(!req.check_accepted_encoding("gzip"));
+        assert!(!req.check_accepted_encoding("br"));
+        assert!(!req.check_accepted_encoding("deflate"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_mixed_quality() {
+        let req = make_request_with_accept_encoding("gzip;q=1, br;q=0, deflate");
+        assert!(req.check_accepted_encoding("gzip"));
+        assert!(!req.check_accepted_encoding("br"));
+        assert!(req.check_accepted_encoding("deflate"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_with_spaces_around_quality() {
+        let req = make_request_with_accept_encoding("gzip ; q=0.8 , br ; q=0");
+        assert!(req.check_accepted_encoding("gzip"));
+        assert!(!req.check_accepted_encoding("br"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_uppercase_q() {
+        let req = make_request_with_accept_encoding("gzip;Q=0.5, br;Q=0");
+        assert!(req.check_accepted_encoding("gzip"));
+        assert!(!req.check_accepted_encoding("br"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_single_encoding() {
+        let req = make_request_with_accept_encoding("gzip");
+        assert!(req.check_accepted_encoding("gzip"));
+        assert!(!req.check_accepted_encoding("br"));
+    }
+
+    #[test]
+    fn test_check_accepted_encoding_identity() {
+        let req = make_request_with_accept_encoding("identity;q=0, gzip");
+        assert!(!req.check_accepted_encoding("identity"));
+        assert!(req.check_accepted_encoding("gzip"));
     }
 }

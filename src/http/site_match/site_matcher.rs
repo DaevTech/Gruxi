@@ -1,7 +1,7 @@
 use crate::{trace, config::site::Site};
 
 /// Find a best match site for the requested hostname, comparing case-insensitively
-/// Expect hostname to be lowercase, as we do case-insensitive matching
+/// Expect hostname to be lowercase, as we direct compare with lowercased hostnames in the site config, so we dont have to lowercase multiple times
 pub fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &str) -> Option<&'a Site> {
     let mut site = sites.iter().find(|s| s.hostnames.iter().any(|h| h == requested_hostname) && s.is_enabled);
 
@@ -30,7 +30,7 @@ mod tests {
     use crate::config::site::Site;
 
     #[test]
-    fn test_site_matcher_simple_case_insensitive() {
+    fn test_site_matcher_simple() {
         let mut site1 = Site::new();
         site1.hostnames = vec!["grux.eu".to_string(), "gruxi.org".to_string(), "othersite.com".to_string()];
         site1.is_default = false;
@@ -51,21 +51,13 @@ mod tests {
         // Exact match
         let matched_site = find_best_match_site(&sites, "grux.eu").unwrap();
         assert_eq!(matched_site.id, site1.id);
-        let matched_site = find_best_match_site(&sites, "GRUX.eu").unwrap();
-        assert_eq!(matched_site.id, site1.id);
-        let matched_site = find_best_match_site(&sites, "grux.EU").unwrap();
-        assert_eq!(matched_site.id, site1.id);
         let matched_site = find_best_match_site(&sites, "gruxi.org").unwrap();
-        assert_eq!(matched_site.id, site1.id);
-        let matched_site = find_best_match_site(&sites, "GRUXI.ORG").unwrap();
         assert_eq!(matched_site.id, site1.id);
 
         // Wildcard match for rest, none should hit the default, as we have a wildcard site
         let matched_site = find_best_match_site(&sites, "unknown.com").unwrap();
         assert_eq!(matched_site.id, site2.id);
         let matched_site = find_best_match_site(&sites, "anotherunknown.com").unwrap();
-        assert_eq!(matched_site.id, site2.id);
-        let matched_site = find_best_match_site(&sites, "GRUXI.CoM").unwrap();
         assert_eq!(matched_site.id, site2.id);
     }
 
@@ -132,8 +124,6 @@ mod tests {
         assert_eq!(matched_site.id, site1.id);
 
         let matched_site = find_best_match_site(&sites, "gruxi.org").unwrap();
-        assert_eq!(matched_site.id, site2.id);
-        let matched_site = find_best_match_site(&sites, "GruXi.Org").unwrap();
         assert_eq!(matched_site.id, site2.id);
     }
 }
