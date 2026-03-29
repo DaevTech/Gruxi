@@ -50,6 +50,11 @@ impl ServerSettings {
             }
         }
 
+        // Check max connection duration, should be atleast 10 seconds
+        if self.max_connection_duration_seconds < 10 {
+            errors.push("Max connection duration must be at least 10 seconds".to_string());
+        }
+
         // Validate max_body_size
         if self.max_body_size == 0 {
             errors.push("Max body size cannot be 0".to_string());

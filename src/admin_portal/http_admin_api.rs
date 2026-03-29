@@ -747,7 +747,8 @@ pub async fn admin_get_operation_mode_endpoint(gruxi_request: &mut GruxiRequest,
         }
     };
 
-    let response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(json_response));
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(json_response));
+    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
     Ok(response)
 }
 
