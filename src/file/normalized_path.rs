@@ -53,7 +53,7 @@ impl NormalizedPath {
         if normalized_path.web_root.is_empty() && normalized_path.path.is_empty() {
             normalized_path.full_path = "".to_string();
         } else {
-            let full_path_result = Self::resolve_relative_path(&normalized_path.full_path);
+            let full_path_result = Self::make_path_absolute(&normalized_path.full_path);
             normalized_path.full_path = match full_path_result {
                 Ok(p) => p,
                 Err(_) => {
@@ -63,6 +63,11 @@ impl NormalizedPath {
 
             while normalized_path.full_path.contains("\\") {
                 normalized_path.full_path = normalized_path.full_path.replace("\\", "/");
+            }
+
+            // Defense-in-depth: final check that no traversal segments exist in the assembled full path
+            if normalized_path.full_path.split('/').any(|seg| seg == ".." || seg == ".") {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Path traversal detected in resolved path")));
             }
         }
 
@@ -157,14 +162,12 @@ impl NormalizedPath {
             return Err("Path cannot contain colon characters".to_string());
         }
 
+        // Convert backward slashes to forward slashes (must happen before slash dedup)
+        buf = buf.replace('\\', "/");
+
         // Remove duplicate slashes (// → /)
         while buf.contains("//") {
             buf = buf.replace("//", "/");
-        }
-
-        // Remove backward slashes (\ → '')
-        while buf.contains("\\") {
-            buf = buf.replace("\\", "");
         }
 
         // Split by slash and collect non-empty segments
@@ -177,8 +180,10 @@ impl NormalizedPath {
             }
 
             // Check for reserved filenames (Windows)
+            // Also check stem before first dot, since e.g. CON.txt is still reserved
             let part_upper = part.to_uppercase();
-            if RESERVED_FILENAMES.contains(&part_upper.as_str()) {
+            let stem = part_upper.split('.').next().unwrap_or(&part_upper);
+            if RESERVED_FILENAMES.contains(&part_upper.as_str()) || RESERVED_FILENAMES.contains(&stem) {
                 return Err("Path contains reserved filename".to_string());
             }
 
@@ -206,7 +211,7 @@ impl NormalizedPath {
     // - Expands relative paths to absolute.
     //
     // Works on both Windows and Unix.
-    fn resolve_relative_path(input_path: &str) -> Result<String, std::io::Error> {
+    fn make_path_absolute(input_path: &str) -> Result<String, std::io::Error> {
         let mut path = PathBuf::new();
 
         // If it starts with ./, we replace with current dir
@@ -478,5 +483,38 @@ mod tests {
             Err(_) => panic!("Expected Ok result for /index.php path"),
         };
         assert_eq!(normalized.get_full_path(), "/index.php");
+    }
+
+    #[tokio::test]
+    async fn test_normalized_path_reserved_names_with_extensions() {
+        // Windows treats CON.txt, NUL.log, etc. as device names
+        let normalized = NormalizedPath::new("/var/www", "/CON.txt");
+        assert!(normalized.is_err());
+
+        let normalized = NormalizedPath::new("/var/www", "/NUL.log");
+        assert!(normalized.is_err());
+
+        let normalized = NormalizedPath::new("/var/www", "/images/LPT1.pdf");
+        assert!(normalized.is_err());
+
+        let normalized = NormalizedPath::new("/var/www", "/AUX.tar.gz");
+        assert!(normalized.is_err());
+
+        let normalized = NormalizedPath::new("/var/www", "/PRN.doc");
+        assert!(normalized.is_err());
+
+        let normalized = NormalizedPath::new("/var/www", "/COM1.txt");
+        assert!(normalized.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_normalized_path_backslash_converted_to_slash() {
+        // Backslashes should be treated as path separators, not silently removed
+        let normalized = match NormalizedPath::new("/var/www", "/a\\b\\c") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for backslash path"),
+        };
+        assert_eq!(normalized.get_path(), "/a/b/c");
+        assert_eq!(normalized.get_full_path(), "/var/www/a/b/c");
     }
 }
