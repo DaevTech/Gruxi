@@ -204,29 +204,15 @@ impl FileReaderCache {
                     file_entry.content.raw = Some(raw_bytes);
 
                     if should_compress {
-                        let raw_content_result = file_entry.content.raw.as_ref();
-                        let mut content_found = true;
-                        let raw_content = match raw_content_result {
-                            Some(content) => content.as_ref(),
-                            None => {
-                                warn!("Raw content is missing for file: {}", file_path);
-                                content_found = false;
-                                &Arc::new(Bytes::new())
+                        let raw_content = file_entry.content.raw.as_ref().unwrap();
+                        let mut gzip_content = Vec::new();
+                        match compress_content(raw_content, &mut gzip_content) {
+                            Ok(_) => {
+                                file_entry.content.gzip = Some(Arc::new(Bytes::from(gzip_content)));
                             }
-                        };
-
-                        // Content should be found, but for safety we check
-                        if content_found {
-                            let mut gzip_content = Vec::new();
-
-                            match compress_content(raw_content, &mut gzip_content) {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    warn!("Failed to compress file {}: {}", file_path, e);
-                                }
+                            Err(e) => {
+                                warn!("Failed to compress file {}: {}", file_path, e);
                             }
-                            let gzip_bytes = Arc::new(Bytes::from(gzip_content));
-                            file_entry.content.gzip = Some(gzip_bytes);
                         }
                     }
 
