@@ -1,4 +1,4 @@
-<img width="200" src="https://github.com/DaevTech/Gruxi/blob/0c198a580b6d473bfbef642301e069507429be26/assets/logo.svg">
+<img src="https://github.com/DaevTech/Gruxi/blob/main/assets/github-banner.png" alt="Gruxi Banner">
 
 # Gruxi — High‑performance web server
 
@@ -45,6 +45,7 @@ Gruxi is usable today, but it has not yet reached a 1.0 release. Core functional
 * Built-in web interface for administration, configuration, and monitoring
 * Live metrics and server status
 * Windows Service support and Linux systemd integration
+* Supports Prometheus metrics collection
 
 ### Application support
 
@@ -103,24 +104,23 @@ The following section documents **performance characteristics** of Gruxi under c
 ### Benchmark setup
 
 * Tooling: Oha ([https://github.com/hatoo/oha](https://github.com/hatoo/oha))
-* Tested version: 0.1.7
+* Tested version: 0.5.0
 * TLS: Disabled (to focus on raw request handling)
 * File cache: Enabled
 * Content type: Static file (default index.html for Gruxi)
 * Concurrency: 100
 * Request count: 1,000,000
-* Operation mode: "ULTIMATE" (request/response logging disabled except for errors)
+* Operation mode: "PRODUCTION" (request/response logging disabled except for errors)
 * Command executed: `.\oha-windows-amd64.exe -c 100 -n 1000000 --no-tui http://127.0.0.1`
 
 ### Results
 
-* Requests per second: **173,309 req/second**
-* Memory usage under load: **10 MB**
-* CPU utilization: **30 %**
+* Requests per second: **182,697 req/second**
+* CPU utilization: **25-30 %**
 
 ### Benchmark screenshot with details
 
-<img src="https://github.com/DaevTech/Gruxi/blob/main/assets/performance-test-260126-static-files.png" alt="Gruxi Performance Test" width="600">
+<img src="https://github.com/DaevTech/Gruxi/blob/main/assets/performance-test-070426-static-files.png" alt="Gruxi Performance Test" width="600">
 
 > **Note:** These results reflect local lab conditions with no external network traffic. Performance will differ under real-world scenarios with TLS enabled, external clients, and varied content types. Much higher performance is possible with optimized configurations and production hardware. These numbers are intended to demonstrate Gruxi's potential and should not be taken as guarantees for all environments.
 

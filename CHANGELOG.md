@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 0.5.0 - 7 Apr 2026
+
+### Added
+ - Added support for Prometheus metrics collection, so you can easily monitor Gruxi with your existing Prometheus setup and get insights into its performance and behavior. Currently implemented metrics are the same as the ones available in the admin portal, but now they can be collected and visualized in Prometheus and Grafana or similar tools.
+ - Added RPM packaging for easy installation on Red Hat-based systems, making it more convenient to deploy Gruxi in enterprise environments that use RPM for package management.
+ - Make it possible to change the password of the "admin" user in the admin portal, so you can easily set a custom password after the initial startup without having to use command line options or similar.
+
+### Fixed
+ - Fixed a issue where the server reload would fail when doing configuration editing in the admin portal.
+
+
 # Version 0.4.0 - 20 Mar 2026
 
 ### Added
