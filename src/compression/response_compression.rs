@@ -35,12 +35,11 @@ pub async fn maybe_compress_response(request: &GruxiRequest, response: &mut Grux
 
             // If content encoding is not present, we consider compressing if it's a compressible type and size
             let content_type_header_option = response.get_header(hyper::header::CONTENT_TYPE.as_str());
-            if let Some(content_type_header) = content_type_header_option {
-                if request.check_accepted_encoding("gzip") {
-                    let content_length = response.get_body_size();
-                    if file_reader_cache.should_compress(content_type_header.to_str().unwrap_or(""), content_length) {
-                        should_compress = true;
-                    }
+            if let Some(content_type_header) = content_type_header_option
+                && request.check_accepted_encoding("gzip") {
+                let content_length = response.get_body_size();
+                if file_reader_cache.should_compress(content_type_header.to_str().unwrap_or(""), content_length) {
+                    should_compress = true;
                 }
             }
         }

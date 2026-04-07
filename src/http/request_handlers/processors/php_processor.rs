@@ -172,7 +172,7 @@ impl ProcessorTrait for PHPProcessor {
         let mut path = gruxi_request.get_path().to_string();
 
         // Get the file, if it exists
-        let normalized_path_result = NormalizedPath::new(&local_web_root, &path);
+        let normalized_path_result = NormalizedPath::new(local_web_root, &path);
         let normalized_path = match normalized_path_result {
             Ok(path) => path,
             Err(_) => {
@@ -182,7 +182,7 @@ impl ProcessorTrait for PHPProcessor {
 
         let file_reader_cache = connection_context.running_state.get_file_reader_cache();
 
-        let file_data_result = file_reader_cache.get_file(&normalized_path.get_full_path()).await;
+        let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
         let mut file_data = match file_data_result {
             Ok(data) => data,
             Err(e) => {
@@ -210,7 +210,7 @@ impl ProcessorTrait for PHPProcessor {
                 path = "/index.php".to_string();
 
                 // Check if the index file exists
-                let normalized_path_result = NormalizedPath::new(&local_web_root, &path);
+                let normalized_path_result = NormalizedPath::new(local_web_root, &path);
                 let normalized_path = match normalized_path_result {
                     Ok(path) => path,
                     Err(_) => {
@@ -218,7 +218,7 @@ impl ProcessorTrait for PHPProcessor {
                     }
                 };
 
-                let file_data_result = file_reader_cache.get_file(&normalized_path.get_full_path()).await;
+                let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
                 let file_data = match file_data_result {
                     Ok(data) => data,
                     Err(e) => {
@@ -244,7 +244,7 @@ impl ProcessorTrait for PHPProcessor {
                 }
             };
 
-            let file_data_result = file_reader_cache.get_file(&normalized_path.get_full_path()).await;
+            let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
             file_data = match file_data_result {
                 Ok(data) => data,
                 Err(_) => {
@@ -294,8 +294,8 @@ impl ProcessorTrait for PHPProcessor {
         gruxi_request.add_calculated_data("fastcgi_connect_ip_and_port", &connect_ip_and_port);
         gruxi_request.add_calculated_data("fastcgi_script_file", &file_path);
         gruxi_request.add_calculated_data("fastcgi_uri_is_a_dir_with_index_file_inside", if uri_is_a_dir_with_index_file_inside { "true" } else { "false" });
-        gruxi_request.add_calculated_data("fastcgi_local_web_root", &local_web_root);
-        gruxi_request.add_calculated_data("fastcgi_web_root", &fastcgi_web_root);
+        gruxi_request.add_calculated_data("fastcgi_local_web_root", local_web_root);
+        gruxi_request.add_calculated_data("fastcgi_web_root", fastcgi_web_root);
         gruxi_request.add_calculated_data("fastcgi_override_server_software", &self.server_software_spoof);
 
         // Process the FastCGI request with timeout

@@ -78,11 +78,8 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
         match handle_telemetry_routes(&mut gruxi_request, site, &connection_context).await {
             Ok(response) => Some(response),
             Err(e) => {
-                match e.kind {
-                    GruxiErrorKind::TelemetryApi(TelemetryApiError::NoRouteMatched) => {
-                        trace!("No matching telemetry API route found, continuing to normal request handling");
-                    }
-                    _ => {}
+                if let GruxiErrorKind::TelemetryApi(TelemetryApiError::NoRouteMatched) = e.kind {
+                    trace!("No matching telemetry API route found, continuing to normal request handling");
                 }
                 None
             }

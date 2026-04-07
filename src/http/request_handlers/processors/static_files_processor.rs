@@ -123,7 +123,7 @@ impl ProcessorTrait for StaticFileProcessor {
         let mut path = gruxi_request.get_path().to_string();
 
         // Get the file, if it exists
-        let normalized_path_result = NormalizedPath::new(&web_root, &path);
+        let normalized_path_result = NormalizedPath::new(web_root, &path);
         if normalized_path_result.is_err() {
             trace!("Failed or rejected to normalize request path: {}", path);
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
@@ -138,7 +138,7 @@ impl ProcessorTrait for StaticFileProcessor {
 
         let file_reader_cache = connection_context.running_state.get_file_reader_cache();
 
-        let file_data_result = file_reader_cache.get_file(&normalized_path.get_full_path()).await;
+        let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
         if let Err(e) = file_data_result {
             // If we fail to get the file, return cant/wont handle
             trace!("We could not get data on the file: {}, so we cannot handle with static file processor", e);
@@ -172,7 +172,7 @@ impl ProcessorTrait for StaticFileProcessor {
                 path = "/".to_string();
 
                 // Get the cached file, if it exists
-                let normalized_path_result = NormalizedPath::new(&web_root, &path);
+                let normalized_path_result = NormalizedPath::new(web_root, &path);
                 let normalized_path = match normalized_path_result {
                     Ok(path) => path,
                     Err(_) => {
@@ -181,7 +181,7 @@ impl ProcessorTrait for StaticFileProcessor {
                     }
                 };
 
-                let file_data_result = file_reader_cache.get_file(&normalized_path.get_full_path()).await;
+                let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
                 file_data = match file_data_result {
                     Ok(data) => data,
                     Err(e) => {
@@ -213,7 +213,7 @@ impl ProcessorTrait for StaticFileProcessor {
                     }
                 };
 
-                let file_data_result = file_reader_cache.get_file(&normalized_path.get_full_path()).await;
+                let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
                 file_data = match file_data_result {
                     Ok(data) => data,
                     Err(_) => {
@@ -240,7 +240,7 @@ impl ProcessorTrait for StaticFileProcessor {
         }
 
         // Do a safety check of the path, make sure it's still under the web root and not blocked file extension
-        if !check_path_secure(&web_root, &file_path, &connection_context.configuration.core.server_settings.blocked_file_patterns).await {
+        if !check_path_secure(web_root, &file_path, &connection_context.configuration.core.server_settings.blocked_file_patterns).await {
             trace!("File path is not secure: {}", file_path);
             // We should probably not reveal that the file is blocked, so we return a 404
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(

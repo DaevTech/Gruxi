@@ -344,12 +344,10 @@ impl GruxiRequest {
                     return false;
                 }
                 // If there's a quality value of 0, the encoding is explicitly not accepted
-                if let Some(params) = parts.next() {
-                    if let Some(q) = params.trim().strip_prefix("q=").or_else(|| params.trim().strip_prefix("Q=")) {
-                        if let Ok(quality) = q.trim().parse::<f32>() {
-                            return quality > 0.0;
-                        }
-                    }
+                if let Some(params) = parts.next()
+                    && let Some(q) = params.trim().strip_prefix("q=").or_else(|| params.trim().strip_prefix("Q="))
+                    && let Ok(quality) = q.trim().parse::<f32>() {
+                    return quality > 0.0;
                 }
                 true
             });

@@ -66,10 +66,9 @@ impl Binding {
         }
 
         // Telemetry binding specific validations
-        if self.is_telemetry {
-            if !self.is_tls {
-                errors.push("Telemetry binding should use TLS for security".to_string());
-            }
+        if self.is_telemetry
+            && !self.is_tls {
+            errors.push("Telemetry binding should use TLS for security".to_string());
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }

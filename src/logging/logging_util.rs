@@ -1,8 +1,7 @@
 pub fn sanitize_log_entry(input: &str) -> String {
     // Remove all newlines and carriage returns to prevent log injection
     input
-        .replace('\n', "")
-        .replace('\r', "")
+        .replace(['\n', '\r'], "")
         // Remove all other control characters (ASCII < 32) to prevent log injection and other issues
         .chars()
         .filter(|c| !c.is_control())
