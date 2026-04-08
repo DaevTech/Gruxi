@@ -33,7 +33,7 @@ const saveErrors = ref([]);
 const successMessage = ref('');
 const originalConfig = ref(null);
 const config = ref(null);
-const suggestedTelemetryToken = ref(Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(8).padStart(2, '0')).join(''));
+const suggestedTelemetryToken = ref(Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join(''));
 
 // Track which sections are expanded (all collapsed by default)
 const expandedSections = reactive({
@@ -543,7 +543,7 @@ const getAvailableBindings = () => {
     return (
         config.value.bindings?.map((b) => ({
             id: b.id,
-            label: `${b.ip}:${b.port}${b.is_admin ? ' (Admin)' : ''}${b.is_telemetry ? ' (Telemetry)' : ''}${b.is_tls ? ' (TLS)' : ''}`,
+            label: `${b.ip}:${b.port}${b.is_admin ? ' (Admin)' : ''}${b.is_tls ? ' (TLS)' : ''}`,
         })) || []
     );
 };
@@ -874,7 +874,6 @@ onMounted(() => {
                                 <span class="hierarchy-indicator binding-indicator">🔌</span>
                                 <h4>{{ binding.ip }}:{{ binding.port }}</h4>
                                 <span v-if="binding.is_admin" class="admin-badge">ADMIN</span>
-                                <span v-if="binding.is_telemetry" class="admin-badge">TELEMETRY</span>
                                 <span v-if="binding.is_tls" class="tls-badge">TLS</span>
                             </div>
                             <button @click.stop="removeBinding(bindingIndex)" class="remove-button compact" :disabled="config.bindings.length === 1">Remove</button>
