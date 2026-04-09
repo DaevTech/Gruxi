@@ -4,3 +4,4 @@ pub mod file_reader_structs;
 pub mod normalized_path;
 pub mod file_requirements;
 pub mod app_paths;
+pub mod file_entry;

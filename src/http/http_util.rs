@@ -4,7 +4,7 @@ use http::HeaderValue;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::Bytes;
 
-use crate::{file::file_reader_structs::FileEntry, http::request_response::gruxi_response::GruxiResponse, trace};
+use crate::{file::file_entry::FileEntry, http::request_response::gruxi_response::GruxiResponse, trace};
 
 pub fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
     Full::new(chunk.into()).map_err(|never| match never {}).boxed()

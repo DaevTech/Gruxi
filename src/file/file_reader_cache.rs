@@ -8,33 +8,21 @@ use crate::{
     config::cached_configuration::get_cached_configuration,
     core::triggers::get_trigger_handler,
     debug, error,
-    file::file_reader_structs::*,
-    http::{
-        caching::{
-            etag::etag_strong_from_metadata,
-            range::{RangeParseResult, build_multipart_body, build_multipart_body_from_parts, format_content_range, get_range_header, parse_range_header, should_process_range},
-        },
-        request_response::{
-            body_error::{BodyError, box_err},
-            gruxi_request::GruxiRequest,
-        },
+    file::{
+        file_entry::{ContentCache, FileEntry, FileMeta},
+        file_reader_structs::*,
     },
+    http::caching::etag::etag_strong_from_metadata,
     trace, warn,
 };
 
 use dashmap::DashMap;
-use futures::TryStreamExt;
-use http_body_util::BodyExt;
-use http_body_util::Full;
-use http_body_util::{StreamBody, combinators::BoxBody};
-use hyper::body::{Bytes, Frame};
+
+use hyper::body::Bytes;
 use tokio::{
-    fs::File,
-    io::{AsyncReadExt, AsyncSeekExt},
     select,
     time::{Instant, interval},
 };
-use tokio_util::io::ReaderStream;
 
 impl FileReaderCache {
     pub async fn new() -> Self {
@@ -67,23 +55,40 @@ impl FileReaderCache {
         // Cache-control header enabled
         let cache_control_header_enabled = config.core.http_caching.enable_header_cache_control;
 
+        // Create the actual caches
         let cache = Arc::new(DashMap::new());
         let cached_items_last_checked = Arc::new(DashMap::new());
+
+        // 404 cache
+        let cache_404 = Arc::new(DashMap::new());
+        let cache_404_max_size = 10000; // Max size of cache is currently hardcoded, but we may need to let it scale with X sites in some clever way, instead of global max
 
         // Start the cache update thread
         if is_caching_enabled {
             // Update/cache cache thread
             let cache_clone_update = cache.clone();
+            let cache_404_clone_update = cache_404.clone();
             let last_checked_clone = cached_items_last_checked.clone();
             let eviction_threshold: f64 = (capacity as f64 * (forced_eviction_threshold as f64 / 100.0)).round();
 
             tokio::spawn(async move {
-                Self::update_cache(cache_clone_update, last_checked_clone, cache_update_thread_interval, max_item_lifetime, eviction_threshold as u64).await;
+                Self::update_cache(
+                    cache_clone_update,
+                    cache_404_clone_update,
+                    last_checked_clone,
+                    cache_update_thread_interval,
+                    max_item_lifetime,
+                    eviction_threshold as u64,
+                )
+                .await;
             });
         }
 
         FileReaderCache {
             cache,
+            cache_max_capacity: capacity,
+            cache_404,
+            cache_404_max_size,
             is_caching_enabled,
             cached_items_last_checked,
             max_file_size,
@@ -103,12 +108,32 @@ impl FileReaderCache {
     pub fn clear_cache(&self) {
         self.cache.clear();
         self.cached_items_last_checked.clear();
+        self.cache_404.clear();
         trace!("File reader cache cleared");
+    }
+
+    fn get_empty_file_with_path(&self, file_path: &str) -> Arc<FileEntry> {
+        Arc::new(FileEntry {
+            meta: FileMeta {
+                file_path: file_path.to_string(),
+                is_directory: false,
+                exists: false,
+                length: 0,
+                is_too_large_to_store: false,
+                mime_type: String::new(),
+                last_modified: SystemTime::now(),
+                etag_header: None,
+                last_modified_header: None,
+                expires_header: None,
+                cache_control_header: None,
+            },
+            content: ContentCache { raw: None, gzip: None },
+        })
     }
 
     // Get file data
     pub async fn get_file(&self, file_path: &str) -> Result<Arc<FileEntry>, std::io::Error> {
-        // Check the cache first
+        // Check the positive cache first
         if self.is_caching_enabled
             && let Some(cached_entry) = self.cache.get(file_path)
         {
@@ -116,13 +141,27 @@ impl FileReaderCache {
             return Ok(cached_entry.value().clone());
         }
 
-        // Not found in cache, so we populate it, maybe saving it to cache if enabled
+        // Also check the 404 cache to short circuit if we know the file doesn't exist, to avoid unnecessary disk reads
+        if self.is_caching_enabled && self.cache_404.get(file_path).is_some() {
+            trace!("File found in 404 cache, so we short circuit and return empty result for file: '{}'", file_path);
+            return Ok(self.get_empty_file_with_path(file_path));
+        }
+
+        // Not found in caches, so we populate it, maybe saving it to cache if enabled
         trace!("File/dir not found in cache, reading from disk: {}", file_path);
         let metadata_result = tokio::fs::metadata(file_path).await;
         let (length, exists, is_directory, last_modified) = match metadata_result {
             Ok(metadata) => (metadata.len(), true, metadata.is_dir(), metadata.modified().unwrap_or(SystemTime::now())),
             Err(_) => (0, false, false, SystemTime::now()),
         };
+
+        // We check for a quick disconnect if the file/path was not found, to avoid unnecessary work for non-existent files
+        if !exists {
+            if self.is_caching_enabled && self.cache_404.len() < self.cache_404_max_size as usize {
+                self.cache_404.insert(file_path.to_string(), Instant::now());
+            }
+            return Ok(self.get_empty_file_with_path(file_path));
+        }
 
         // Determine MIME type, if we have a file
         let mut mime_type = String::new();
@@ -179,9 +218,11 @@ impl FileReaderCache {
             None
         };
 
+        let file_path_string = file_path.to_string();
+
         let mut file_entry = FileEntry {
             meta: FileMeta {
-                file_path: file_path.to_string(),
+                file_path: file_path_string.clone(),
                 is_directory,
                 exists,
                 length,
@@ -200,7 +241,7 @@ impl FileReaderCache {
         if self.is_caching_enabled && !is_directory && exists && length <= self.max_file_size {
             match tokio::fs::read(file_path).await {
                 Ok(file_bytes) => {
-                    let raw_bytes = Arc::new(Bytes::from(file_bytes));
+                    let raw_bytes = Bytes::from(file_bytes);
                     file_entry.content.raw = Some(raw_bytes);
 
                     if should_compress {
@@ -208,7 +249,7 @@ impl FileReaderCache {
                         let mut gzip_content = Vec::new();
                         match compress_content(raw_content, &mut gzip_content) {
                             Ok(_) => {
-                                file_entry.content.gzip = Some(Arc::new(Bytes::from(gzip_content)));
+                                file_entry.content.gzip = Some(Bytes::from(gzip_content));
                             }
                             Err(e) => {
                                 warn!("Failed to compress file {}: {}", file_path, e);
@@ -227,13 +268,14 @@ impl FileReaderCache {
         // Create Arc to return
         let file_entry_arc = Arc::new(file_entry);
 
-        // Add to cache if enabled
-        if self.is_caching_enabled {
+        // Add to cache if enabled and we are within the limits we want to enforce
+        // Idea for the future is to log when we hit the cache ceiling, so the user can adjust if needed
+        if self.is_caching_enabled && self.cache.len() < self.cache_max_capacity as usize {
             // Add to cache and update last checked
             trace!("Adding file to cache: {:?}", &file_entry_arc.meta);
 
-            self.cache.insert(file_path.to_string(), file_entry_arc.clone());
-            self.cached_items_last_checked.insert(file_path.to_string(), (Instant::now(), Instant::now(), last_modified));
+            self.cache.insert(file_path_string.clone(), file_entry_arc.clone());
+            self.cached_items_last_checked.insert(file_path_string, (Instant::now(), Instant::now(), last_modified));
         }
 
         Ok(file_entry_arc)
@@ -255,6 +297,7 @@ impl FileReaderCache {
     // Handle updating data on the cached items, based on the last modified
     async fn update_cache(
         cache: Arc<DashMap<String, Arc<FileEntry>>>,
+        cache_404: Arc<DashMap<String, Instant>>,
         cached_items_last_checked: Arc<DashMap<String, (Instant, Instant, SystemTime)>>,
         cache_update_thread_interval: u64,
         max_item_lifetime: u64,
@@ -287,6 +330,10 @@ impl FileReaderCache {
 
             let start_time = Instant::now();
 
+            // Clear out the 404 cache for entries that are older than the max item lifetime, to allow re-checking of previously not found files
+            trace!("[FileCacheUpdate] Cleaning up 404 cache for entries older than max item lifetime");
+            cache_404.retain(|_, instant| instant.elapsed() <= max_item_lifetime_duration);
+
             trace!("[FileCacheUpdate] Checking if we are above the eviction threshold, so we can delete files in cache that have been in cache for too long");
             let current_cache_size = cache.len() as u64;
             if current_cache_size > eviction_threshold {
@@ -310,270 +357,53 @@ impl FileReaderCache {
                 trace!("[FileCacheUpdate] Cache size is below eviction threshold - No delete action taken");
             }
 
-            trace!("[FileCacheUpdate] Checking for modified timestamps and if known files still exist");
-            // Get a list of files to check
-            let files_to_check: Vec<(String, (Instant, Instant, SystemTime))> = cached_items_last_checked.iter().map(|entry| (entry.key().clone(), *entry.value())).collect();
+            // Get a list of files to check for modified timestamps
+            trace!("[FileCacheUpdate] Checking for modified timestamps and if known files still exist - Count: {}", cache.len());
 
-            trace!("[FileCacheUpdate] Files found to check for modified timestamps: {}", files_to_check.len());
-            // Now we go through the list, to check if the file was modified since last known timestamp
-            for (path, (added, _last_checked, last_modified)) in files_to_check {
-                let metadata = match tokio::fs::metadata(&path).await {
-                    Ok(metadata) => metadata,
-                    Err(_) => {
-                        let mut should_remove_path = false;
+            let local_cache = cache.clone();
+            let local_cached_items_last_checked = cached_items_last_checked.clone();
 
-                        if let Some(cached_file) = cache.get(&path) {
-                            if cached_file.meta.exists {
-                                trace!("[FileCacheUpdate] File no longer exists: {}", path);
-                                should_remove_path = true;
-                            } else {
-                                trace!("[FileCacheUpdate] File is marked as non-existent in cache, which it still is: {}", path);
-                            }
+            let task_result = tokio::task::spawn_blocking(move || {
+                // We collect the entries to check into a vector first to avoid holding locks across await points, which can lead to deadlocks
+                let entries: Vec<_> = local_cached_items_last_checked.iter().map(|item| (item.key().clone(), *item.value())).collect();
+
+                // Loopy loppy
+                for (path, (added, _last_checked, last_modified)) in entries {
+                    // Get the data from the disk and if the file doesn't exist anymore, remove from cache
+                    let metadata = match std::fs::metadata(&path) {
+                        Ok(metadata) => metadata,
+                        Err(_) => {
+                            // Clear out the cache
+                            local_cache.remove(&path);
+                            local_cached_items_last_checked.remove(&path);
+
+                            continue;
+                        }
+                    };
+
+                    // If file still exist, but was modified, we also remove it from cache to allow it to be re-cached with the new content on next request
+                    if let Ok(modified_time) = metadata.modified() {
+                        if modified_time != last_modified {
+                            trace!("[FileCacheUpdate] File was changed: {}", &path);
+                            local_cache.remove(&path);
+                            local_cached_items_last_checked.remove(&path);
+                            continue;
                         }
 
-                        if should_remove_path {
-                            cache.remove(&path);
-                            cached_items_last_checked.remove(&path);
-                        }
-
-                        continue;
+                        trace!("[FileCacheUpdate] File is good and not modified: {}", &path);
+                        local_cached_items_last_checked.insert(path, (added, Instant::now(), modified_time));
                     }
-                };
-
-                if let Ok(modified_time) = metadata.modified() {
-                    if modified_time != last_modified {
-                        trace!("[FileCacheUpdate] File was changed: {}", path);
-                        cache.remove(&path);
-                        cached_items_last_checked.remove(&path);
-                        continue;
-                    }
-
-                    trace!("[FileCacheUpdate] File is good and not modified: {}", path);
-                    cached_items_last_checked.insert(path, (added, Instant::now(), modified_time));
                 }
+            })
+            .await;
+
+            if let Err(e) = task_result {
+                error!("[FileCacheUpdate] Blocking metadata check task failed: {}", e);
             }
 
             let end_time = Instant::now();
 
             debug!("[FileCacheUpdate] Cache update completed in {:?}", end_time.duration_since(start_time));
         }
-    }
-}
-
-impl FileEntry {
-    /// Result type for range request handling
-    /// Contains the body, encoding, optional content-range header, and status code
-    pub async fn get_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
-        // Check if this is a range request - clone the header value to avoid borrow issues
-        let range_header_value = get_range_header(gruxi_request).and_then(|h| h.to_str().ok()).map(|s| s.to_string());
-
-        if let Some(range_str) = range_header_value {
-            // Check If-Range precondition before processing range
-            if should_process_range(gruxi_request, self.meta.etag_header.as_deref(), &self.meta.last_modified) {
-                let range_result = self.handle_range_request(&range_str).await;
-                if let Some(result) = range_result {
-                    return result;
-                }
-                // If range_result is None, fall through to serve full content
-            }
-        }
-
-        // Serve full content (no range request or range not applicable)
-        self.get_full_content_stream(gruxi_request).await
-    }
-
-    /// Handle a range request, returning None if we should serve full content instead
-    async fn handle_range_request(&self, range_str: &str) -> Option<(BoxBody<Bytes, BodyError>, String)> {
-        let content_length = self.meta.length;
-
-        match parse_range_header(range_str) {
-            RangeParseResult::NoRangeHeader | RangeParseResult::InvalidSyntax | RangeParseResult::UnsupportedUnit => {
-                // Serve full content
-                None
-            }
-            RangeParseResult::Ranges(ranges) => {
-                // Resolve all ranges against content length
-                let resolved_ranges: Vec<(u64, u64)> = ranges.iter().filter_map(|r| r.resolve(content_length)).collect();
-
-                if resolved_ranges.is_empty() {
-                    // No satisfiable ranges - this will be handled by the caller with 416 response
-                    // Return a special marker (empty body with encoding indicating unsatisfiable)
-                    trace!("No satisfiable ranges found");
-                    let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                    return Some((BoxBody::new(empty), "RANGE_NOT_SATISFIABLE".to_string()));
-                }
-
-                if resolved_ranges.len() == 1 {
-                    // Single range - use optimized path that avoids reading entire file
-                    let (start, end) = resolved_ranges[0];
-                    return Some(self.get_single_range_content(start, end).await);
-                } else {
-                    // Multiple ranges - need to build multipart response
-                    // For cached content, use zero-copy slicing; for uncached, read efficiently
-                    return Some(self.get_multipart_range_content(&resolved_ranges).await);
-                }
-            }
-        }
-    }
-
-    /// Get content for a single range request - optimized to avoid reading entire file
-    async fn get_single_range_content(&self, start: u64, end: u64) -> (BoxBody<Bytes, BodyError>, String) {
-        let content_length = self.meta.length;
-        let content_range = format_content_range(start, end, content_length);
-
-        // If content is cached, slice directly without copying
-        if let Some(raw_content) = &self.content.raw {
-            let start_idx = start as usize;
-            let end_idx = (end + 1) as usize;
-            let end_idx = end_idx.min(raw_content.len());
-
-            if start_idx < raw_content.len() {
-                // Use Bytes::slice for zero-copy
-                let range_bytes = raw_content.slice(start_idx..end_idx);
-                let full_body = Full::new(range_bytes).map_err(|never| -> BodyError { match never {} });
-                return (BoxBody::new(full_body), format!("RANGE:{}", content_range));
-            }
-        }
-
-        // For uncached files, seek and read only the needed bytes
-        let range_length = end - start + 1;
-        match File::open(&self.meta.file_path).await {
-            Ok(mut file) => {
-                // Seek to start position
-                if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
-                    trace!("Failed to seek file {} for range: {}", self.meta.file_path, e);
-                    let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                    return (BoxBody::new(empty), String::new());
-                }
-
-                // Read only the range
-                let mut buffer = vec![0u8; range_length as usize];
-                match file.read_exact(&mut buffer).await {
-                    Ok(_) => {
-                        let range_bytes = Bytes::from(buffer);
-                        let full_body = Full::new(range_bytes).map_err(|never| -> BodyError { match never {} });
-                        (BoxBody::new(full_body), format!("RANGE:{}", content_range))
-                    }
-                    Err(e) => {
-                        trace!("Failed to read range from file {}: {}", self.meta.file_path, e);
-                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                        (BoxBody::new(empty), String::new())
-                    }
-                }
-            }
-            Err(e) => {
-                trace!("Failed to open file {} for range: {}", self.meta.file_path, e);
-                let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                (BoxBody::new(empty), String::new())
-            }
-        }
-    }
-
-    /// Get content for multiple range requests - builds multipart response
-    async fn get_multipart_range_content(&self, resolved_ranges: &[(u64, u64)]) -> (BoxBody<Bytes, BodyError>, String) {
-        let content_length = self.meta.length;
-
-        // If content is cached, use zero-copy slicing for multipart
-        if let Some(raw_content) = &self.content.raw {
-            let (body_bytes, content_type) = build_multipart_body(resolved_ranges, raw_content.as_ref(), &self.meta.mime_type, content_length);
-            trace!("Serving {} ranges as multipart from cache", resolved_ranges.len());
-            let full_body = Full::new(body_bytes).map_err(|never| -> BodyError { match never {} });
-            return (BoxBody::new(full_body), format!("MULTIPART:{}", content_type));
-        }
-
-        // For uncached files, read each range separately and build multipart
-        let mut range_contents: Vec<Vec<u8>> = Vec::with_capacity(resolved_ranges.len());
-
-        match File::open(&self.meta.file_path).await {
-            Ok(mut file) => {
-                for &(start, end) in resolved_ranges {
-                    let range_length = (end - start + 1) as usize;
-
-                    if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
-                        trace!("Failed to seek file {} for multipart range: {}", self.meta.file_path, e);
-                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                        return (BoxBody::new(empty), String::new());
-                    }
-
-                    let mut buffer = vec![0u8; range_length];
-                    if let Err(e) = file.read_exact(&mut buffer).await {
-                        trace!("Failed to read multipart range from file {}: {}", self.meta.file_path, e);
-                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                        return (BoxBody::new(empty), String::new());
-                    }
-                    range_contents.push(buffer);
-                }
-            }
-            Err(e) => {
-                trace!("Failed to open file {} for multipart ranges: {}", self.meta.file_path, e);
-                let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                return (BoxBody::new(empty), String::new());
-            }
-        }
-
-        // Build multipart body from the collected ranges
-        let (body_bytes, content_type) = build_multipart_body_from_parts(resolved_ranges, &range_contents, &self.meta.mime_type, content_length);
-
-        trace!("Serving {} ranges as multipart from disk", resolved_ranges.len());
-        let full_body = Full::new(body_bytes).map_err(|never| -> BodyError { match never {} });
-        (BoxBody::new(full_body), format!("MULTIPART:{}", content_type))
-    }
-
-    /// Get the full content stream
-    async fn get_full_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
-        if self.content.raw.is_none() && self.content.gzip.is_none() {
-            trace!("No cached file data content is present, so we return from the filesystem instead (full if small and stream if big)");
-
-            // For smaller files (<= 64 KB), return full content, otherwise stream
-            if self.meta.length <= 64 * 1024 {
-                // Small file, return full
-                let file_bytes = match tokio::fs::read(&self.meta.file_path).await {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        trace!("Failed to read file {} for full content: {}", self.meta.file_path, e);
-                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                        return (BoxBody::new(empty), String::new());
-                    }
-                };
-                let full_body = Full::new(Bytes::from(file_bytes)).map_err(|never| -> BodyError { match never {} });
-                return (BoxBody::new(full_body), String::new());
-            }
-
-            // Otherwise we stream, to maintain low memory usage by not loading the full file into memory
-            let file = match File::open(&self.meta.file_path).await {
-                Ok(f) => f,
-                Err(e) => {
-                    trace!("Failed to open file {} for streaming: {}", self.meta.file_path, e);
-                    let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                    return (BoxBody::new(empty), String::new());
-                }
-            };
-
-            let stream = ReaderStream::new(file).map_ok(Frame::data);
-            let streambody = http_body_util::BodyExt::map_err(StreamBody::new(stream), box_err);
-            return (BoxBody::new(streambody), String::new());
-        }
-
-        // We prefer gzip if the client accepts it
-        if gruxi_request.check_accepted_encoding("gzip")
-            && let Some(gzip_content) = &self.content.gzip
-        {
-            trace!("Serving gzipped content from cache");
-            let gzipped_bytes = gzip_content.as_ref().clone();
-            let boxbody = BoxBody::new(Full::new(gzipped_bytes).map_err(|never| -> BodyError { match never {} }));
-            return (boxbody, "gzip".to_string());
-        }
-
-        // Otherwise serve raw content
-        if let Some(raw_content) = &self.content.raw {
-            trace!("Serving raw content from cache");
-            let raw_bytes = raw_content.as_ref().clone();
-            let boxbody = BoxBody::new(Full::new(raw_bytes).map_err(|never| -> BodyError { match never {} }));
-            return (boxbody, "".to_string());
-        }
-
-        // If nothing falls to taste, return empty
-        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-        (BoxBody::new(empty), String::new())
     }
 }

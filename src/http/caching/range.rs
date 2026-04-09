@@ -14,10 +14,7 @@ use std::time::SystemTime;
 use http::HeaderValue;
 use hyper::body::Bytes;
 
-use crate::{
-    trace,
-    http::request_response::gruxi_request::GruxiRequest,
-};
+use crate::{http::request_response::gruxi_request::GruxiRequest, trace};
 
 /// Represents a parsed byte range from the Range header
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +24,8 @@ pub struct ByteRange {
     /// End position (inclusive), None means "to the end"
     pub end: Option<u64>,
 }
+
+const MAX_RANGE_SIZE_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB - maximum size of a single range to prevent abuse
 
 impl ByteRange {
     /// Create a new ByteRange
@@ -49,7 +48,12 @@ impl ByteRange {
                 } else {
                     // Clamp end to content_length - 1
                     let resolved_end = end.min(content_length - 1);
-                    Some((start, resolved_end))
+                    // Enforce maximum range size
+                    if resolved_end - start + 1 > MAX_RANGE_SIZE_BYTES {
+                        Some((start, start + MAX_RANGE_SIZE_BYTES - 1))
+                    } else {
+                        Some((start, resolved_end))
+                    }
                 }
             }
             // bytes=start- (from start to end of file)
@@ -57,7 +61,13 @@ impl ByteRange {
                 if start >= content_length {
                     None
                 } else {
-                    Some((start, content_length - 1))
+                    // Enforce maximum range size
+                    let end = content_length - 1;
+                    if end - start + 1 > MAX_RANGE_SIZE_BYTES {
+                        Some((start, start + MAX_RANGE_SIZE_BYTES - 1))
+                    } else {
+                        Some((start, end))
+                    }
                 }
             }
             // bytes=-suffix (last N bytes)
@@ -69,7 +79,12 @@ impl ByteRange {
                     Some((0, content_length - 1))
                 } else {
                     let start = content_length - suffix_length;
-                    Some((start, content_length - 1))
+                    // Enforce maximum range size
+                    if content_length - start > MAX_RANGE_SIZE_BYTES {
+                        Some((content_length - MAX_RANGE_SIZE_BYTES, content_length - 1))
+                    } else {
+                        Some((start, content_length - 1))
+                    }
                 }
             }
             // Invalid: neither start nor end specified
@@ -120,7 +135,14 @@ pub fn parse_range_header(range_header: &str) -> RangeParseResult {
     let mut ranges = Vec::new();
 
     // Split by comma to handle multiple ranges
-    for range_spec in range_set.split(',') {
+    let range_set_splitted: Vec<&str> = range_set.split(',').collect();
+
+    // Enforce a reasonable limit on the number of ranges to prevent abuse
+    if range_set_splitted.len() > 5 {
+        return RangeParseResult::InvalidSyntax;
+    }
+
+    for range_spec in range_set_splitted {
         let range_spec = range_spec.trim();
         if range_spec.is_empty() {
             continue;
@@ -134,11 +156,7 @@ pub fn parse_range_header(range_header: &str) -> RangeParseResult {
         }
     }
 
-    if ranges.is_empty() {
-        RangeParseResult::InvalidSyntax
-    } else {
-        RangeParseResult::Ranges(ranges)
-    }
+    if ranges.is_empty() { RangeParseResult::InvalidSyntax } else { RangeParseResult::Ranges(ranges) }
 }
 
 /// Parse a single range-spec (either int-range or suffix-range)
@@ -175,11 +193,7 @@ fn parse_range_spec(spec: &str) -> Option<ByteRange> {
 
 /// Check if we should process the range request based on preconditions
 /// Implements the If-Range header check per RFC 9110 Section 13.1.5
-pub fn should_process_range(
-    gruxi_request: &GruxiRequest,
-    etag: Option<&str>,
-    last_modified: &SystemTime,
-) -> bool {
+pub fn should_process_range(gruxi_request: &GruxiRequest, etag: Option<&str>, last_modified: &SystemTime) -> bool {
     // Check for If-Range header
     let if_range = match gruxi_request.get_headers().get("If-Range") {
         Some(value) => match value.to_str() {
@@ -197,9 +211,7 @@ pub fn should_process_range(
         // It's an entity-tag
         if let Some(current_etag) = etag {
             // Strong comparison required for If-Range (RFC 9110 Section 13.1.5)
-            let matches = !if_range.starts_with("W/")
-                && !current_etag.starts_with("W/")
-                && if_range == current_etag;
+            let matches = !if_range.starts_with("W/") && !current_etag.starts_with("W/") && if_range == current_etag;
             trace!("If-Range ETag comparison: {} vs {} = {}", if_range, current_etag, matches);
             return matches;
         }
@@ -209,14 +221,8 @@ pub fn should_process_range(
     // Try parsing as HTTP-date
     if let Ok(if_range_time) = httpdate::parse_http_date(if_range) {
         // Compare with last-modified time (exact match required per RFC 9110)
-        let last_modified_secs = last_modified
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let if_range_secs = if_range_time
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let last_modified_secs = last_modified.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let if_range_secs = if_range_time.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
 
         let matches = last_modified_secs == if_range_secs;
         trace!("If-Range date comparison: {} == {} = {}", last_modified_secs, if_range_secs, matches);
@@ -243,10 +249,7 @@ pub fn format_content_range_unsatisfiable(complete_length: u64) -> String {
 /// Generate a multipart boundary string
 pub fn generate_multipart_boundary() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     format!("gruxi_boundary_{:x}", timestamp)
 }
 
@@ -453,6 +456,48 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_max_range_size_clamping() {
+        let max = MAX_RANGE_SIZE_BYTES;
+        let large_content = max * 4; // content much larger than max range
+
+        // bytes=start-end where range exceeds max size
+        let range = ByteRange::new(Some(0), Some(max + 1000));
+        assert_eq!(range.resolve(large_content), Some((0, max - 1)));
+
+        // bytes=start-end exactly at max size should NOT be clamped
+        let range = ByteRange::new(Some(0), Some(max - 1));
+        assert_eq!(range.resolve(large_content), Some((0, max - 1)));
+
+        // bytes=start-end one byte over max size should be clamped
+        let range = ByteRange::new(Some(0), Some(max));
+        assert_eq!(range.resolve(large_content), Some((0, max - 1)));
+
+        // bytes=start- (open-ended) where remaining content exceeds max
+        let range = ByteRange::new(Some(0), None);
+        assert_eq!(range.resolve(large_content), Some((0, max - 1)));
+
+        // bytes=start- with non-zero start, remaining exceeds max
+        let range = ByteRange::new(Some(100), None);
+        assert_eq!(range.resolve(large_content), Some((100, 100 + max - 1)));
+
+        // bytes=start- where remaining content is exactly max (no clamping)
+        let range = ByteRange::new(Some(large_content - max), None);
+        assert_eq!(range.resolve(large_content), Some((large_content - max, large_content - 1)));
+
+        // bytes=-suffix where suffix exceeds max
+        let range = ByteRange::new(None, Some(max + 1000));
+        assert_eq!(range.resolve(large_content), Some((large_content - max, large_content - 1)));
+
+        // bytes=-suffix exactly at max (no clamping)
+        let range = ByteRange::new(None, Some(max));
+        assert_eq!(range.resolve(large_content), Some((large_content - max, large_content - 1)));
+
+        // bytes=-suffix under max (no clamping)
+        let range = ByteRange::new(None, Some(max - 1));
+        assert_eq!(range.resolve(large_content), Some((large_content - max + 1, large_content - 1)));
+    }
+
+    #[test]
     fn test_unsupported_unit() {
         match parse_range_header("items=0-499") {
             RangeParseResult::UnsupportedUnit => {}
@@ -480,14 +525,8 @@ mod tests {
 
     #[test]
     fn test_format_content_range() {
-        assert_eq!(
-            format_content_range(0, 499, 1000),
-            "bytes 0-499/1000"
-        );
-        assert_eq!(
-            format_content_range_unsatisfiable(1000),
-            "bytes */1000"
-        );
+        assert_eq!(format_content_range(0, 499, 1000), "bytes 0-499/1000");
+        assert_eq!(format_content_range_unsatisfiable(1000), "bytes */1000");
     }
 
     #[test]
