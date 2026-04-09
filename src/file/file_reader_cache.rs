@@ -332,8 +332,12 @@ impl FileReaderCache {
 
             // Clear out the 404 cache for entries that are older than the max item lifetime, to allow re-checking of previously not found files
             trace!("[FileCacheUpdate] Cleaning up 404 cache for entries older than max item lifetime");
+            let cache_404_len_before = cache_404.len();
             cache_404.retain(|_, instant| instant.elapsed() <= max_item_lifetime_duration);
+            let cache_404_len_after = cache_404.len();
+            trace!("[FileCacheUpdate] 404 cache cleanup completed - Cache count before ({}) - Cache count after ({}) - Removed {} entries", cache_404_len_before, cache_404_len_after, cache_404_len_before - cache_404_len_after);
 
+            // Check if we are above the eviction threshold, and if so, we remove items that have been in cache for too long
             trace!("[FileCacheUpdate] Checking if we are above the eviction threshold, so we can delete files in cache that have been in cache for too long");
             let current_cache_size = cache.len() as u64;
             if current_cache_size > eviction_threshold {
