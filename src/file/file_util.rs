@@ -1,44 +1,4 @@
-use crate::trace;
-use cached::proc_macro::cached;
-
-/// Splits `path_str` into (relative_dir, file_name) based on `base_path`.
-/// - If `path_str` starts with `base_path`, returns (base_path, remaining_path).
-/// - If not, returns ("", path_str).
-pub fn split_path(base_path: &str, path_str: &str) -> (String, String) {
-    let base_path_cleaned = base_path.replace('\\', "/").trim_end_matches('/').to_string();
-    let path_str_cleaned = path_str.replace('\\', "/");
-
-    if path_str_cleaned.starts_with(&base_path_cleaned) {
-        let remaining = &path_str_cleaned[base_path_cleaned.len()..];
-        (base_path_cleaned, remaining.to_string())
-    } else {
-        ("".to_string(), path_str_cleaned)
-    }
-}
-
-// We expect all web roots to be cleaned, with forward slashes and absolute paths and should be able to handle replacing webroot from Windows to Unix style paths and vice versa
-#[cached(
-    size = 100,
-    time = 10, // Cache for 10 seconds
-    key = "String",
-    convert = r#"{ format!("{}|{}|{}", original_path, old_web_root, new_web_root) }"#
-)]
-pub fn replace_web_root_in_path(original_path: &str, old_web_root: &str, new_web_root: &str) -> String {
-    let old_web_root_cleaned = old_web_root.replace('\\', "/").trim_end_matches('/').to_string();
-    let new_web_root_cleaned = new_web_root.replace('\\', "/").trim_end_matches('/').to_string();
-
-    if original_path.starts_with(&old_web_root_cleaned) {
-        let relative_part = &original_path[old_web_root_cleaned.len()..];
-        let relative_part = relative_part.trim_start_matches('/'); // Remove leading slash if present
-        if relative_part.is_empty() {
-            new_web_root_cleaned.clone()
-        } else {
-            format!("{}/{}", new_web_root_cleaned, relative_part)
-        }
-    } else {
-        original_path.to_string() // Return original if it doesn't start with old web root
-    }
-}
+use crate::{file::normalized_path::NormalizedPath, trace};
 
 /// Check that the path is secure, by these tests:
 /// - The path starts with the base path, to prevent directory traversal attacks
@@ -47,22 +7,25 @@ pub fn replace_web_root_in_path(original_path: &str, old_web_root: &str, new_web
 ///
 /// Used primarily by static file processors, to ensure that files being served are safe
 /// Expected that both base_path and test_path are normalized paths without junk!
-pub async fn check_path_secure(base_path: &str, test_path: &str, blocked_file_patterns: &[String]) -> bool {
+pub async fn check_path_secure(base_path: &str, test_path: &NormalizedPath, blocked_file_patterns: &[String]) -> bool {
+    // Make sure the base_path ends with a slash for accurate checking, unless it's just "/"
+    let base_path = if base_path != "/" && !base_path.ends_with('/') {
+        format!("{}/", base_path)
+    } else {
+        base_path.to_string()
+    };
+
     // Check that the test_path starts with the base_path
-    if !test_path.starts_with(base_path) {
-        trace!("Path is blocked, as it does not start with the web root: {} file: {}", base_path, test_path);
+    if !test_path.get_full_path().starts_with(&base_path) {
+        trace!("Path is blocked, as it does not start with the web root: '{}' file: '{}'", base_path, test_path.get_full_path());
         return false;
     }
 
-    let (_path, file) = split_path(base_path, test_path);
-
-    trace!("Check if file pattern is blocked because of extension: {}", &file);
-
     // Run through blocked patterns and see if any match
-    let file_lowercase = file.to_lowercase();
+    let file_lowercase = test_path.get_path().to_lowercase();
     for pattern in blocked_file_patterns {
         if file_lowercase.contains(pattern) {
-            trace!("Path is blocked due to blocked file pattern: {} file: {}", pattern, test_path);
+            trace!("Path is blocked due to blocked file pattern: {} file: {}", pattern, test_path.get_full_path());
             return false;
         }
     }
@@ -81,30 +44,17 @@ mod tests {
 
         let blocked_file_patterns = &config.core.server_settings.blocked_file_patterns;
 
-        assert!(check_path_secure("/var/www", "/var/www/index.html", blocked_file_patterns).await);
-        assert!(check_path_secure("/var/www", "/var/www/styles.css", blocked_file_patterns).await);
-        assert!(check_path_secure("/var/www", "/var/www/mysubdir/styles.css", blocked_file_patterns).await);
+        assert!(check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.html").unwrap(), blocked_file_patterns).await);
+        assert!(check_path_secure("/var/www", &NormalizedPath::new("/var/www", "styles.css").unwrap(), blocked_file_patterns).await);
+        assert!(check_path_secure("/var/www", &NormalizedPath::new("/var/www/mysubdir", "styles.css").unwrap(), blocked_file_patterns).await);
 
-        assert!(!check_path_secure("/var/www", "/var/www/index.php", blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www", "/var/index.html", blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www/html", "/var/www/index.php", blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www/html", "/index.php", blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www/html", "/etc/passwd", blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www", "/var/www/index.key", blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www", "/var/www/index.pem", blocked_file_patterns).await);
-    }
-
-    #[test]
-    fn test_split_path_unix_path() {
-        let (dir, file) = split_path("/path1/path2", "/path1/path2/index.php");
-        assert_eq!(dir, "/path1/path2");
-        assert_eq!(file, "/index.php");
-    }
-
-    #[test]
-    fn test_split_path_multiple_paths_file() {
-        let (dir, file) = split_path("C:/test/test2/test3", "C:/test/test2/test3/test4/test5/file.txt");
-        assert_eq!(dir, "C:/test/test2/test3");
-        assert_eq!(file, "/test4/test5/file.txt");
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.php").unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var", "index.html").unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www/html", &NormalizedPath::new("/var/www", "index.php").unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www/html", &NormalizedPath::new("/", "index.php").unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www/html", &NormalizedPath::new("/", "etc/passwd").unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.key").unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.pem").unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www-evil", "passwd").unwrap(), blocked_file_patterns).await);
     }
 }

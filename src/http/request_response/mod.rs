@@ -3,3 +3,4 @@ pub mod gruxi_request;
 pub mod gruxi_response;
 pub mod body_error;
 pub mod request_validation;
+pub mod gruxi_request_processor_data;

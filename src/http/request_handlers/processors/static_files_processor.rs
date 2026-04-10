@@ -128,7 +128,7 @@ impl ProcessorTrait for StaticFileProcessor {
             trace!("Failed or rejected to normalize request path: {}", path);
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
         }
-        let normalized_path = match normalized_path_result {
+        let mut normalized_path = match normalized_path_result {
             Ok(path) => path,
             Err(_) => {
                 trace!("Failed or rejected to normalize request path: {}", path);
@@ -151,7 +151,6 @@ impl ProcessorTrait for StaticFileProcessor {
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
             }
         };
-        let mut file_path = file_data.meta.file_path.clone();
 
         // Make sure the trailing slash logic is correct
         let trailing_slash_result = trailing_slash_check(file_data.clone(), &path);
@@ -165,7 +164,7 @@ impl ProcessorTrait for StaticFileProcessor {
 
         // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
         if !file_data.meta.exists {
-            trace!("File does not exist: {}", file_path);
+            trace!("File does not exist: {}", file_data.meta.file_path);
             if site.has_rewrite_function("OnlyWebRootIndexForSubdirs") {
                 trace!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path);
                 // We rewrite the path to just "/" which will make it serve the index file
@@ -173,7 +172,7 @@ impl ProcessorTrait for StaticFileProcessor {
 
                 // Get the cached file, if it exists
                 let normalized_path_result = NormalizedPath::new(web_root, &path);
-                let normalized_path = match normalized_path_result {
+                normalized_path = match normalized_path_result {
                     Ok(path) => path,
                     Err(_) => {
                         trace!("Failed or rejected to normalize request path: {}", path);
@@ -189,26 +188,25 @@ impl ProcessorTrait for StaticFileProcessor {
                         return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
                     }
                 };
-                file_path = file_data.meta.file_path.clone();
             } else {
-                trace!("File does not exist and no rewrite function is applied: {}, so we cannot handle with static file processor", file_path);
+                trace!("File does not exist and no rewrite function is applied: {}, so we cannot handle with static file processor", normalized_path.get_full_path());
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         }
 
         if file_data.meta.is_directory {
             // If it's a directory, we will try to return the index file
-            trace!("File is a directory: {}", file_path);
+            trace!("File is a directory: {}", normalized_path.get_full_path());
 
             // Check if we can find a index file in the directory
             let mut found_index = false;
             for file in &self.web_root_index_file_list {
                 // Get the file, if it exists
-                let normalized_path_result = NormalizedPath::new(&file_path, file);
-                let normalized_path = match normalized_path_result {
+                let normalized_path_result = NormalizedPath::new(normalized_path.get_web_root(), file);
+                normalized_path = match normalized_path_result {
                     Ok(path) => path,
                     Err(_) => {
-                        trace!("Failed to normalize path: {} and file: {}", file_path, file);
+                        trace!("Failed to normalize path: {} and file: {}", normalized_path.get_web_root(), file);
                         continue;
                     }
                 };
@@ -217,34 +215,33 @@ impl ProcessorTrait for StaticFileProcessor {
                 file_data = match file_data_result {
                     Ok(data) => data,
                     Err(_) => {
-                        trace!("Index files in dir does not exist: {}", file_path);
+                        trace!("Index files in dir does not exist: {}", normalized_path.get_full_path());
                         continue;
                     }
                 };
 
                 if !file_data.meta.exists {
-                    trace!("Index files in dir does not exist: {}", file_path);
+                    trace!("Index files in dir does not exist: {}", normalized_path.get_full_path());
                     continue;
                 }
 
-                file_path = file_data.meta.file_path.clone();
-                trace!("Found index file: {}", file_path);
+                trace!("Found index file: {}", normalized_path.get_full_path());
                 found_index = true;
                 break;
             }
 
             if !found_index {
-                trace!("Did not find index file: {}", file_path);
+                trace!("Did not find index file: {}", normalized_path.get_full_path());
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         }
 
         // Do a safety check of the path, make sure it's still under the web root and not blocked file extension
-        if !check_path_secure(web_root, &file_path, &connection_context.configuration.core.server_settings.blocked_file_patterns).await {
-            trace!("File path is not secure: {}", file_path);
+        if !check_path_secure(web_root, &normalized_path, &connection_context.configuration.core.server_settings.blocked_file_patterns).await {
+            trace!("File path is not secure: {}", normalized_path.get_full_path());
             // We should probably not reveal that the file is blocked, so we return a 404
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(
-                file_path.to_string(),
+                normalized_path.get_full_path().to_string(),
             ))));
         }
 
@@ -303,7 +300,7 @@ impl ProcessorTrait for StaticFileProcessor {
         let header_value = HeaderValue::from_str(content_type);
         match header_value {
             Err(e) => {
-                warn!("Failed to set content type header for file: {} with mime type: {}. Error: {}", file_path, content_type, e);
+                warn!("Failed to set content type header for file: {} with mime type: {}. Error: {}", normalized_path.get_full_path(), content_type, e);
             }
             Ok(value) => {
                 response.headers_mut().insert(hyper::header::CONTENT_TYPE, value);
@@ -316,7 +313,7 @@ impl ProcessorTrait for StaticFileProcessor {
             let header_value = HeaderValue::from_str("gzip");
             match header_value {
                 Err(e) => {
-                    warn!("Failed to set content encoding header for file: {} with gzip. Error: {}", file_path, e);
+                    warn!("Failed to set content encoding header for file: {} with gzip. Error: {}", normalized_path.get_full_path(), e);
                 }
                 Ok(value) => {
                     response.headers_mut().insert(hyper::header::CONTENT_ENCODING, value);
@@ -328,16 +325,16 @@ impl ProcessorTrait for StaticFileProcessor {
         response.headers_mut().insert(hyper::header::ACCEPT_RANGES, accept_ranges_bytes());
 
         // Set ETag header, if available
-        StaticFileProcessor::add_caching_headers(file_data.meta.etag_header.as_ref(), hyper::header::ETAG, &mut response, &file_path);
+        StaticFileProcessor::add_caching_headers(file_data.meta.etag_header.as_ref(), hyper::header::ETAG, &mut response, normalized_path.get_full_path());
 
         // Set Last-Modified header, if available
-        StaticFileProcessor::add_caching_headers(file_data.meta.last_modified_header.as_ref(), hyper::header::LAST_MODIFIED, &mut response, &file_path);
+        StaticFileProcessor::add_caching_headers(file_data.meta.last_modified_header.as_ref(), hyper::header::LAST_MODIFIED, &mut response, normalized_path.get_full_path());
 
         // Set Expires header, if available
-        StaticFileProcessor::add_caching_headers(file_data.meta.expires_header.as_ref(), hyper::header::EXPIRES, &mut response, &file_path);
+        StaticFileProcessor::add_caching_headers(file_data.meta.expires_header.as_ref(), hyper::header::EXPIRES, &mut response, normalized_path.get_full_path());
 
         // Set cache-control header, if available
-        StaticFileProcessor::add_caching_headers(file_data.meta.cache_control_header.as_ref(), hyper::header::CACHE_CONTROL, &mut response, &file_path);
+        StaticFileProcessor::add_caching_headers(file_data.meta.cache_control_header.as_ref(), hyper::header::CACHE_CONTROL, &mut response, normalized_path.get_full_path());
 
         Ok(response)
     }

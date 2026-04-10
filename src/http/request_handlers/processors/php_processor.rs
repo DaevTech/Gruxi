@@ -7,6 +7,7 @@ use crate::external_connections::fastcgi::FastCgi;
 use crate::file::normalized_path::NormalizedPath;
 use crate::http::http_server::ConnectionContext;
 use crate::http::http_util::trailing_slash_check;
+use crate::http::request_response::gruxi_request_processor_data::{GruxiRequestProcessorData, PhpProcessorFastCgiData};
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::{
     config::site::Site,
@@ -161,19 +162,12 @@ impl ProcessorTrait for PHPProcessor {
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal)));
             }
         };
-        let fastcgi_web_root_option = self.normalized_fastcgi_web_root.as_ref();
-        let fastcgi_web_root = match fastcgi_web_root_option {
-            Some(path) => path.get_full_path(),
-            None => {
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal)));
-            }
-        };
 
         let mut path = gruxi_request.get_path().to_string();
 
         // Get the file, if it exists
         let normalized_path_result = NormalizedPath::new(local_web_root, &path);
-        let normalized_path = match normalized_path_result {
+        let mut normalized_path = match normalized_path_result {
             Ok(path) => path,
             Err(_) => {
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
@@ -189,7 +183,6 @@ impl ProcessorTrait for PHPProcessor {
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
             }
         };
-        let mut file_path = file_data.meta.file_path.clone();
 
         // Make sure the trailing slash logic is correct
         let trailing_slash_result = trailing_slash_check(file_data.clone(), &path);
@@ -203,7 +196,7 @@ impl ProcessorTrait for PHPProcessor {
 
         // If the file/dir does not exist, we check if we have a rewrite function that allows us to rewrite to the index file
         if !file_data.meta.exists {
-            trace!("File does not exist: {}", file_path);
+            trace!("File does not exist: {}", normalized_path.get_full_path());
             if site.has_rewrite_function("OnlyWebRootIndexForSubdirs") {
                 trace!("[OnlyWebRootIndexForSubdirs] Rewriting request path {} to root dir due to rewrite function", path);
                 // We rewrite the path to just "/" which will make it serve the index file
@@ -211,7 +204,7 @@ impl ProcessorTrait for PHPProcessor {
 
                 // Check if the index file exists
                 let normalized_path_result = NormalizedPath::new(local_web_root, &path);
-                let normalized_path = match normalized_path_result {
+                normalized_path = match normalized_path_result {
                     Ok(path) => path,
                     Err(_) => {
                         return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
@@ -219,13 +212,12 @@ impl ProcessorTrait for PHPProcessor {
                 };
 
                 let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-                let file_data = match file_data_result {
+                file_data = match file_data_result {
                     Ok(data) => data,
                     Err(e) => {
                         return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
                     }
                 };
-                file_path = file_data.meta.file_path.clone();
             } else {
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
             }
@@ -234,10 +226,10 @@ impl ProcessorTrait for PHPProcessor {
         let mut uri_is_a_dir_with_index_file_inside = false;
         if file_data.meta.is_directory {
             // If it's a directory, we will try to check if there is an index.php file inside
-            trace!("File is a directory: {}", file_path);
+            trace!("File is a directory: {}", normalized_path.get_full_path());
 
-            let normalized_path_result = NormalizedPath::new(&file_path, "/index.php");
-            let normalized_path = match normalized_path_result {
+            let normalized_path_result = NormalizedPath::new(normalized_path.get_web_root(), "/index.php");
+            normalized_path = match normalized_path_result {
                 Ok(path) => path,
                 Err(_) => {
                     return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
@@ -253,12 +245,11 @@ impl ProcessorTrait for PHPProcessor {
             };
 
             if !file_data.meta.exists {
-                trace!("Index files in dir does not exist: {}", file_path);
+                trace!("Index files in dir does not exist: {}", normalized_path.get_full_path());
                 return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
             }
 
-            file_path = file_data.meta.file_path.clone();
-            trace!("Found index file: {}", file_path);
+            trace!("Found index file: {}", normalized_path.get_full_path());
             uri_is_a_dir_with_index_file_inside = true;
         }
 
@@ -289,14 +280,18 @@ impl ProcessorTrait for PHPProcessor {
         }
 
         // So now we have everything we need to handle the request, so we pass it to the FastCGI handler
-        trace!("Serving PHP request via FastCGI at {} and full file path: {}", &connect_ip_and_port, &file_path);
+        trace!("Serving PHP request via FastCGI at {} and full file path: {}", &connect_ip_and_port, &normalized_path.get_full_path());
 
-        gruxi_request.add_calculated_data("fastcgi_connect_ip_and_port", &connect_ip_and_port);
-        gruxi_request.add_calculated_data("fastcgi_script_file", &file_path);
-        gruxi_request.add_calculated_data("fastcgi_uri_is_a_dir_with_index_file_inside", if uri_is_a_dir_with_index_file_inside { "true" } else { "false" });
-        gruxi_request.add_calculated_data("fastcgi_local_web_root", local_web_root);
-        gruxi_request.add_calculated_data("fastcgi_web_root", fastcgi_web_root);
-        gruxi_request.add_calculated_data("fastcgi_override_server_software", &self.server_software_spoof);
+        let processor_data = PhpProcessorFastCgiData {
+            connect_ip_and_port: connect_ip_and_port.clone(),
+            script_file: normalized_path,
+            uri_is_a_dir_with_index_file_inside,
+            local_web_root: self.normalized_local_web_root.clone().expect("Normalized local web root path should be available"),
+            fastcgi_web_root: self.normalized_fastcgi_web_root.clone().expect("Normalized fastcgi web root path should be available"),
+            server_software_spoof: self.server_software_spoof.clone(),
+        };
+
+        gruxi_request.set_processor_data(GruxiRequestProcessorData::PhpProcessorFastCgi(processor_data));
 
         // Process the FastCGI request with timeout
         match tokio::time::timeout(Duration::from_secs(self.request_timeout as u64), FastCgi::process_fastcgi_request(gruxi_request)).await {

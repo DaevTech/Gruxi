@@ -2,7 +2,7 @@
 name = "gruxi"
 homepage = "https://gruxi.org"
 description = "High‑performance web server"
-version = "0.5.0"
+version = "0.6.0"
 license = "MIT"
 edition = "2024"
 
@@ -24,7 +24,6 @@ tls-listener = { version = "0.11", features = ["rustls-core", "rustls-ring", "rt
 rcgen = { version = "0.14", features = ["ring", "pem"] }
 rand = "0.10.0"
 clap = "4.5.48"
-cached = "0.59.0"
 num_cpus = "1.17.0"
 rustls-pemfile = "2.2.0"
 random_password_generator = "0.1.0"

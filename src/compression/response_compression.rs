@@ -1,5 +1,5 @@
 use crate::debug;
-use crate::file::file_reader_structs::FileReaderCache;
+use crate::file::file_reader_cache::FileReaderCache;
 use crate::http::request_response::gruxi_body::GruxiBody::Buffered;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;

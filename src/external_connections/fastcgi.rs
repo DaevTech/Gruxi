@@ -1,11 +1,10 @@
+use crate::error;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::FastCgiError;
-use crate::file::file_util::replace_web_root_in_path;
-use crate::file::file_util::split_path;
 use crate::http::http_util::full;
 use crate::http::request_response::gruxi_request::GruxiRequest;
+use crate::http::request_response::gruxi_request_processor_data::GruxiRequestProcessorData::PhpProcessorFastCgi;
 use crate::http::request_response::gruxi_response::GruxiResponse;
-use crate::error;
 use crate::trace;
 use std::time::Instant;
 use std::{collections::HashMap, time::Duration};
@@ -137,12 +136,7 @@ impl FastCgi {
             let content_end = content_start + content_length;
 
             if content_end > buffer.len() {
-                trace!(
-                    "Incomplete FastCGI record at offset {}, expected {} bytes but only {} available",
-                    i,
-                    content_end - i,
-                    buffer.len() - i
-                );
+                trace!("Incomplete FastCGI record at offset {}, expected {} bytes but only {} available", i, content_end - i, buffer.len() - i);
                 break;
             }
 
@@ -152,12 +146,7 @@ impl FastCgi {
                     let content = &buffer[content_start..content_end];
                     response.extend_from_slice(content);
                     stdout_records += 1;
-                    trace!(
-                        "Parsed FCGI_STDOUT record #{} with {} bytes (total response: {} bytes)",
-                        stdout_records,
-                        content_length,
-                        response.len()
-                    );
+                    trace!("Parsed FCGI_STDOUT record #{} with {} bytes (total response: {} bytes)", stdout_records, content_length, response.len());
                 } else {
                     trace!("Received empty FCGI_STDOUT record (stream terminator)");
                 }
@@ -226,33 +215,23 @@ impl FastCgi {
         };
         trace!("Generated FastCGI parameters: {:?}", params);
 
-        // Determine FastCGI server IP and port
-        let ip_and_port = match gruxi_request.get_calculated_data("fastcgi_connect_ip_and_port") {
-            Some(ip_and_port) => ip_and_port.to_string(),
-            None => {
-                error!("No FastCGI IP and port found in request calculated data ip and port: {:?}", gruxi_request);
-                return Err(FastCgiError::Initialization);
-            }
+        let connect_ip_and_port = match gruxi_request.get_processor_data().expect("Processor data should be available for FastCgi processing") {
+            PhpProcessorFastCgi(data) => data.connect_ip_and_port.clone(),
         };
 
         // Now we work on getting a semaphore permit for the connection, if relevant
         let connection_semaphore_option = gruxi_request.get_connection_semaphore();
 
-
-
         match connection_semaphore_option {
             Some(connection_semaphore) => {
                 // We only need a permit, if a connection semaphore is set
                 let available_permits = connection_semaphore.available_permits();
-                trace!("Acquiring connection permit for FastCGI server at {} (available permits: {})", ip_and_port, available_permits);
+                trace!("Acquiring connection permit for FastCGI server at {} (available permits: {})", &connect_ip_and_port, available_permits);
 
                 // Acquire a connection permit to limit concurrent connections to php-fpm
                 let _permit = match connection_semaphore.acquire().await {
                     Ok(permit) => {
-                        trace!(
-                            "Connection permit acquired for FastCGI server (remaining permits: {})",
-                            connection_semaphore.available_permits()
-                        );
+                        trace!("Connection permit acquired for FastCGI server (remaining permits: {})", connection_semaphore.available_permits());
                         permit
                     }
                     Err(e) => {
@@ -260,9 +239,9 @@ impl FastCgi {
                         return Err(FastCgiError::ConnectionPermitAcquisition);
                     }
                 };
-                Self::do_fastcgi_request_and_response(gruxi_request, &ip_and_port, &params).await
+                Self::do_fastcgi_request_and_response(gruxi_request, &connect_ip_and_port, &params).await
             }
-            None => Self::do_fastcgi_request_and_response(gruxi_request, &ip_and_port, &params).await,
+            None => Self::do_fastcgi_request_and_response(gruxi_request, &connect_ip_and_port, &params).await,
         }
     }
 
@@ -400,15 +379,17 @@ impl FastCgi {
                     // Parse status code
                     if let Some(space_pos) = value.find(' ')
                         && let Ok(code) = value[..space_pos].parse::<u16>()
-                            && let Ok(status) = hyper::StatusCode::from_u16(code) {
-                                status_code = status;
-                            }
+                        && let Ok(status) = hyper::StatusCode::from_u16(code)
+                    {
+                        status_code = status;
+                    }
                 } else {
                     // Add other headers
                     if let Ok(header_name) = hyper::header::HeaderName::from_bytes(key.as_bytes())
-                        && let Ok(header_value) = hyper::header::HeaderValue::from_str(value) {
-                            response_builder = response_builder.header(header_name, header_value);
-                        }
+                        && let Ok(header_value) = hyper::header::HeaderValue::from_str(value)
+                    {
+                        response_builder = response_builder.header(header_name, header_value);
+                    }
                 }
             }
         }
@@ -447,27 +428,26 @@ impl FastCgi {
 
         // Set content type and length if present
         if let Some(content_type) = headers.get("content-type")
-            && let Ok(content_type) = content_type.to_str() {
-                params.insert("CONTENT_TYPE".to_string(), content_type.to_string());
-            }
+            && let Ok(content_type) = content_type.to_str()
+        {
+            params.insert("CONTENT_TYPE".to_string(), content_type.to_string());
+        }
         if let Some(content_length) = headers.get("content-length")
-            && let Ok(content_length) = content_length.to_str() {
-                params.insert("CONTENT_LENGTH".to_string(), content_length.to_string());
-            }
-
-        // Handle web root mapping
-        let mut full_script_path = gruxi_request.get_calculated_data("fastcgi_script_file").unwrap_or("").to_string();
-        let mut script_web_root = gruxi_request.get_calculated_data("fastcgi_local_web_root").unwrap_or("").to_string();
-        let other_webroot = gruxi_request.get_calculated_data("fastcgi_web_root").unwrap_or("").to_string();
-        let uri_is_a_dir_with_index_file_inside = gruxi_request.get_calculated_data("fastcgi_uri_is_a_dir_with_index_file_inside").unwrap_or("false") == "true";
-
-        if !other_webroot.is_empty() {
-            let full_local_web_root = script_web_root;
-            full_script_path = replace_web_root_in_path(&full_script_path, &full_local_web_root, &other_webroot);
-            script_web_root = other_webroot.clone();
+            && let Ok(content_length) = content_length.to_str()
+        {
+            params.insert("CONTENT_LENGTH".to_string(), content_length.to_string());
         }
 
-        let (directory, filename) = split_path(&script_web_root, &full_script_path);
+        // Handle web root mapping
+        let (mut full_script_path, fastcgi_web_root, uri_is_a_dir_with_index_file_inside, server_software_spoof) =
+            match gruxi_request.get_processor_data().expect("Processor data should be available for generating FastCgi parameters") {
+                PhpProcessorFastCgi(data) => (data.script_file.clone(), data.fastcgi_web_root.clone(), data.uri_is_a_dir_with_index_file_inside, data.server_software_spoof.clone()),
+            };
+
+        // If the fastcgi web root is set, we need to replace the local web root in the script path with the fastcgi web root
+        if !fastcgi_web_root.is_empty() {
+            full_script_path.set_web_root(fastcgi_web_root.get_web_root())?;
+        }
 
         // Request uri
         let mut request_uri = uri.clone();
@@ -475,30 +455,26 @@ impl FastCgi {
             // Split off any query string first
             let (path_only_str, query_part) = if let Some(pos) = uri.find('?') { (&uri[..pos], &uri[pos..]) } else { (uri.as_str(), "") };
             // Add forward slash to the end if missing, but before any query string
-            let path_only = if !path_only_str.ends_with('/') {
-                &format!("{}/", path_only_str)
-            } else {
-                path_only_str
-            };
+            let path_only = if !path_only_str.ends_with('/') { &format!("{}/", path_only_str) } else { path_only_str };
             request_uri = format!("{}{}", path_only, query_part);
         }
 
-        let mut server_software = gruxi_request.get_calculated_data("fastcgi_override_server_software").unwrap_or("Gruxi").to_string();
+        let mut server_software = server_software_spoof;
         if server_software.is_empty() {
             server_software = "Gruxi".to_string();
         }
 
         // Figure out PATH_INFO
-        let path_info = Self::compute_path_info(&request_uri, &filename);
+        let path_info = Self::compute_path_info(&request_uri, full_script_path.get_path());
 
-        trace!("FastCGI - Directory: {}, Filename: {}", directory, filename);
+        trace!("FastCGI - Directory: {}, Filename: {}", full_script_path.get_web_root(), full_script_path.get_path());
 
         // Build FastCGI parameters (CGI environment variables)
         params.insert("REQUEST_METHOD".to_string(), gruxi_request.get_http_method().to_string());
         params.insert("REQUEST_URI".to_string(), request_uri.to_string());
         params.insert("SCRIPT_NAME".to_string(), request_uri);
-        params.insert("SCRIPT_FILENAME".to_string(), full_script_path);
-        params.insert("DOCUMENT_ROOT".to_string(), script_web_root);
+        params.insert("SCRIPT_FILENAME".to_string(), full_script_path.get_full_path().to_string());
+        params.insert("DOCUMENT_ROOT".to_string(), full_script_path.get_web_root().to_string());
         params.insert("QUERY_STRING".to_string(), gruxi_request.get_query().to_string());
         params.insert("CONTENT_LENGTH".to_string(), gruxi_request.get_body_size().to_string());
         params.insert("SERVER_SOFTWARE".to_string(), server_software);
@@ -547,7 +523,7 @@ impl FastCgi {
 mod tests {
     use hyper::body::Bytes;
 
-    use crate::http::request_response::gruxi_request::GruxiRequest;
+    use crate::{file::normalized_path::NormalizedPath, http::request_response::{gruxi_request::GruxiRequest, gruxi_request_processor_data::{GruxiRequestProcessorData, PhpProcessorFastCgiData}}};
 
     use super::FastCgi;
 
@@ -568,10 +544,17 @@ mod tests {
         // Try with scenario where user requests the root
         let request = hyper::Request::builder().method("GET").uri("/").header("Host", "localhost").body(Bytes::new()).unwrap();
         let mut gruxi_request = GruxiRequest::new(request);
-        gruxi_request.add_calculated_data("fastcgi_script_file", "D:/websites/test1/public/index.php");
-        gruxi_request.add_calculated_data("fastcgi_local_web_root", "D:/websites/test1/public");
-        gruxi_request.add_calculated_data("fastcgi_web_root", "");
-        gruxi_request.add_calculated_data("fastcgi_uri_is_a_dir_with_index_file_inside", "false");
+
+        let processor_data = PhpProcessorFastCgiData {
+            connect_ip_and_port: String::new(),
+            script_file: NormalizedPath::new("D:/websites/test1/public", "/index.php").unwrap(),
+            uri_is_a_dir_with_index_file_inside: false,
+            local_web_root: NormalizedPath::new("D:/websites/test1/public", "").unwrap(),
+            fastcgi_web_root: NormalizedPath::new("", "").unwrap(),
+            server_software_spoof: String::new(),
+        };
+
+        gruxi_request.set_processor_data(GruxiRequestProcessorData::PhpProcessorFastCgi(processor_data));
 
         let params_result = FastCgi::generate_fast_cgi_params(&mut gruxi_request);
 

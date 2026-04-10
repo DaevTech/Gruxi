@@ -7,7 +7,6 @@ use hyper::HeaderMap;
 use hyper::Request;
 use hyper::body::Body;
 use hyper::body::Bytes;
-use std::collections::HashMap;
 use std::mem;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,6 +16,7 @@ use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::GruxiErrorKind;
 use crate::error::gruxi_error_enums::GruxiRequestError;
 use crate::http::request_response::gruxi_body::GruxiBody;
+use crate::http::request_response::gruxi_request_processor_data::GruxiRequestProcessorData;
 
 // Wrapper around hyper Request to add calculated data and serve as a request in Gruxi
 #[derive(Debug)]
@@ -30,6 +30,8 @@ pub struct GruxiRequest {
     pub connection_semaphore: Option<Arc<Semaphore>>,
     // Upgrade future for handling protocol upgrades
     upgrade_future: Option<hyper::upgrade::OnUpgrade>,
+    // Data for specific processor can be stored, to be carried along the request
+    processor_data: Option<GruxiRequestProcessorData>,
 }
 
 #[derive(Debug)]
@@ -37,7 +39,6 @@ struct GruxiRequestData {
     body_size_hint: u64,
     hostname: String,
     remote_ip: Option<SocketAddr>,
-    other: Option<HashMap<String, String>>,
 }
 
 impl GruxiRequestData {
@@ -46,7 +47,6 @@ impl GruxiRequestData {
             body_size_hint,
             hostname,
             remote_ip: None,
-            other: None,
         }
     }
 }
@@ -69,6 +69,7 @@ impl GruxiRequest {
             data,
             connection_semaphore: None,
             upgrade_future,
+            processor_data: None,
         }
     }
 
@@ -91,23 +92,16 @@ impl GruxiRequest {
             data,
             connection_semaphore: None,
             upgrade_future,
+            processor_data: None,
         }
     }
 
-    pub fn add_calculated_data(&mut self, key: &str, value: &str) {
-        if self.data.other.is_none() {
-            self.data.other = Some(HashMap::new());
-        }
-        if let Some(other_map) = &mut self.data.other {
-            other_map.insert(key.to_string(), value.to_string());
-        }
+    pub fn set_processor_data(&mut self, processor_data: GruxiRequestProcessorData) {
+        self.processor_data = Some(processor_data);
     }
 
-    pub fn get_calculated_data(&self, key: &str) -> Option<&str> {
-        if let Some(other_map) = &self.data.other {
-            return other_map.get(key).map(|s| s.as_str());
-        }
-        None
+    pub fn get_processor_data(&self) -> Option<&GruxiRequestProcessorData> {
+        self.processor_data.as_ref()
     }
 
     // Extract hostname from request parts (Host header or URI authority)

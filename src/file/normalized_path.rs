@@ -7,7 +7,10 @@ use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
 use urlencoding::decode;
 
-use crate::{debug, error::{gruxi_error::GruxiError, gruxi_error_enums::GruxiErrorKind}};
+use crate::{
+    debug,
+    error::{gruxi_error::GruxiError, gruxi_error_enums::GruxiErrorKind},
+};
 
 #[derive(Clone, Debug)]
 pub struct NormalizedPath {
@@ -22,7 +25,7 @@ const RESERVED_FILENAMES: [&str; 22] = [
 
 impl NormalizedPath {
     /// Get a new NormalizedPath instance, based on a trusted web_root and a user-supplied path.
-    /// We expect web_root to be already sanitized and validated ,as it comes from our configuration.
+    /// We expect web_root to be already sanitized and validated
     pub fn new(web_root: &str, path: &str) -> Result<Self, GruxiError> {
         let mut normalized_path = NormalizedPath {
             web_root: web_root.trim().to_string(),
@@ -30,48 +33,77 @@ impl NormalizedPath {
             full_path: "".to_string(),
         };
 
+        normalized_path.process()?;
+
+        Ok(normalized_path)
+    }
+
+    fn process_path(&mut self) -> Result<(), GruxiError> {
         // Normalize the path part, which is also decoded
-        if !path.is_empty() {
-            let normalized_path_cleaned_result = Self::clean_url_path(path);
-            normalized_path.path = match normalized_path_cleaned_result {
+        if !self.path.is_empty() {
+            let normalized_path_cleaned_result = Self::clean_url_path(&self.path);
+            self.path = match normalized_path_cleaned_result {
                 Ok(p) => p,
                 Err(_) => {
-                    debug!("Failed to clean URL path in NormalizePath: {:?}", normalized_path);
+                    debug!("Failed to clean URL path in NormalizePath: {:?}", self);
                     return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Failed to clean URL path")));
                 }
             };
         }
+        Ok(())
+    }
 
+    fn process_web_root(&mut self) -> Result<(), GruxiError> {
         // Remove ending / from web root
-        if normalized_path.web_root.ends_with('/') {
-            normalized_path.web_root.pop();
-        }
+        self.web_root = self.web_root.trim_end_matches('/').to_string();
+        Ok(())
+    }
 
+    fn process_finalize(&mut self) -> Result<(), GruxiError> {
         // Set the full path and return
-        normalized_path.full_path = format!("{}{}", normalized_path.web_root, normalized_path.path);
+        self.full_path = format!("{}{}", self.web_root, self.path);
 
-        if normalized_path.web_root.is_empty() && normalized_path.path.is_empty() {
-            normalized_path.full_path = "".to_string();
+        if self.web_root.is_empty() && self.path.is_empty() {
+            self.full_path = "".to_string();
         } else {
-            let full_path_result = Self::make_path_absolute(&normalized_path.full_path);
-            normalized_path.full_path = match full_path_result {
+            let full_path_result = Self::make_path_absolute(&self.full_path);
+            self.full_path = match full_path_result {
                 Ok(p) => p,
                 Err(_) => {
                     return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Failed to resolve relative path")));
                 }
             };
 
-            while normalized_path.full_path.contains("\\") {
-                normalized_path.full_path = normalized_path.full_path.replace("\\", "/");
-            }
+            self.full_path = self.full_path.replace('\\', "/");
 
             // Defense-in-depth: final check that no traversal segments exist in the assembled full path
-            if normalized_path.full_path.split('/').any(|seg| seg == ".." || seg == ".") {
+            if self.full_path.split('/').any(|seg| seg == ".." || seg == ".") {
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Path traversal detected in resolved path")));
             }
-        }
 
-        Ok(normalized_path)
+            // Defense-in-depth: verify full path still starts with the resolved web root
+            if !self.web_root.is_empty() {
+                let resolved_web_root = Self::make_path_absolute(&self.web_root)
+                    .unwrap_or_default()
+                    .replace('\\', "/");
+                if !resolved_web_root.is_empty() && !self.full_path.starts_with(&resolved_web_root) {
+                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Resolved path escapes web root")));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process(&mut self) -> Result<(), GruxiError> {
+        self.process_path()?;
+        self.process_web_root()?;
+        self.process_finalize()?;
+
+        Ok(())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.full_path.is_empty()
     }
 
     pub fn get_full_path(&self) -> &str {
@@ -82,8 +114,22 @@ impl NormalizedPath {
         &self.web_root
     }
 
+    pub fn set_web_root(&mut self, new_web_root: &str) -> Result<(), GruxiError> {
+        self.web_root = new_web_root.trim().to_string();
+        self.process_web_root()?;
+        self.process_finalize()?;
+        Ok(())
+    }
+
     pub fn get_path(&self) -> &str {
         &self.path
+    }
+
+    pub fn set_path(&mut self, new_path: &str) -> Result<(), GruxiError> {
+        self.path = new_path.trim().to_string();
+        self.process_path()?;
+        self.process_finalize()?;
+        Ok(())
     }
 
     fn decode_string_until_no_percentage(path: &str) -> Result<String, ()> {
@@ -108,6 +154,11 @@ impl NormalizedPath {
     }
 
     fn clean_url_path(path: &str) -> Result<String, String> {
+        // Reject excessively long paths to prevent DoS via repeated allocations
+        if path.len() > 4096 {
+            return Err("Path exceeds maximum allowed length".to_string());
+        }
+
         // First, decode percent-encoded characters
         let decoded_path_result = Self::decode_string_until_no_percentage(path);
         let path = match decoded_path_result {
@@ -136,6 +187,7 @@ impl NormalizedPath {
                 '\u{FF0F}' | // ／ fullwidth solidus
                 '\u{29F8}' | // ⧸ big solidus
                 '\u{FE68}' | // ﹨ small reverse solidus
+                '\u{FF3C}' | // ＼ fullwidth reverse solidus
 
                 // Dot-like
                 '\u{FF0E}' | // ． fullwidth full stop
@@ -145,16 +197,6 @@ impl NormalizedPath {
             ) {
                 return Err("Path contains confusable slash or dot characters".to_string());
             }
-        }
-
-        // Return error on ascii control characters and NUL characters
-        if buf.chars().any(|c| c.is_control() || c == '\0') {
-            return Err("Path contains ASCII control characters or NUL characters".to_string());
-        }
-
-        // If last characters is dot, we call error (to avoid trailing dots)
-        if buf.ends_with('.') {
-            return Err("Path cannot end with a dot".to_string());
         }
 
         // If we have colon somewhere in the path, we call error
@@ -191,6 +233,11 @@ impl NormalizedPath {
             if part.starts_with('~') || part.ends_with('~') {
                 return Err("Path segments cannot start or end with tilde (~)".to_string());
             }
+
+            // Reject trailing dots or spaces per segment (Windows silently strips these)
+            if part.ends_with('.') || part.ends_with(' ') {
+                return Err("Path segments cannot end with a dot or space".to_string());
+            }
         }
 
         // Join parts and ensure no trailing slash
@@ -220,7 +267,6 @@ impl NormalizedPath {
             current_dir_result.push(stripped);
             return Ok(current_dir_result.to_string_lossy().to_string());
         }
-
 
         // Treat Unix-rooted paths like "/var/www" as rooted even on Windows,
         // otherwise Path::is_relative() may incorrectly cause us to prepend CWD (and a drive letter).
@@ -516,5 +562,63 @@ mod tests {
         };
         assert_eq!(normalized.get_path(), "/a/b/c");
         assert_eq!(normalized.get_full_path(), "/var/www/a/b/c");
+    }
+
+    #[tokio::test]
+    async fn test_normalized_path_trailing_dot_per_segment() {
+        // Trailing dot in a directory segment (Windows strips it silently)
+        let normalized = NormalizedPath::new("/var/www", "/images/test./file.css");
+        assert!(normalized.is_err());
+
+        let normalized = NormalizedPath::new("/var/www", "/a./b/c");
+        assert!(normalized.is_err());
+
+        // Trailing dot on final segment (file)
+        let normalized = NormalizedPath::new("/var/www", "/images/style.");
+        assert!(normalized.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_normalized_path_trailing_space_per_segment() {
+        // Trailing space in a directory segment (Windows strips it silently)
+        let normalized = NormalizedPath::new("/var/www", "/images/test /file.css");
+        assert!(normalized.is_err());
+
+        let normalized = NormalizedPath::new("/var/www", "/a /b/c");
+        assert!(normalized.is_err());
+
+        // Trailing space via percent-encoding (survives trim, decoded to space internally)
+        let normalized = NormalizedPath::new("/var/www", "/images/style%20");
+        assert!(normalized.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_normalized_path_web_root_multiple_trailing_slashes() {
+        let normalized = match NormalizedPath::new("/var/www//", "/index.html") {
+            Ok(n) => n,
+            Err(_) => panic!("Expected Ok result for web root with multiple trailing slashes"),
+        };
+        assert_eq!(normalized.get_web_root(), "/var/www");
+        assert_eq!(normalized.get_full_path(), "/var/www/index.html");
+    }
+
+    #[tokio::test]
+    async fn test_normalized_path_fullwidth_reverse_solidus() {
+        // Fullwidth reverse solidus ＼ should be rejected as a confusable
+        let normalized = NormalizedPath::new("/var/www", "/a\u{FF3C}b");
+        assert!(normalized.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_normalized_path_max_length() {
+        // Path exceeding 4096 bytes should be rejected
+        let long_path = format!("/{}", "a".repeat(4096));
+        let normalized = NormalizedPath::new("/var/www", &long_path);
+        assert!(normalized.is_err());
+
+        // Path at exactly 4096 bytes should be accepted
+        let ok_path = format!("/{}", "a".repeat(4095));
+        let normalized = NormalizedPath::new("/var/www", &ok_path);
+        assert!(normalized.is_ok());
     }
 }
