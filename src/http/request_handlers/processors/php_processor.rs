@@ -71,17 +71,17 @@ impl ProcessorTrait for PHPProcessor {
                 Ok(path) => Some(path),
                 Err(_) => {
                     error!("Failed to normalize local web root path: {}", self.local_web_root);
-                    return;
+                    None
                 }
             };
         }
-        if self.normalized_fastcgi_web_root.is_none() {
+        if self.normalized_fastcgi_web_root.is_none() && !self.fastcgi_web_root.is_empty() {
             let normalized_path_result = NormalizedPath::new(&self.fastcgi_web_root, "");
             self.normalized_fastcgi_web_root = match normalized_path_result {
                 Ok(path) => Some(path),
                 Err(_) => {
                     error!("Failed to normalize FastCGI web root path: {}", self.fastcgi_web_root);
-                    return;
+                    None
                 }
             };
         }
@@ -228,7 +228,7 @@ impl ProcessorTrait for PHPProcessor {
             // If it's a directory, we will try to check if there is an index.php file inside
             trace!("File is a directory: {}", normalized_path.get_full_path());
 
-            let normalized_path_result = NormalizedPath::new(normalized_path.get_web_root(), "/index.php");
+            let normalized_path_result = NormalizedPath::new(normalized_path.get_full_path(), "/index.php");
             normalized_path = match normalized_path_result {
                 Ok(path) => path,
                 Err(_) => {
@@ -282,12 +282,25 @@ impl ProcessorTrait for PHPProcessor {
         // So now we have everything we need to handle the request, so we pass it to the FastCGI handler
         trace!("Serving PHP request via FastCGI at {} and full file path: {}", &connect_ip_and_port, &normalized_path.get_full_path());
 
+        let local_web_root_normalized = match self.normalized_local_web_root.clone() {
+            Some(path) => path,
+            None => {
+                error!("PHP Processor: Normalized local web root path is not available for processor ID: {}", self.id);
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal)));
+            }
+        };
+        // For win-php-cgi, the fastcgi web root is the same as the local web root
+        let fastcgi_web_root_normalized = match self.normalized_fastcgi_web_root.clone() {
+            Some(path) => path,
+            None => local_web_root_normalized.clone(),
+        };
+
         let processor_data = PhpProcessorFastCgiData {
             connect_ip_and_port: connect_ip_and_port.clone(),
             script_file: normalized_path,
             uri_is_a_dir_with_index_file_inside,
-            local_web_root: self.normalized_local_web_root.clone().expect("Normalized local web root path should be available"),
-            fastcgi_web_root: self.normalized_fastcgi_web_root.clone().expect("Normalized fastcgi web root path should be available"),
+            local_web_root: local_web_root_normalized,
+            fastcgi_web_root: fastcgi_web_root_normalized,
             server_software_spoof: self.server_software_spoof.clone(),
         };
 
