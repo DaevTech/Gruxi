@@ -66,6 +66,9 @@ impl FastCgi {
         packet
     }
 
+    /// Maximum content length per FastCGI record (FCGI_MAX_LENGTH)
+    const FCGI_MAX_CONTENT_LEN: usize = 65535;
+
     pub fn create_fastcgi_params(params: &HashMap<String, String>) -> Vec<u8> {
         let mut content = Vec::new();
 
@@ -91,27 +94,40 @@ impl FastCgi {
             content.extend(value_bytes);
         }
 
-        let mut packet = Vec::new();
-        packet.push(1); // version
-        packet.push(4); // type: FCGI_PARAMS
-        packet.extend(&1u16.to_be_bytes()); // request_id
-        packet.extend(&(content.len() as u16).to_be_bytes()); // content_length
-        packet.push(0); // padding_length
-        packet.push(0); // reserved
-        packet.extend(content);
-
-        packet
+        // Chunk content into records of at most FCGI_MAX_CONTENT_LEN bytes
+        Self::create_fastcgi_records(4, &content)
     }
 
     pub fn create_fastcgi_stdin(data: &[u8]) -> Vec<u8> {
+        // Chunk data into records of at most FCGI_MAX_CONTENT_LEN bytes
+        Self::create_fastcgi_records(5, data)
+    }
+
+    /// Create one or more FastCGI records of the given type, chunking data
+    /// into records of at most FCGI_MAX_CONTENT_LEN (65535) bytes each.
+    fn create_fastcgi_records(record_type: u8, data: &[u8]) -> Vec<u8> {
         let mut packet = Vec::new();
-        packet.push(1); // version
-        packet.push(5); // type: FCGI_STDIN
-        packet.extend(&1u16.to_be_bytes()); // request_id
-        packet.extend(&(data.len() as u16).to_be_bytes()); // content_length
-        packet.push(0); // padding_length
-        packet.push(0); // reserved
-        packet.extend(data);
+
+        if data.is_empty() {
+            // Empty record (used as stream terminator)
+            packet.push(1); // version
+            packet.push(record_type);
+            packet.extend(&1u16.to_be_bytes()); // request_id
+            packet.extend(&0u16.to_be_bytes()); // content_length = 0
+            packet.push(0); // padding_length
+            packet.push(0); // reserved
+            return packet;
+        }
+
+        for chunk in data.chunks(Self::FCGI_MAX_CONTENT_LEN) {
+            packet.push(1); // version
+            packet.push(record_type);
+            packet.extend(&1u16.to_be_bytes()); // request_id
+            packet.extend(&(chunk.len() as u16).to_be_bytes()); // content_length
+            packet.push(0); // padding_length
+            packet.push(0); // reserved
+            packet.extend(chunk);
+        }
 
         packet
     }
@@ -333,7 +349,10 @@ impl FastCgi {
         })
         .await
         {
-            Ok(_) => {}
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                return Err(e);
+            }
             Err(_) => {
                 error!("FastCGI response timeout after reading {} bytes", response_buffer.len());
                 return Err(FastCgiError::Timeout);
@@ -376,9 +395,12 @@ impl FastCgi {
                 let value = value[1..].trim(); // Remove colon and trim
 
                 if key.eq_ignore_ascii_case("status") {
-                    // Parse status code
-                    if let Some(space_pos) = value.find(' ')
-                        && let Ok(code) = value[..space_pos].parse::<u16>()
+                    // Parse status code (handles both "404 Not Found" and "404")
+                    let code_str = match value.find(' ') {
+                        Some(space_pos) => &value[..space_pos],
+                        None => value,
+                    };
+                    if let Ok(code) = code_str.parse::<u16>()
                         && let Ok(status) = hyper::StatusCode::from_u16(code)
                     {
                         status_code = status;
@@ -412,12 +434,18 @@ impl FastCgi {
     pub fn generate_fast_cgi_params(gruxi_request: &mut GruxiRequest) -> Result<HashMap<String, String>, GruxiError> {
         let mut params: HashMap<String, String> = HashMap::new();
 
-        let uri = gruxi_request.get_path().to_string();
+        let path = gruxi_request.get_path().to_string();
+        let query = gruxi_request.get_query().to_string();
+        let uri = if query.is_empty() { path.clone() } else { format!("{}?{}", path, query) };
         let headers = gruxi_request.get_headers();
 
         // Add HTTP headers as CGI variables, prefixed with HTTP_ and uppercased
         for (key, value) in headers.iter() {
             let key_str = key.to_string();
+            // Skip content-type and content-length as they have special handling in CGI
+            if key_str.eq_ignore_ascii_case("content-type") || key_str.eq_ignore_ascii_case("content-length") {
+                continue;
+            }
 
             // Try converting the value to a &str
             if let Ok(value_str) = value.to_str() {
@@ -426,16 +454,11 @@ impl FastCgi {
             }
         }
 
-        // Set content type and length if present
+        // Set content type if present (from header)
         if let Some(content_type) = headers.get("content-type")
             && let Ok(content_type) = content_type.to_str()
         {
             params.insert("CONTENT_TYPE".to_string(), content_type.to_string());
-        }
-        if let Some(content_length) = headers.get("content-length")
-            && let Ok(content_length) = content_length.to_str()
-        {
-            params.insert("CONTENT_LENGTH".to_string(), content_length.to_string());
         }
 
         // Handle web root mapping
@@ -449,7 +472,7 @@ impl FastCgi {
             full_script_path.set_web_root(fastcgi_web_root.get_web_root())?;
         }
 
-        // Request uri
+        // Request uri (must include query string for PHP's $_SERVER['REQUEST_URI'])
         let mut request_uri = uri.clone();
         if uri_is_a_dir_with_index_file_inside {
             // Split off any query string first
@@ -470,9 +493,21 @@ impl FastCgi {
         trace!("FastCGI - Directory: {}, Filename: {}", full_script_path.get_web_root(), full_script_path.get_path());
 
         // Build FastCGI parameters (CGI environment variables)
+        let script_name = full_script_path.get_path().to_string();
+
+        // REMOTE_ADDR must be IP only (no port)
+        let remote_addr = match gruxi_request.get_remote_ip() {
+            Some(addr) => addr.ip().to_string(),
+            None => String::new(),
+        };
+        let remote_port = match gruxi_request.get_remote_ip() {
+            Some(addr) => addr.port().to_string(),
+            None => String::new(),
+        };
+
         params.insert("REQUEST_METHOD".to_string(), gruxi_request.get_http_method().to_string());
-        params.insert("REQUEST_URI".to_string(), request_uri.to_string());
-        params.insert("SCRIPT_NAME".to_string(), request_uri);
+        params.insert("REQUEST_URI".to_string(), request_uri);
+        params.insert("SCRIPT_NAME".to_string(), script_name);
         params.insert("SCRIPT_FILENAME".to_string(), full_script_path.get_full_path().to_string());
         params.insert("DOCUMENT_ROOT".to_string(), full_script_path.get_web_root().to_string());
         params.insert("QUERY_STRING".to_string(), gruxi_request.get_query().to_string());
@@ -483,11 +518,11 @@ impl FastCgi {
         params.insert("HTTPS".to_string(), if gruxi_request.is_https() { "on" } else { "off" }.to_string());
         params.insert("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string());
         params.insert("SERVER_PROTOCOL".to_string(), gruxi_request.get_http_version().to_string());
-        params.insert("REMOTE_ADDR".to_string(), gruxi_request.get_remote_ip_pretty());
+        params.insert("REMOTE_ADDR".to_string(), remote_addr);
+        params.insert("REMOTE_PORT".to_string(), remote_port);
         params.insert("REMOTE_HOST".to_string(), "".to_string());
         params.insert("PATH_INFO".to_string(), path_info);
         params.insert("REDIRECT_STATUS".to_string(), "200".to_string());
-        params.insert("HTTP_HOST".to_string(), gruxi_request.get_hostname().to_string());
         Ok(params)
     }
 
@@ -563,10 +598,16 @@ mod tests {
 
         assert_eq!(params.get("REQUEST_METHOD").unwrap(), "GET");
         assert_eq!(params.get("REQUEST_URI").unwrap(), "/");
-        assert_eq!(params.get("SCRIPT_NAME").unwrap(), "/");
+        assert_eq!(params.get("SCRIPT_NAME").unwrap(), "/index.php");
         assert_eq!(params.get("SCRIPT_FILENAME").unwrap(), "D:/websites/test1/public/index.php");
         assert_eq!(params.get("DOCUMENT_ROOT").unwrap(), "D:/websites/test1/public");
         assert_eq!(params.get("PATH_INFO").unwrap(), "");
+        // Verify HTTP_CONTENT_TYPE and HTTP_CONTENT_LENGTH are NOT present
+        assert!(params.get("HTTP_CONTENT_TYPE").is_none());
+        assert!(params.get("HTTP_CONTENT_LENGTH").is_none());
+        // Verify REMOTE_ADDR has no port
+        let remote_addr = params.get("REMOTE_ADDR").unwrap();
+        assert!(!remote_addr.contains(':') || remote_addr.contains("::")); // IPv4 has no colon, IPv6 is fine
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
