@@ -15,7 +15,7 @@ use crate::{
         },
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
-    trace,
+    debug, trace,
 };
 use http::HeaderValue;
 use hyper::Response;
@@ -91,40 +91,58 @@ impl ProxyProcessor {
         url
     }
 
-    // Case-insensitive replacement
+    // Case-insensitive replacement using char-based iteration to avoid
+    // panics when lowercasing changes byte length (e.g. ẞ → ß, İ → i).
     fn replace_case_insensitive(s: &str, from: &str, to: &str) -> String {
         if from.is_empty() {
             return s.to_string();
         }
 
+        let from_chars: Vec<char> = from.chars().flat_map(|c| c.to_lowercase()).collect();
+        let s_chars: Vec<char> = s.chars().collect();
+        let from_len = from_chars.len();
+
         let mut result = String::with_capacity(s.len());
         let mut i = 0;
-        let s_lower = s.to_lowercase();
-        let from_lower = from.to_lowercase();
-        let from_len = from.len();
 
-        while i < s.len() {
-            // Check if from matches at this position
-            if i + from_len <= s.len() && &s_lower[i..i + from_len] == from_lower.as_str() {
-                result.push_str(to);
-                i += from_len;
-            } else {
-                // Push the next character (handle UTF-8 properly)
-                let ch_option = s[i..].chars().next();
-                let ch = match ch_option {
-                    Some(c) => c,
-                    None => break,
-                };
-                result.push(ch);
-                i += ch.len_utf8();
+        while i < s_chars.len() {
+            if i + from_len <= s_chars.len() {
+                let matches = s_chars[i..i + from_len]
+                    .iter()
+                    .flat_map(|c| c.to_lowercase())
+                    .eq(from_chars.iter().copied());
+
+                if matches {
+                    result.push_str(to);
+                    i += from_len;
+                    continue;
+                }
             }
+
+            result.push(s_chars[i]);
+            i += 1;
         }
 
         result
     }
 
     fn clean_hop_by_hop_headers_in_response(response: &mut Response<hyper::body::Incoming>, is_websocket_upgrade: bool) {
-        let hop_by_hop_headers = crate::http::http_util::get_list_of_hop_by_hop_headers(is_websocket_upgrade);
+        let mut hop_by_hop_headers = crate::http::http_util::get_list_of_hop_by_hop_headers(is_websocket_upgrade);
+
+        // Parse the Connection header for additional hop-by-hop header names (RFC 2616 §14.10)
+        if !is_websocket_upgrade {
+            if let Some(connection_header) = response.headers().get("Connection") {
+                if let Ok(connection_header_str) = connection_header.to_str() {
+                    for token in connection_header_str.split(',') {
+                        let token_trimmed = token.trim();
+                        if !token_trimmed.is_empty() {
+                            hop_by_hop_headers.push(token_trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
         for header in &hop_by_hop_headers {
             response.headers_mut().remove(header);
         }
@@ -139,7 +157,13 @@ impl ProxyProcessor {
                 self.health_check_interval_seconds as u64,
             ),
             _ => {
-                panic!("Unsupported load balancing strategy: '{}' - Defined in proxy processor: {}", self.load_balancing_strategy, self.id);
+                error!("Unsupported load balancing strategy: '{}' in proxy processor: {}. Falling back to round_robin.", self.load_balancing_strategy, self.id);
+                RoundRobin::new(
+                    self.upstream_servers.clone(),
+                    self.health_check_path.clone(),
+                    self.health_check_timeout_seconds as u64,
+                    self.health_check_interval_seconds as u64,
+                )
             }
         }
     }
@@ -209,8 +233,12 @@ impl ProcessorTrait for ProxyProcessor {
             }
         }
 
-        if self.timeout_seconds < 1 {
+        if self.timeout_seconds == 0 {
             errors.push("Timeout seconds must be greater than zero.".to_string());
+        }
+
+        if !self.forced_host_header.is_empty() && HeaderValue::from_str(&self.forced_host_header).is_err() {
+            errors.push(format!("Forced host header '{}' contains invalid characters. It must be a valid HTTP header value.", self.forced_host_header));
         }
 
         if !self.health_check_path.is_empty() {
@@ -218,11 +246,11 @@ impl ProcessorTrait for ProxyProcessor {
                 errors.push("Health check path must start with '/', such as '/health' or '/healthcheck/'.".to_string());
             }
 
-            if self.health_check_interval_seconds < 1 {
+            if self.health_check_interval_seconds == 0 {
                 errors.push("Health check interval seconds must be greater than zero.".to_string());
             }
 
-            if self.health_check_timeout_seconds < 1 {
+            if self.health_check_timeout_seconds == 0 {
                 errors.push("Health check timeout seconds must be greater than zero.".to_string());
             }
         }
@@ -310,30 +338,36 @@ impl ProcessorTrait for ProxyProcessor {
                     // Get the upstream upgrade from the response extensions
                     let upstream_upgrade = resp.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
 
-                    if let (Some(client_upgrade), Some(upstream_upgrade)) = (client_upgrade, upstream_upgrade) {
-                        // Spawn task to bridge the connections
-                        tokio::spawn(async move {
-                            match tokio::try_join!(client_upgrade, upstream_upgrade) {
-                                Ok((client, upstream)) => {
-                                    trace!("WebSocket upgrade successful, bridging connections");
-                                    // Wrap the upgraded connections with TokioIo to make them compatible with tokio::io
-                                    let mut client = TokioIo::new(client);
-                                    let mut upstream = TokioIo::new(upstream);
-                                    match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
-                                        Ok((from_client, from_server)) => {
-                                            trace!("WebSocket closed. Client→Server: {} bytes, Server→Client: {} bytes", from_client, from_server);
-                                        }
-                                        Err(e) => {
-                                            error!("WebSocket proxy error: {}", e);
+                    match (client_upgrade, upstream_upgrade) {
+                        (Some(client_upgrade), Some(upstream_upgrade)) => {
+                            // Spawn task to bridge the connections
+                            tokio::spawn(async move {
+                                match tokio::try_join!(client_upgrade, upstream_upgrade) {
+                                    Ok((client, upstream)) => {
+                                        trace!("WebSocket upgrade successful, bridging connections");
+                                        // Wrap the upgraded connections with TokioIo to make them compatible with tokio::io
+                                        let mut client = TokioIo::new(client);
+                                        let mut upstream = TokioIo::new(upstream);
+                                        match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
+                                            Ok((from_client, from_server)) => {
+                                                trace!("WebSocket closed. Client→Server: {} bytes, Server→Client: {} bytes", from_client, from_server);
+                                            }
+                                            Err(e) => {
+                                                error!("WebSocket proxy error: {}", e);
+                                            }
                                         }
                                     }
+                                    Err(e) => {
+                                        error!("Failed to upgrade connections: {}", e);
+                                    }
                                 }
-                                Err(e) => {
-                                    error!("Failed to upgrade connections: {}", e);
-                                }
-                            }
-                        });
-                        is_websocket_upgrade = true;
+                            });
+                            is_websocket_upgrade = true;
+                        }
+                        _ => {
+                            debug!("Upstream returned HTTP 101 but WebSocket upgrade bridge could not be established (missing client or upstream upgrade handle) for proxy processor: {}", self.id);
+                            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
+                        }
                     }
                 }
 
