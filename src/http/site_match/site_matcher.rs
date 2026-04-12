@@ -1,27 +1,31 @@
-use crate::{trace, config::site::Site};
+use crate::{config::site::Site, trace};
 
-/// Find a best match site for the requested hostname, comparing case-insensitively
-/// Expect hostname to be lowercase, as we direct compare with lowercased hostnames in the site config, so we dont have to lowercase multiple times
+/// Find a best match site for the requested hostname using direct comparison.
+/// Expects hostname to already be lowercase, as site hostnames are stored lowercase
+/// to avoid repeated lowercasing on each request.
+///
+/// Match priority: exact hostname > wildcard ("*") > is_default
 pub fn find_best_match_site<'a>(sites: &'a [Site], requested_hostname: &str) -> Option<&'a Site> {
-    let mut site = sites.iter().find(|s| s.hostnames.iter().any(|h| h == requested_hostname) && s.is_enabled);
+    let mut wildcard_site: Option<&Site> = None;
+    let mut default_site: Option<&Site> = None;
 
-    // We check for star hostnames
-    if site.is_none() {
-        site = sites.iter().find(|s| s.hostnames.iter().any(|h| *h == "*") && s.is_enabled);
+    for site in sites.iter().filter(|s| s.is_enabled) {
+        if site.hostnames.iter().any(|h| h == requested_hostname) {
+            return Some(site);
+        }
+        if wildcard_site.is_none() && site.hostnames.iter().any(|h| h == "*") {
+            wildcard_site = Some(site);
+        }
+        if default_site.is_none() && site.is_default {
+            default_site = Some(site);
+        }
     }
 
-    // If we cant find a matching site, we see if there is a default one
-    if site.is_none() {
-        site = sites.iter().find(|s| s.is_default && s.is_enabled);
-    }
-
-    // If we still cant find a proper site, we return None
-    if site.is_none() {
+    let result = wildcard_site.or(default_site);
+    if result.is_none() {
         trace!("No matching site found for requested hostname: {}", requested_hostname);
-        return None;
     }
-
-    site
+    result
 }
 
 #[cfg(test)]
@@ -29,8 +33,8 @@ mod tests {
     use super::*;
     use crate::config::site::Site;
 
-    #[test]
-    fn test_site_matcher_simple() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_site_matcher_simple() {
         let mut site1 = Site::new();
         site1.hostnames = vec!["grux.eu".to_string(), "gruxi.org".to_string(), "othersite.com".to_string()];
         site1.is_default = false;
@@ -61,8 +65,8 @@ mod tests {
         assert_eq!(matched_site.id, site2.id);
     }
 
-    #[test]
-    fn test_site_matcher_partial_match() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_site_matcher_partial_match() {
         let mut site1 = Site::new();
         site1.hostnames = vec!["grux.eu".to_string(), "gruxi.org".to_string(), "othersite.com".to_string()];
         site1.is_default = false;
@@ -82,8 +86,8 @@ mod tests {
         assert_eq!(matched_site.id, site2.id);
     }
 
-    #[test]
-    fn test_site_matcher_disabled_sites() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_site_matcher_disabled_sites() {
         let mut site1 = Site::new();
         site1.hostnames = vec!["grux.eu".to_string(), "gruxi.org".to_string(), "othersite.com".to_string()];
         site1.is_default = true;
@@ -103,8 +107,8 @@ mod tests {
         assert_eq!(matched_site.id, site2.id);
     }
 
-    #[test]
-    fn test_site_matcher_default_sites() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_site_matcher_default_sites() {
         let mut site1 = Site::new();
         site1.hostnames = vec!["grux.eu".to_string(), "othersite.com".to_string()];
         site1.is_default = true;
