@@ -48,10 +48,18 @@ pub struct FileMeta {
     pub cache_control_header: Option<String>,
 }
 
+pub enum ContentResult {
+    Full { encoding: Option<String> },
+    SingleRange { content_range: String },
+    MultipartRange { content_type: String },
+    RangeNotSatisfiable,
+    Error,
+}
+
 impl FileEntry {
     /// Result type for range request handling
     /// Contains the body, encoding, optional content-range header, and status code
-    pub async fn get_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
+    pub async fn get_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, ContentResult) {
         // Check if this is a range request - clone the header value to avoid borrow issues
         let range_header_value = get_range_header(gruxi_request).and_then(|h| h.to_str().ok()).map(|s| s.to_string());
 
@@ -71,7 +79,7 @@ impl FileEntry {
     }
 
     /// Handle a range request, returning None if we should serve full content instead
-    async fn handle_range_request(&self, range_str: &str) -> Option<(BoxBody<Bytes, BodyError>, String)> {
+    async fn handle_range_request(&self, range_str: &str) -> Option<(BoxBody<Bytes, BodyError>, ContentResult)> {
         let content_length = self.meta.length;
 
         match parse_range_header(range_str) {
@@ -87,25 +95,24 @@ impl FileEntry {
                     // No satisfiable ranges - this will be handled by the caller with 416 response
                     // Return a special marker (empty body with encoding indicating unsatisfiable)
                     trace!("No satisfiable ranges found");
-                    let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                    return Some((BoxBody::new(empty), "RANGE_NOT_SATISFIABLE".to_string()));
+                    return Some((empty_body(), ContentResult::RangeNotSatisfiable));
                 }
 
                 if resolved_ranges.len() == 1 {
                     // Single range - use optimized path that avoids reading entire file
                     let (start, end) = resolved_ranges[0];
-                    return Some(self.get_single_range_content(start, end).await);
+                    Some(self.get_single_range_content(start, end).await)
                 } else {
                     // Multiple ranges - need to build multipart response
                     // For cached content, use zero-copy slicing; for uncached, read efficiently
-                    return Some(self.get_multipart_range_content(&resolved_ranges).await);
+                    Some(self.get_multipart_range_content(&resolved_ranges).await)
                 }
             }
         }
     }
 
     /// Get content for a single range request - optimized to avoid reading entire file
-    async fn get_single_range_content(&self, start: u64, end: u64) -> (BoxBody<Bytes, BodyError>, String) {
+    async fn get_single_range_content(&self, start: u64, end: u64) -> (BoxBody<Bytes, BodyError>, ContentResult) {
         let content_length = self.meta.length;
         let content_range = format_content_range(start, end, content_length);
 
@@ -119,7 +126,7 @@ impl FileEntry {
                 // Use Bytes::slice for zero-copy
                 let range_bytes = raw_content.slice(start_idx..end_idx);
                 let full_body = Full::new(range_bytes).map_err(|never| -> BodyError { match never {} });
-                return (BoxBody::new(full_body), format!("RANGE:{}", content_range));
+                return (BoxBody::new(full_body), ContentResult::SingleRange { content_range });
             }
         }
 
@@ -130,8 +137,7 @@ impl FileEntry {
                 // Seek to start position
                 if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
                     trace!("Failed to seek file {} for range: {}", self.meta.file_path, e);
-                    let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                    return (BoxBody::new(empty), String::new());
+                    return (empty_body(), ContentResult::Error);
                 }
 
                 // Read only the range
@@ -140,25 +146,23 @@ impl FileEntry {
                     Ok(_) => {
                         let range_bytes = Bytes::from(buffer);
                         let full_body = Full::new(range_bytes).map_err(|never| -> BodyError { match never {} });
-                        (BoxBody::new(full_body), format!("RANGE:{}", content_range))
+                        (BoxBody::new(full_body), ContentResult::SingleRange { content_range })
                     }
                     Err(e) => {
                         trace!("Failed to read range from file {}: {}", self.meta.file_path, e);
-                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                        (BoxBody::new(empty), String::new())
+                        (empty_body(), ContentResult::Error)
                     }
                 }
             }
             Err(e) => {
                 trace!("Failed to open file {} for range: {}", self.meta.file_path, e);
-                let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                (BoxBody::new(empty), String::new())
+                (empty_body(), ContentResult::Error)
             }
         }
     }
 
     /// Get content for multiple range requests - builds multipart response
-    async fn get_multipart_range_content(&self, resolved_ranges: &[(u64, u64)]) -> (BoxBody<Bytes, BodyError>, String) {
+    async fn get_multipart_range_content(&self, resolved_ranges: &[(u64, u64)]) -> (BoxBody<Bytes, BodyError>, ContentResult) {
         let content_length = self.meta.length;
 
         // If content is cached, use zero-copy slicing for multipart
@@ -166,7 +170,7 @@ impl FileEntry {
             let (body_bytes, content_type) = build_multipart_body(resolved_ranges, raw_content.as_ref(), &self.meta.mime_type, content_length);
             trace!("Serving {} ranges as multipart from cache", resolved_ranges.len());
             let full_body = Full::new(body_bytes).map_err(|never| -> BodyError { match never {} });
-            return (BoxBody::new(full_body), format!("MULTIPART:{}", content_type));
+            return (BoxBody::new(full_body), ContentResult::MultipartRange { content_type });
         }
 
         // For uncached files, read each range separately and build multipart
@@ -179,23 +183,20 @@ impl FileEntry {
 
                     if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
                         trace!("Failed to seek file {} for multipart range: {}", self.meta.file_path, e);
-                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                        return (BoxBody::new(empty), String::new());
+                        return (empty_body(), ContentResult::Error);
                     }
 
                     let mut buffer = vec![0u8; range_length];
                     if let Err(e) = file.read_exact(&mut buffer).await {
                         trace!("Failed to read multipart range from file {}: {}", self.meta.file_path, e);
-                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                        return (BoxBody::new(empty), String::new());
+                        return (empty_body(), ContentResult::Error);
                     }
                     range_contents.push(buffer);
                 }
             }
             Err(e) => {
                 trace!("Failed to open file {} for multipart ranges: {}", self.meta.file_path, e);
-                let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                return (BoxBody::new(empty), String::new());
+                return (empty_body(), ContentResult::Error);
             }
         }
 
@@ -204,11 +205,11 @@ impl FileEntry {
 
         trace!("Serving {} ranges as multipart from disk", resolved_ranges.len());
         let full_body = Full::new(body_bytes).map_err(|never| -> BodyError { match never {} });
-        (BoxBody::new(full_body), format!("MULTIPART:{}", content_type))
+        (BoxBody::new(full_body), ContentResult::MultipartRange { content_type })
     }
 
     /// Get the full content stream
-    async fn get_full_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, String) {
+    async fn get_full_content_stream(&self, gruxi_request: &mut GruxiRequest) -> (BoxBody<Bytes, BodyError>, ContentResult) {
         if self.content.raw.is_none() && self.content.gzip.is_none() {
             trace!("No cached file data content is present, so we return from the filesystem instead (full if small and stream if big)");
 
@@ -219,12 +220,11 @@ impl FileEntry {
                     Ok(bytes) => bytes,
                     Err(e) => {
                         trace!("Failed to read file {} for full content: {}", self.meta.file_path, e);
-                        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                        return (BoxBody::new(empty), String::new());
+                        return (empty_body(), ContentResult::Error);
                     }
                 };
                 let full_body = Full::new(Bytes::from(file_bytes)).map_err(|never| -> BodyError { match never {} });
-                return (BoxBody::new(full_body), String::new());
+                return (BoxBody::new(full_body), ContentResult::Full { encoding: None });
             }
 
             // Otherwise we stream, to maintain low memory usage by not loading the full file into memory
@@ -232,14 +232,13 @@ impl FileEntry {
                 Ok(f) => f,
                 Err(e) => {
                     trace!("Failed to open file {} for streaming: {}", self.meta.file_path, e);
-                    let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-                    return (BoxBody::new(empty), String::new());
+                    return (empty_body(), ContentResult::Error);
                 }
             };
 
             let stream = ReaderStream::new(file).map_ok(Frame::data);
             let streambody = http_body_util::BodyExt::map_err(StreamBody::new(stream), box_err);
-            return (BoxBody::new(streambody), String::new());
+            return (BoxBody::new(streambody), ContentResult::Full { encoding: None });
         }
 
         // We prefer gzip if the client accepts it
@@ -249,7 +248,7 @@ impl FileEntry {
             trace!("Serving gzipped content from cache");
             let gzipped_bytes = gzip_content.clone();
             let boxbody = BoxBody::new(Full::new(gzipped_bytes).map_err(|never| -> BodyError { match never {} }));
-            return (boxbody, "gzip".to_string());
+            return (boxbody, ContentResult::Full { encoding: Some("gzip".to_string()) });
         }
 
         // Otherwise serve raw content
@@ -257,11 +256,14 @@ impl FileEntry {
             trace!("Serving raw content from cache");
             let raw_bytes = raw_content.clone();
             let boxbody = BoxBody::new(Full::new(raw_bytes).map_err(|never| -> BodyError { match never {} }));
-            return (boxbody, "".to_string());
+            return (boxbody, ContentResult::Full { encoding: None });
         }
 
         // If nothing falls to taste, return empty
-        let empty = Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} });
-        (BoxBody::new(empty), String::new())
+        (empty_body(), ContentResult::Error)
     }
+}
+
+fn empty_body() -> BoxBody<Bytes, BodyError> {
+    BoxBody::new(Full::new(Bytes::new()).map_err(|never| -> BodyError { match never {} }))
 }

@@ -1,4 +1,5 @@
 use crate::error;
+use crate::file::file_entry::ContentResult;
 use crate::http::http_util::trailing_slash_check;
 use crate::{
     config::site::Site,
@@ -184,7 +185,10 @@ impl ProcessorTrait for StaticFileProcessor {
                     }
                 };
             } else {
-                trace!("File does not exist and no rewrite function is applied: {}, so we cannot handle with static file processor", normalized_path.get_full_path());
+                trace!(
+                    "File does not exist and no rewrite function is applied: {}, so we cannot handle with static file processor",
+                    normalized_path.get_full_path()
+                );
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         }
@@ -241,31 +245,39 @@ impl ProcessorTrait for StaticFileProcessor {
         }
 
         // Get a stream of the file content, based on the accept-encoding header and range requests
-        let (stream, encoding_info) = file_data.get_content_stream(gruxi_request).await;
+        let (stream, content_result) = file_data.get_content_stream(gruxi_request).await;
 
         // Determine response status and handle range-specific logic
-        let (status_code, content_type_override, content_range_header) = if encoding_info.starts_with("RANGE:") {
-            // Single range - 206 Partial Content
-            let content_range = encoding_info.strip_prefix("RANGE:").unwrap_or("");
-            (206, None, Some(content_range.to_string()))
-        } else if encoding_info.starts_with("MULTIPART:") {
-            // Multiple ranges - 206 Partial Content with multipart/byteranges
-            let multipart_content_type = encoding_info.strip_prefix("MULTIPART:").unwrap_or("");
-            (206, Some(multipart_content_type.to_string()), None)
-        } else if encoding_info == "RANGE_NOT_SATISFIABLE" {
-            // 416 Range Not Satisfiable
-            let mut response = GruxiResponse::new_empty_with_status(416);
-            // Add Content-Range header with unsatisfiable indicator
-            let content_range = format_content_range_unsatisfiable(file_data.meta.length);
-            if let Ok(header_value) = HeaderValue::from_str(&content_range) {
-                response.headers_mut().insert(hyper::header::CONTENT_RANGE, header_value);
+        let (status_code, content_type_override, content_range_header, encoding) = match content_result {
+            ContentResult::SingleRange { content_range } => {
+                // Single range - 206 Partial Content
+                (206, None, Some(content_range), None)
             }
-            // Add Accept-Ranges header
-            response.headers_mut().insert(hyper::header::ACCEPT_RANGES, accept_ranges_bytes());
-            return Ok(response);
-        } else {
-            // Normal 200 OK response
-            (200, None, None)
+            ContentResult::MultipartRange { content_type } => {
+                // Multiple ranges - 206 Partial Content with multipart/byteranges
+                (206, Some(content_type), None, None)
+            }
+            ContentResult::RangeNotSatisfiable => {
+                // 416 Range Not Satisfiable
+                let mut response = GruxiResponse::new_empty_with_status(416);
+                // Add Content-Range header with unsatisfiable indicator
+                let content_range = format_content_range_unsatisfiable(file_data.meta.length);
+                if let Ok(header_value) = HeaderValue::from_str(&content_range) {
+                    response.headers_mut().insert(hyper::header::CONTENT_RANGE, header_value);
+                }
+                // Add Accept-Ranges header
+                response.headers_mut().insert(hyper::header::ACCEPT_RANGES, accept_ranges_bytes());
+                return Ok(response);
+            }
+            ContentResult::Full { encoding } => {
+                // Normal 200 OK response
+                (200, None, None, encoding)
+            }
+            ContentResult::Error => {
+                // If there was an error getting the content, we return a 404 Not Found to avoid revealing information
+                trace!("Error getting content stream for file: {}", normalized_path.get_full_path());
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
+            }
         };
 
         let mut response = GruxiResponse::new_with_body(status_code, stream);
@@ -286,16 +298,22 @@ impl ProcessorTrait for StaticFileProcessor {
 
         // Set Content-Range header for single range responses
         if let Some(content_range) = content_range_header
-            && let Ok(header_value) = HeaderValue::from_str(&content_range) {
-                response.headers_mut().insert(hyper::header::CONTENT_RANGE, header_value);
-            }
+            && let Ok(header_value) = HeaderValue::from_str(&content_range)
+        {
+            response.headers_mut().insert(hyper::header::CONTENT_RANGE, header_value);
+        }
 
         // Set content type (override for multipart ranges)
         let content_type = content_type_override.as_deref().unwrap_or(&file_data.meta.mime_type);
         let header_value = HeaderValue::from_str(content_type);
         match header_value {
             Err(e) => {
-                warn!("Failed to set content type header for file: {} with mime type: {}. Error: {}", normalized_path.get_full_path(), content_type, e);
+                warn!(
+                    "Failed to set content type header for file: {} with mime type: {}. Error: {}",
+                    normalized_path.get_full_path(),
+                    content_type,
+                    e
+                );
             }
             Ok(value) => {
                 response.headers_mut().insert(hyper::header::CONTENT_TYPE, value);
@@ -303,15 +321,16 @@ impl ProcessorTrait for StaticFileProcessor {
         }
 
         // Set content encoding if gzipped (only for non-range requests)
-        let compression = if encoding_info == "gzip" { "gzip" } else { "" };
-        if compression == "gzip" {
-            let header_value = HeaderValue::from_str("gzip");
-            match header_value {
-                Err(e) => {
-                    warn!("Failed to set content encoding header for file: {} with gzip. Error: {}", normalized_path.get_full_path(), e);
-                }
-                Ok(value) => {
-                    response.headers_mut().insert(hyper::header::CONTENT_ENCODING, value);
+        if let Some(encoding) = encoding {
+            if encoding == "gzip" {
+                let header_value = HeaderValue::from_str("gzip");
+                match header_value {
+                    Err(e) => {
+                        warn!("Failed to set content encoding header for file: {} with gzip. Error: {}", normalized_path.get_full_path(), e);
+                    }
+                    Ok(value) => {
+                        response.headers_mut().insert(hyper::header::CONTENT_ENCODING, value);
+                    }
                 }
             }
         }
@@ -323,13 +342,23 @@ impl ProcessorTrait for StaticFileProcessor {
         StaticFileProcessor::add_caching_headers(file_data.meta.etag_header.as_ref(), hyper::header::ETAG, &mut response, normalized_path.get_full_path());
 
         // Set Last-Modified header, if available
-        StaticFileProcessor::add_caching_headers(file_data.meta.last_modified_header.as_ref(), hyper::header::LAST_MODIFIED, &mut response, normalized_path.get_full_path());
+        StaticFileProcessor::add_caching_headers(
+            file_data.meta.last_modified_header.as_ref(),
+            hyper::header::LAST_MODIFIED,
+            &mut response,
+            normalized_path.get_full_path(),
+        );
 
         // Set Expires header, if available
         StaticFileProcessor::add_caching_headers(file_data.meta.expires_header.as_ref(), hyper::header::EXPIRES, &mut response, normalized_path.get_full_path());
 
         // Set cache-control header, if available
-        StaticFileProcessor::add_caching_headers(file_data.meta.cache_control_header.as_ref(), hyper::header::CACHE_CONTROL, &mut response, normalized_path.get_full_path());
+        StaticFileProcessor::add_caching_headers(
+            file_data.meta.cache_control_header.as_ref(),
+            hyper::header::CACHE_CONTROL,
+            &mut response,
+            normalized_path.get_full_path(),
+        );
 
         Ok(response)
     }
