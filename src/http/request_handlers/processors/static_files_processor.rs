@@ -139,11 +139,6 @@ impl ProcessorTrait for StaticFileProcessor {
         let file_reader_cache = connection_context.running_state.get_file_reader_cache();
 
         let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-        if let Err(e) = file_data_result {
-            // If we fail to get the file, return cant/wont handle
-            trace!("We could not get data on the file: {}, so we cannot handle with static file processor", e);
-            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
-        }
         let mut file_data = match file_data_result {
             Ok(data) => data,
             Err(e) => {
@@ -202,11 +197,11 @@ impl ProcessorTrait for StaticFileProcessor {
             let mut found_index = false;
             for file in &self.web_root_index_file_list {
                 // Get the file, if it exists
-                let normalized_path_result = NormalizedPath::new(normalized_path.get_web_root(), file);
+                let normalized_path_result = NormalizedPath::new(normalized_path.get_full_path(), file);
                 normalized_path = match normalized_path_result {
                     Ok(path) => path,
                     Err(_) => {
-                        trace!("Failed to normalize path: {} and file: {}", normalized_path.get_web_root(), file);
+                        trace!("Failed to normalize path: {} and file: {}", normalized_path.get_full_path(), file);
                         continue;
                     }
                 };
