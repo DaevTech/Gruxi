@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 use tokio::{
     process::{Child, Command},
@@ -28,7 +30,7 @@ pub struct PhpCgi {
     #[serde(skip)]
     restart_count: u32,
     #[serde(skip)]
-    assigned_port: Option<u16>,
+    shared_port: Arc<AtomicU16>,
     #[serde(skip)]
     port_manager: PortManager,
     #[serde(skip, default = "Instant::now")]
@@ -48,7 +50,7 @@ impl PhpCgi {
             executable,
             process: None,
             restart_count: 0,
-            assigned_port: None,
+            shared_port: Arc::new(AtomicU16::new(0)),
             port_manager,
             last_activity: Instant::now(),
         }
@@ -99,11 +101,15 @@ impl PhpCgi {
         if self.concurrent_threads == 0 {
             let cpus = num_cpus::get_physical();
             cpus as u32
-        } else if self.concurrent_threads < 1 {
-            1
         } else {
             self.concurrent_threads
         }
+    }
+
+    /// Returns a shared reference to the port atomic. The handler can hold this
+    /// Arc and always read the current port even after process restarts.
+    pub fn get_shared_port(&self) -> Arc<AtomicU16> {
+        self.shared_port.clone()
     }
 
     // Start the PHP-CGI process and returns the assigned port
@@ -113,18 +119,13 @@ impl PhpCgi {
         }
 
         // Allocate a port if we don't have one
-        if self.assigned_port.is_none() {
-            self.assigned_port = self.port_manager.allocate_port("php-main-process".to_string()).await;
-            if self.assigned_port.is_none() {
-                return Err("Failed to allocate port for PHP-CGI process".to_string());
+        if self.shared_port.load(Ordering::SeqCst) == 0 {
+            match self.port_manager.allocate_port("php-main-process".to_string()).await {
+                Some(p) => self.shared_port.store(p, Ordering::SeqCst),
+                None => return Err("Failed to allocate port for PHP-CGI process".to_string()),
             }
         }
-        let port = match self.assigned_port {
-            Some(p) => p,
-            None => {
-                return Err("Assigned port is missing after allocation".to_string());
-            }
-        };
+        let port = self.shared_port.load(Ordering::SeqCst);
 
         let mut cmd = Command::new(&self.executable);
         cmd.kill_on_drop(true);
@@ -146,9 +147,10 @@ impl PhpCgi {
             Err(e) => {
                 error!("Failed to start PHP-CGI process: {}", e);
                 // Release the port if process failed to start
-                if let Some(port) = self.assigned_port {
+                let port = self.shared_port.load(Ordering::SeqCst);
+                if port != 0 {
                     self.port_manager.release_port(port).await;
-                    self.assigned_port = None;
+                    self.shared_port.store(0, Ordering::SeqCst);
                 }
                 return Err(format!("Failed to start PHP-CGI: {}", e));
             }
@@ -200,7 +202,7 @@ impl PhpCgi {
     }
 
     async fn is_alive(&mut self) -> bool {
-        if let Some(ref mut process) = self.process.as_mut() {
+        if let Some(process) = self.process.as_mut() {
             match process.try_wait() {
                 Ok(Some(_)) => {
                     warn!("PHP-CGI process has exited");
@@ -220,20 +222,20 @@ impl PhpCgi {
     }
 
     async fn send_keep_alive(&mut self) -> bool {
-        if let Some(port) = self.assigned_port {
-            let ip_and_port = format!("127.0.0.1:{}", port);
-            match FastCgi::send_fastcgi_keep_alive(&ip_and_port).await {
-                Ok(_) => {
-                    self.last_activity = Instant::now();
-                    true
-                }
-                Err(e) => {
-                    error!("Keep-alive FastCGI request failed: {}", e);
-                    false
-                }
+        let port = self.shared_port.load(Ordering::SeqCst);
+        if port == 0 {
+            return false;
+        }
+        let ip_and_port = format!("127.0.0.1:{}", port);
+        match FastCgi::send_fastcgi_keep_alive(&ip_and_port).await {
+            Ok(_) => {
+                self.last_activity = Instant::now();
+                true
             }
-        } else {
-            false
+            Err(e) => {
+                error!("Keep-alive FastCGI request failed: {}", e);
+                false
+            }
         }
     }
 
@@ -266,8 +268,10 @@ impl PhpCgi {
         }
 
         // Release the assigned port
-        if let Some(port) = self.assigned_port.take() {
+        let port = self.shared_port.load(Ordering::SeqCst);
+        if port != 0 {
             self.port_manager.release_port(port).await;
+            self.shared_port.store(0, Ordering::SeqCst);
         }
     }
 }

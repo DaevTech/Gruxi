@@ -1,4 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
+use std::sync::atomic::{AtomicU16, Ordering};
 use crate::error;
 use tokio::sync::Semaphore;
 
@@ -7,7 +8,7 @@ use crate::{
 };
 
 pub struct ExternalSystemHandler {
-    pub php_cgi_id_to_port: HashMap<String, u16>,
+    pub php_cgi_id_to_port: HashMap<String, Arc<AtomicU16>>,
     pub connection_semaphore: HashMap<String, Arc<Semaphore>>,
 }
 
@@ -31,22 +32,17 @@ impl ExternalSystemHandler {
                 php_cgi_config.executable.clone(),
             );
 
-            let port_result = new_php_cgi.start().await;
-            let port = match port_result {
-                Ok(p) => p,
-                Err(e) => {
-                    error!("Failed to start PHP-CGI handler with ID: {}: {}", php_cgi_config.id, e);
-                    0
-                }
-            };
+            // Get a shared reference to the port before starting — this Arc stays
+            // in sync even if the monitoring thread restarts the process on a new port.
+            let shared_port = new_php_cgi.get_shared_port();
 
-            // If we couldn't start, skip it
-            if port == 0 {
+            if let Err(e) = new_php_cgi.start().await {
+                error!("Failed to start PHP-CGI handler with ID: {}: {}", php_cgi_config.id, e);
                 continue;
             }
 
-            // We save the id matched to port for reference
-            php_cgi_id_to_port.insert(php_cgi_config.id.clone(), port);
+            // We save the shared port reference for this PHP-CGI instance
+            php_cgi_id_to_port.insert(php_cgi_config.id.clone(), shared_port);
 
             // Create a connection semaphore for this PHP-CGI instance
             let connection_semaphore_value = Arc::new(Semaphore::new(php_cgi_config.get_max_children_processes() as usize));
@@ -65,7 +61,11 @@ impl ExternalSystemHandler {
     }
 
     pub fn get_port_for_php_cgi(&self, php_cgi_id: &str) -> Result<u16, GruxiError> {
-        self.php_cgi_id_to_port.get(php_cgi_id).cloned().ok_or(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("")))
+        self.php_cgi_id_to_port
+            .get(php_cgi_id)
+            .map(|p| p.load(Ordering::SeqCst))
+            .filter(|&p| p != 0)
+            .ok_or(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("")))
     }
 
     pub fn get_connection_semaphore(&self, external_system_id: &str) -> Option<Arc<Semaphore>> {
