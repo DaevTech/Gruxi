@@ -130,9 +130,9 @@ impl ProxyProcessor {
         let mut hop_by_hop_headers = crate::http::http_util::get_list_of_hop_by_hop_headers(is_websocket_upgrade);
 
         // Parse the Connection header for additional hop-by-hop header names (RFC 2616 §14.10)
-        if !is_websocket_upgrade {
-            if let Some(connection_header) = response.headers().get("Connection") {
-                if let Ok(connection_header_str) = connection_header.to_str() {
+        if !is_websocket_upgrade
+            && let Some(connection_header) = response.headers().get("Connection")
+                && let Ok(connection_header_str) = connection_header.to_str() {
                     for token in connection_header_str.split(',') {
                         let token_trimmed = token.trim();
                         if !token_trimmed.is_empty() {
@@ -140,8 +140,6 @@ impl ProxyProcessor {
                         }
                     }
                 }
-            }
-        }
 
         for header in &hop_by_hop_headers {
             response.headers_mut().remove(header);

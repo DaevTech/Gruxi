@@ -321,8 +321,8 @@ impl ProcessorTrait for StaticFileProcessor {
         }
 
         // Set content encoding if gzipped (only for non-range requests)
-        if let Some(encoding) = encoding {
-            if encoding == "gzip" {
+        if let Some(encoding) = encoding
+            && encoding == "gzip" {
                 let header_value = HeaderValue::from_str("gzip");
                 match header_value {
                     Err(e) => {
@@ -333,7 +333,6 @@ impl ProcessorTrait for StaticFileProcessor {
                     }
                 }
             }
-        }
 
         // Always add Accept-Ranges header to indicate range request support
         response.headers_mut().insert(hyper::header::ACCEPT_RANGES, accept_ranges_bytes());
