@@ -1,7 +1,7 @@
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::core::triggers::get_trigger_handler;
 use crate::file::app_paths::get_app_paths;
-use crate::{debug, trace};
+use crate::{debug, trace, warn};
 use rustls_acme::caches::DirCache;
 use rustls_acme::{AcmeConfig, ResolvesServerCertAcme};
 use std::collections::{BTreeSet, HashSet};
@@ -186,20 +186,16 @@ fn spawn_acme_polling_task(mut acme_state: rustls_acme::AcmeState<Box<dyn std::f
     tokio::spawn(async move {
         trace!("ACME background polling task started");
 
-        // Get shutdown and stop_services triggers
+        // Get shutdown and stop_services triggers using async-safe access
         let triggers = get_trigger_handler();
         let shutdown_token = triggers
-            .get_trigger("shutdown")
-            .map(|t| {
-                // We need to clone the token from inside the RwLock
-                // Use try_read to avoid blocking, fall back to a new token if locked
-                t.try_read().map(|guard| guard.clone()).unwrap_or_else(|_| CancellationToken::new())
-            })
+            .get_token("shutdown")
+            .await
             .unwrap_or_default();
 
         let stop_services_token = triggers
-            .get_trigger("stop_services")
-            .map(|t| t.try_read().map(|guard| guard.clone()).unwrap_or_else(|_| CancellationToken::new()))
+            .get_token("stop_services")
+            .await
             .unwrap_or_default();
 
         // Poll the ACME state to handle certificate acquisition and renewal
@@ -227,7 +223,7 @@ fn spawn_acme_polling_task(mut acme_state: rustls_acme::AcmeState<Box<dyn std::f
                             trace!("ACME event: {:?}", ok);
                         }
                         Some(Err(err)) => {
-                            debug!("ACME error: {:?}", err);
+                            warn!("ACME error: {:?}", err);
                         }
                         None => {
                             // Stream ended

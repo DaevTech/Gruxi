@@ -2,7 +2,6 @@ use crate::core::running_state_manager::get_running_state_manager;
 use crate::file::app_paths::get_app_paths;
 use crate::tls::shared_acme_manager::{get_shared_acme_domains, get_shared_acme_manager_async};
 use crate::{debug, error, warn};
-use rand;
 use rustls::crypto::aws_lc_rs;
 use rustls_acme::ResolvesServerCertAcme;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -28,11 +27,11 @@ pub async fn persist_generated_tls_for_site(site: &Site, cert_pem: &str, key_pem
     let dir = app_paths.certificates_dir.display().to_string();
     fs::create_dir_all(&dir).await.map_err(|e| format!("Failed to create certs directory '{}': {}", dir, e))?;
 
-    // Generate a random number for this cert
-    let random_number: u32 = rand::random();
+    // Generate a unique ID for this cert
+    let unique_id = uuid::Uuid::new_v4();
 
-    let cert_path = format!("{}/{}.crt.pem", dir, random_number);
-    let key_path = format!("{}/{}.key.pem", dir, random_number);
+    let cert_path = format!("{}/{}.crt.pem", dir, unique_id);
+    let key_path = format!("{}/{}.key.pem", dir, unique_id);
 
     // Write files atomically: write to temp then rename
     let cert_tmp = format!("{}.tmp", &cert_path);
@@ -59,30 +58,31 @@ pub async fn persist_generated_tls_for_site(site: &Site, cert_pem: &str, key_pem
     // Update configuration in DB so future runs use persisted files
     let connection = get_database_connection()?;
 
-    // Update the fields in the database directly
+    // Update the fields in the database directly using prepared statements
     if is_admin {
         // For admin portal, update the configuration table
-        let sql_update = format!(
-            "UPDATE server_settings SET setting_value = '{}' WHERE setting_key = 'admin_portal_tls_certificate_path';",
-            cert_path.clone()
-        );
-        connection
-            .execute(sql_update.as_str())
-            .map_err(|e| format!("Failed to update admin portal TLS paths in database: {}", e))?;
-        let sql_update = format!("UPDATE server_settings SET setting_value = '{}' WHERE setting_key = 'admin_portal_tls_key_path';", key_path.clone());
-        connection
-            .execute(sql_update.as_str())
-            .map_err(|e| format!("Failed to update admin portal TLS paths in database: {}", e))?;
+        let mut stmt = connection
+            .prepare("UPDATE server_settings SET setting_value = ? WHERE setting_key = 'admin_portal_tls_certificate_path'")
+            .map_err(|e| format!("Failed to prepare admin cert path update: {}", e))?;
+        stmt.bind((1, cert_path.as_str())).map_err(|e| format!("Failed to bind cert path: {}", e))?;
+        stmt.next().map_err(|e| format!("Failed to update admin portal TLS cert path in database: {}", e))?;
+
+        let mut stmt = connection
+            .prepare("UPDATE server_settings SET setting_value = ? WHERE setting_key = 'admin_portal_tls_key_path'")
+            .map_err(|e| format!("Failed to prepare admin key path update: {}", e))?;
+        stmt.bind((1, key_path.as_str())).map_err(|e| format!("Failed to bind key path: {}", e))?;
+        stmt.next().map_err(|e| format!("Failed to update admin portal TLS key path in database: {}", e))?;
+
         return Ok((cert_path, key_path));
     } else {
         // For regular site, update the sites table
-        let sql_update = format!(
-            "UPDATE sites SET tls_cert_path = '{}', tls_key_path = '{}' WHERE id = '{}';",
-            cert_path.clone(),
-            key_path.clone(),
-            site.id
-        );
-        connection.execute(sql_update.as_str()).map_err(|e| format!("Failed to update site TLS paths in database: {}", e))?;
+        let mut stmt = connection
+            .prepare("UPDATE sites SET tls_cert_path = ?, tls_key_path = ? WHERE id = ?")
+            .map_err(|e| format!("Failed to prepare site TLS path update: {}", e))?;
+        stmt.bind((1, cert_path.as_str())).map_err(|e| format!("Failed to bind cert path: {}", e))?;
+        stmt.bind((2, key_path.as_str())).map_err(|e| format!("Failed to bind key path: {}", e))?;
+        stmt.bind((3, site.id.as_str())).map_err(|e| format!("Failed to bind site id: {}", e))?;
+        stmt.next().map_err(|e| format!("Failed to update site TLS paths in database: {}", e))?;
     }
 
     Ok((cert_path, key_path))
@@ -445,6 +445,10 @@ fn get_certificates_from_config(site: &Site) -> Option<(Vec<CertificateDer<'stat
 
     let certs_result: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_cursor).collect();
     let cert_chain = match certs_result {
+        Ok(certs) if certs.is_empty() => {
+            warn!("Site: '{}' Certificate content contains no valid certificates", site.id);
+            return None;
+        }
         Ok(certs) => certs,
         Err(e) => {
             warn!("Site: '{}' Failed to parse TLS cert PEM content: {}", site.id, e);
@@ -513,6 +517,10 @@ fn get_certificates_from_disk(site: &Site) -> Option<(Vec<CertificateDer<'static
 
     let certs_result: Result<Vec<CertificateDer<'static>>, _> = rustls_pemfile::certs(&mut cert_reader).collect();
     let cert_chain = match certs_result {
+        Ok(certs) if certs.is_empty() => {
+            warn!("Site: '{}' Certificate file '{}' contains no valid certificates", site.id, site.tls_cert_path);
+            return None;
+        }
         Ok(certs) => certs,
         Err(e) => {
             warn!("Site: '{}' Failed to parse TLS cert file '{}': {}", site.id, site.tls_cert_path, e);
