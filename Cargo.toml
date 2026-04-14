@@ -2,7 +2,7 @@
 name = "gruxi"
 homepage = "https://gruxi.org"
 description = "High‑performance web server"
-version = "0.6.0"
+version = "1.0.0"
 license = "MIT"
 edition = "2024"
 
@@ -118,6 +118,6 @@ post_install_script = "/usr/share/gruxi/rpm/postinst"
 shadow-utils = "*"
 
 
-#[[bench]]
-#name = "gruxi"
-#harness = false
+[[bench]]
+name = "gruxi"
+harness = false

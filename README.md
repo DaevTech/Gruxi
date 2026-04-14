@@ -1,6 +1,6 @@
 <img src="https://github.com/DaevTech/Gruxi/blob/main/assets/github-banner.png" alt="Gruxi Banner">
 
-# Gruxi — High‑performance web server
+# Gruxi
 
 Gruxi is a web server focused on **high performance**, **operational simplicity**, and **predictable behavior**. It is designed to serve as a reliable foundation for modern web applications without exposing users to excessive configuration complexity.
 
@@ -9,14 +9,6 @@ The project is built on practical experience from decades of operating and maint
 Gruxi is actively developed and tested. New features and improvements are released continuously once they meet stability and quality requirements.
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
-
-
-## Project status
-
-**Status:** Active development
-
-Gruxi is usable today, but it has not yet reached a 1.0 release. Core functionality is stable, while configuration formats and internal APIs may still evolve. Backward‑incompatible changes may occur prior to 1.0.
-
 
 ## Features
 
@@ -104,7 +96,7 @@ The following section documents **performance characteristics** of Gruxi under c
 ### Benchmark setup
 
 * Tooling: Oha ([https://github.com/hatoo/oha](https://github.com/hatoo/oha))
-* Tested version: 0.5.0
+* Tested version: 1.0.0
 * TLS: Disabled (to focus on raw request handling)
 * File cache: Enabled
 * Content type: Static file (default index.html for Gruxi)

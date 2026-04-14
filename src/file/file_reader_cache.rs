@@ -25,27 +25,27 @@ use tokio::{
 
 pub struct FileReaderCache {
     // Normal content cache
-    pub(crate) cache: Arc<DashMap<String, Arc<FileEntry>>>,
-    pub(crate) cache_max_capacity: u64,
+    pub cache: Arc<DashMap<String, Arc<FileEntry>>>,
+    pub cache_max_capacity: u64,
 
     // 404 cache
-    pub(crate) cache_404: Arc<DashMap<String, Instant>>,
-    pub(crate) cache_404_max_size: u64,
+    pub cache_404: Arc<DashMap<String, Instant>>,
+    pub cache_404_max_size: u64,
 
     // General cache settings
-    pub(crate) is_caching_enabled: bool,
-    pub(crate) cached_items_last_checked: Arc<DashMap<String, (Instant, Instant, SystemTime)>>, // key:filepath, value:(added time, last checked time, last modified time)
-    pub(crate) max_file_size: u64,
+    pub is_caching_enabled: bool,
+    pub cached_items_last_checked: Arc<DashMap<String, (Instant, Instant, SystemTime)>>, // key:filepath, value:(added time, last checked time, last modified time)
+    pub max_file_size: u64,
 
     // Compression related
-    pub(crate) gzip_enabled: bool,
-    pub(crate) compressible_content_types: Vec<String>,
+    pub gzip_enabled: bool,
+    pub compressible_content_types: Vec<String>,
 
     // Caching related headers
-    pub(crate) etag_enabled: bool,
-    pub(crate) last_modified_header_enabled: bool,
-    pub(crate) expires_header_enabled: bool,
-    pub(crate) cache_control_header_enabled: bool,
+    pub etag_enabled: bool,
+    pub last_modified_header_enabled: bool,
+    pub expires_header_enabled: bool,
+    pub cache_control_header_enabled: bool,
 }
 
 
