@@ -32,7 +32,7 @@ impl AccessLogBuffer {
 
         // Have a fallback log path in case it could not be resolved
         let app_paths = get_app_paths();
-        let default_log_path_result = NormalizedPath::new(&app_paths.logs_dir.display().to_string(), "");
+        let default_log_path_result = NormalizedPath::new(&app_paths.logs_dir.display().to_string(), "", true);
         let mut default_log_available = true;
         let default_log_path = match default_log_path_result {
             Ok(norm) => norm.get_full_path().to_string(),
@@ -57,10 +57,10 @@ impl AccessLogBuffer {
             let test_path = Path::new(&site.access_log_file);
             let log_file_path_result = if test_path.is_absolute() {
                 // Absolute path
-                NormalizedPath::new(&site.access_log_file, "")
+                NormalizedPath::new(&site.access_log_file, "", true)
             } else {
                 // Relative path, so we add the logs directory in front of it
-                NormalizedPath::new(&app_paths.logs_dir.display().to_string(), &site.access_log_file)
+                NormalizedPath::new(&app_paths.logs_dir.display().to_string(), &site.access_log_file, true)
             };
 
             let log_file_path = match log_file_path_result {

@@ -44,17 +44,17 @@ mod tests {
 
         let blocked_file_patterns = &config.core.server_settings.blocked_file_patterns;
 
-        assert!(check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.html").unwrap(), blocked_file_patterns).await);
-        assert!(check_path_secure("/var/www", &NormalizedPath::new("/var/www", "styles.css").unwrap(), blocked_file_patterns).await);
-        assert!(check_path_secure("/var/www", &NormalizedPath::new("/var/www/mysubdir", "styles.css").unwrap(), blocked_file_patterns).await);
+        assert!(check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.html", true).unwrap(), blocked_file_patterns).await);
+        assert!(check_path_secure("/var/www", &NormalizedPath::new("/var/www", "styles.css", true).unwrap(), blocked_file_patterns).await);
+        assert!(check_path_secure("/var/www", &NormalizedPath::new("/var/www/mysubdir", "styles.css", true).unwrap(), blocked_file_patterns).await);
 
-        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.php").unwrap(), blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var", "index.html").unwrap(), blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www/html", &NormalizedPath::new("/var/www", "index.php").unwrap(), blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www/html", &NormalizedPath::new("/", "index.php").unwrap(), blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www/html", &NormalizedPath::new("/", "etc/passwd").unwrap(), blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.key").unwrap(), blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.pem").unwrap(), blocked_file_patterns).await);
-        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www-evil", "passwd").unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.php", true).unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var", "index.html", true).unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www/html", &NormalizedPath::new("/var/www", "index.php", true).unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www/html", &NormalizedPath::new("/", "index.php", true).unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www/html", &NormalizedPath::new("/", "etc/passwd", true).unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.key", true).unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www", "index.pem", true).unwrap(), blocked_file_patterns).await);
+        assert!(!check_path_secure("/var/www", &NormalizedPath::new("/var/www-evil", "passwd", true).unwrap(), blocked_file_patterns).await);
     }
 }

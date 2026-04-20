@@ -582,10 +582,10 @@ mod tests {
 
         let processor_data = PhpProcessorFastCgiData {
             connect_ip_and_port: String::new(),
-            script_file: NormalizedPath::new("D:/websites/test1/public", "/index.php").unwrap(),
+            script_file: NormalizedPath::new("D:/websites/test1/public", "/index.php", true).unwrap(),
             uri_is_a_dir_with_index_file_inside: false,
-            local_web_root: NormalizedPath::new("D:/websites/test1/public", "").unwrap(),
-            fastcgi_web_root: NormalizedPath::new("", "").unwrap(),
+            local_web_root: NormalizedPath::new("D:/websites/test1/public", "", true).unwrap(),
+            fastcgi_web_root: NormalizedPath::new("", "", true).unwrap(),
             server_software_spoof: String::new(),
         };
 

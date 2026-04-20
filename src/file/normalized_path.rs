@@ -1,15 +1,10 @@
-use std::{
-    env,
-    path::{Path, PathBuf},
-};
-
 use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
 use urlencoding::decode;
 
 use crate::{
     debug,
-    error::{gruxi_error::GruxiError, gruxi_error_enums::GruxiErrorKind},
+    error::{gruxi_error::GruxiError, gruxi_error_enums::GruxiErrorKind}, file::app_paths::get_app_paths,
 };
 
 #[derive(Clone, Debug)]
@@ -26,21 +21,26 @@ const RESERVED_FILENAMES: [&str; 22] = [
 impl NormalizedPath {
     /// Get a new NormalizedPath instance, based on a trusted web_root and a user-supplied path.
     /// We expect web_root to be already sanitized and validated
-    pub fn new(web_root: &str, path: &str) -> Result<Self, GruxiError> {
+    pub fn new(web_root: &str, path: &str, is_path_safe: bool) -> Result<Self, GruxiError> {
         let mut normalized_path = NormalizedPath {
             web_root: web_root.trim().to_string(),
             path: path.trim().to_string(),
             full_path: "".to_string(),
         };
 
-        normalized_path.process()?;
+        normalized_path.process(is_path_safe)?;
 
         Ok(normalized_path)
     }
 
-    fn process_path(&mut self) -> Result<(), GruxiError> {
+    fn process_path(&mut self, is_path_safe: bool) -> Result<(), GruxiError> {
+        // Make sure the path starts with a slash, as we expect it to be a URL path
+        if !self.path.is_empty() && !self.path.starts_with('/') {
+            self.path = format!("/{}", self.path);
+        }
+
         // Normalize the path part, which is also decoded
-        if !self.path.is_empty() {
+        if !self.path.is_empty() && !is_path_safe {
             let normalized_path_cleaned_result = Self::clean_url_path(&self.path);
             self.path = match normalized_path_cleaned_result {
                 Ok(p) => p,
@@ -60,42 +60,28 @@ impl NormalizedPath {
     }
 
     fn process_finalize(&mut self) -> Result<(), GruxiError> {
-        // Set the full path and return
         self.full_path = format!("{}{}", self.web_root, self.path);
 
         if self.web_root.is_empty() && self.path.is_empty() {
             self.full_path = "".to_string();
         } else {
-            let full_path_result = Self::make_path_absolute(&self.full_path);
-            self.full_path = match full_path_result {
-                Ok(p) => p,
-                Err(_) => {
-                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Failed to resolve relative path")));
-                }
-            };
+            if !Self::is_path_absolute(&self.full_path) {
+                let full_path_result = Self::make_path_absolute(&self.full_path);
+                self.full_path = match full_path_result {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Failed to resolve relative path")));
+                    }
+                };
+            }
 
             self.full_path = self.full_path.replace('\\', "/");
-
-            // Defense-in-depth: final check that no traversal segments exist in the assembled full path
-            if self.full_path.split('/').any(|seg| seg == ".." || seg == ".") {
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Path traversal detected in resolved path")));
-            }
-
-            // Defense-in-depth: verify full path still starts with the resolved web root
-            if !self.web_root.is_empty() {
-                let resolved_web_root = Self::make_path_absolute(&self.web_root)
-                    .unwrap_or_default()
-                    .replace('\\', "/");
-                if !resolved_web_root.is_empty() && !self.full_path.starts_with(&resolved_web_root) {
-                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Resolved path escapes web root")));
-                }
-            }
         }
         Ok(())
     }
 
-    fn process(&mut self) -> Result<(), GruxiError> {
-        self.process_path()?;
+    fn process(&mut self, is_path_safe: bool) -> Result<(), GruxiError> {
+        self.process_path(is_path_safe)?;
         self.process_web_root()?;
         self.process_finalize()?;
 
@@ -125,32 +111,29 @@ impl NormalizedPath {
         &self.path
     }
 
-    pub fn set_path(&mut self, new_path: &str) -> Result<(), GruxiError> {
+    pub fn set_path(&mut self, new_path: &str, is_path_safe: bool) -> Result<(), GruxiError> {
         self.path = new_path.trim().to_string();
-        self.process_path()?;
+        self.process_path(is_path_safe)?;
         self.process_finalize()?;
         Ok(())
     }
 
     fn decode_string_until_no_percentage(path: &str) -> Result<String, ()> {
-        let mut decoded = path.to_string();
-
-        let max_rounds = 10; // Prevent infinite loops
-
-        for _ in 0..max_rounds {
-            let decoded_result = decode(&decoded);
-            let new_decoded = match decoded_result {
-                Ok(d) => d.to_string(),
-                Err(_) => return Err(()),
-            };
-
-            if new_decoded == decoded {
-                return Ok(decoded);
-            }
-            decoded = new_decoded;
+        // Fast path: no percent-encoding present, return without allocating
+        if !path.contains('%') {
+            return Ok(path.to_string());
         }
 
-        Err(())
+        // Decode once, using Cow to avoid allocation if nothing changed
+        let decoded = decode(path).map_err(|_| ())?;
+
+        // If still contains percent-encoded sequences after decoding, reject it
+        // (indicates double/triple encoding which is a potential attack vector)
+        if decoded.contains('%') {
+            return Err(());
+        }
+
+        Ok(decoded.into_owned())
     }
 
     fn clean_url_path(path: &str) -> Result<String, String> {
@@ -166,23 +149,25 @@ impl NormalizedPath {
             Err(_) => return Err("Failed to decode percent-encoded characters".to_string()),
         };
 
-        // Handle unicode normalization
-        let mut buf: String = path.nfc().collect();
-        for ch in buf.chars() {
-            // Reject Unicode format characters (Cf)
-            let gc = get_general_category(ch);
-            if gc == GeneralCategory::Format {
-                return Err("Path contains forbidden Unicode format characters".to_string());
-            }
-            if gc == GeneralCategory::Control {
-                return Err("Path contains forbidden Unicode control characters".to_string());
-            }
+        let (mut buf, is_unicode) = if path.is_ascii() { (path, false) } else { (path.nfc().collect(), true) };
 
-            // Reject confusable slashes or dots
-            if matches!(
-                ch,
-                // Slash-like
-                '\u{2215}' | // ∕ division slash
+        // Handle unicode normalization
+        if is_unicode {
+            for ch in buf.chars() {
+                // Reject Unicode format characters (Cf)
+                let gc = get_general_category(ch);
+                if gc == GeneralCategory::Format {
+                    return Err("Path contains forbidden Unicode format characters".to_string());
+                }
+                if gc == GeneralCategory::Control {
+                    return Err("Path contains forbidden Unicode control characters".to_string());
+                }
+
+                // Reject confusable slashes or dots
+                if matches!(
+                    ch,
+                    // Slash-like
+                    '\u{2215}' | // ∕ division slash
                 '\u{2044}' | // ⁄ fraction slash
                 '\u{FF0F}' | // ／ fullwidth solidus
                 '\u{29F8}' | // ⧸ big solidus
@@ -194,8 +179,14 @@ impl NormalizedPath {
                 '\u{3002}' | // 。 ideographic full stop
                 '\u{2219}' | // ∙ bullet operator
                 '\u{22C5}' // ⋅ dot operator
-            ) {
-                return Err("Path contains confusable slash or dot characters".to_string());
+                ) {
+                    return Err("Path contains confusable slash or dot characters".to_string());
+                }
+            }
+        } else {
+            // For ASCII paths, we can just check for control characters directly
+            if buf.chars().any(|ch| ch.is_control()) {
+                return Err("Path contains ASCII control characters".to_string());
             }
         }
 
@@ -254,44 +245,44 @@ impl NormalizedPath {
         Ok(result)
     }
 
-    // Sanitizes and resolves a file path into an absolute path.
-    // - Expands relative paths to absolute.
-    //
+    fn is_path_absolute(input_path: &str) -> bool {
+        // On Unix, absolute paths start with '/'
+        if input_path.starts_with('/') {
+            return true;
+        }
+
+        // On Windows, absolute paths can start with a drive letter followed by ':\' or ':/'
+        if input_path.len() > 2 && input_path.chars().nth(1) == Some(':') && (input_path.chars().nth(2) == Some('\\') || input_path.chars().nth(2) == Some('/')) {
+            return true;
+        }
+
+        false
+    }
+
+    // Sanitizes and resolves a relative file path into an absolute path.
     // Works on both Windows and Unix.
     fn make_path_absolute(input_path: &str) -> Result<String, std::io::Error> {
-        let mut path = PathBuf::new();
+        let app_paths = get_app_paths();
 
         // If it starts with ./, we replace with current dir
         if let Some(stripped) = input_path.strip_prefix("./") {
-            let mut current_dir_result = env::current_dir()?;
-            current_dir_result.push(stripped);
-            return Ok(current_dir_result.to_string_lossy().to_string());
+            return Ok(app_paths.working_dir.join(stripped).to_string_lossy().to_string());
         }
 
-        // Treat Unix-rooted paths like "/var/www" as rooted even on Windows,
-        // otherwise Path::is_relative() may incorrectly cause us to prepend CWD (and a drive letter).
-        let input_path_path = Path::new(input_path);
-        let is_effectively_absolute = input_path_path.is_absolute() || input_path.starts_with('/');
-
-        if !is_effectively_absolute {
-            let current_dir_result = env::current_dir()?;
-            path.push(current_dir_result);
-        }
-
-        path.push(input_path);
-
-        // Convert to string and normalize slashes
-        Ok(path.to_string_lossy().to_string())
+        // If it did not start with ./ but is still not absolute, we also prepend current dir
+        Ok(app_paths.working_dir.join(input_path).to_string_lossy().to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
 
     #[tokio::test]
     async fn test_normalized_path_basics() {
-        let normalized = match NormalizedPath::new("/var/www", "/images/css/style.css") {
+        let normalized = match NormalizedPath::new("/var/www", "/images/css/style.css", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for valid path"),
         };
@@ -299,7 +290,7 @@ mod tests {
         assert_eq!(normalized.get_path(), "/images/css/style.css");
         assert_eq!(normalized.get_full_path(), "/var/www/images/css/style.css");
 
-        let normalized = match NormalizedPath::new("/var/www", "/") {
+        let normalized = match NormalizedPath::new("/var/www", "/", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for root path"),
         };
@@ -307,7 +298,7 @@ mod tests {
         assert_eq!(normalized.get_path(), "/");
         assert_eq!(normalized.get_full_path(), "/var/www/");
 
-        let normalized = match NormalizedPath::new("/var/www", "/index.php") {
+        let normalized = match NormalizedPath::new("/var/www", "/index.php", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for index.php path"),
         };
@@ -318,40 +309,40 @@ mod tests {
 
     #[tokio::test]
     async fn test_normalized_path_traversal_attempt_simple() {
-        let normalized = NormalizedPath::new("/var/www", "/images/../css/style.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/../css/style.css", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/images/./css/style.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/./css/style.css", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/../../../index.php");
+        let normalized = NormalizedPath::new("/var/www", "/../../../index.php", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "../../../index.php");
+        let normalized = NormalizedPath::new("/var/www", "../../../index.php", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "../../../../");
+        let normalized = NormalizedPath::new("/var/www", "../../../../", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/a/b/c/../../");
+        let normalized = NormalizedPath::new("/var/www", "/a/b/c/../../", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/../../../etc/passwd");
+        let normalized = NormalizedPath::new("/var/www", "/../../../etc/passwd", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/../../windows/system.ini");
+        let normalized = NormalizedPath::new("/var/www", "/../../windows/system.ini", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "\\..\\..\\");
+        let normalized = NormalizedPath::new("/var/www", "\\..\\..\\", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/b/..\\..\\a/");
+        let normalized = NormalizedPath::new("/var/www", "/b/..\\..\\a/", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/a/..;/../b");
+        let normalized = NormalizedPath::new("/var/www", "/a/..;/../b", false);
         assert!(normalized.is_err());
 
-        let normalized = match NormalizedPath::new("/var/www", "////") {
+        let normalized = match NormalizedPath::new("/var/www", "////", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for multiple slashes path"),
         };
@@ -362,55 +353,55 @@ mod tests {
 
     #[tokio::test]
     async fn test_normalized_path_traversal_attempt_encoded() {
-        let normalized = NormalizedPath::new("/var/www", "/images/%2e%2e/css/style.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/%2e%2e/css/style.css", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/images/%2e%2e%2fcss/style.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/%2e%2e%2fcss/style.css", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/%2e%2e%2e%2f%2e%2e%2findex.php");
+        let normalized = NormalizedPath::new("/var/www", "/%2e%2e%2e%2f%2e%2e%2findex.php", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "%2e%2e%2e%2f%2e%2e%2findex.php");
+        let normalized = NormalizedPath::new("/var/www", "%2e%2e%2e%2f%2e%2e%2findex.php", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/%2e%2e/%2e%2e/");
+        let normalized = NormalizedPath::new("/var/www", "/%2e%2e/%2e%2e/", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/a/%2e%2e/b");
+        let normalized = NormalizedPath::new("/var/www", "/a/%2e%2e/b", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/a/b/%2e%2e/%2e%2e/");
+        let normalized = NormalizedPath::new("/var/www", "/a/b/%2e%2e/%2e%2e/", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/%2E%2E/");
+        let normalized = NormalizedPath::new("/var/www", "/%2E%2E/", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/%2e%2E/");
+        let normalized = NormalizedPath::new("/var/www", "/%2e%2E/", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/%252e%252e/");
+        let normalized = NormalizedPath::new("/var/www", "/%252e%252e/", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/%252e%252e%252f/b");
+        let normalized = NormalizedPath::new("/var/www", "/%252e%252e%252f/b", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/%252e%252e/etc/passwd");
+        let normalized = NormalizedPath::new("/var/www", "/%252e%252e/etc/passwd", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/a/%252e%252e/b");
+        let normalized = NormalizedPath::new("/var/www", "/a/%252e%252e/b", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/%2e%2e%2fetc%2fpasswd");
+        let normalized = NormalizedPath::new("/var/www", "/%2e%2e%2fetc%2fpasswd", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/%2e%2e%2fetc%2fpasswd");
+        let normalized = NormalizedPath::new("/var/www", "/%2e%2e%2fetc%2fpasswd", false);
         assert!(normalized.is_err());
     }
 
     #[tokio::test]
     async fn test_normalized_path_acceptable_dot_paths() {
-        let normalized = match NormalizedPath::new("/var/www", "/.well-known/test.txt") {
+        let normalized = match NormalizedPath::new("/var/www", "/.well-known/test.txt", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for .well-known path"),
         };
@@ -421,64 +412,64 @@ mod tests {
 
     #[tokio::test]
     async fn test_normalized_path_unacceptable_dot_paths() {
-        let normalized = NormalizedPath::new("/var/www", "/.git/test.txt");
+        let normalized = NormalizedPath::new("/var/www", "/.git/test.txt", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/.env");
+        let normalized = NormalizedPath::new("/var/www", "/.env", false);
         assert!(normalized.is_err());
     }
 
     #[tokio::test]
     async fn test_normalized_path_remove_ascii_control_chars_and_nul() {
-        let normalized = NormalizedPath::new("/var/www", "/images/\x00\x1Fstyle.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/\x00\x1Fstyle.css", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/images/\x00style.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/\x00style.css", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/images/\x127style.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/\x127style.css", false);
         assert!(normalized.is_err());
     }
 
     #[tokio::test]
     async fn test_normalized_path_ending_on_dot() {
-        let normalized = NormalizedPath::new("/var/www", "/images/style.");
+        let normalized = NormalizedPath::new("/var/www", "/images/style.", false);
         assert!(normalized.is_err());
     }
 
     #[tokio::test]
     async fn test_normalized_path_with_colon() {
-        let normalized = NormalizedPath::new("/var/www", "/images/style.css::$DATA");
+        let normalized = NormalizedPath::new("/var/www", "/images/style.css::$DATA", false);
         assert!(normalized.is_err());
     }
 
     #[tokio::test]
     async fn test_normalized_path_with_reserved_names() {
-        let normalized = NormalizedPath::new("/var/www", "/images/CON/style.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/CON/style.css", false);
         assert!(normalized.is_err());
-        let normalized = NormalizedPath::new("/var/www", "/images/CON");
+        let normalized = NormalizedPath::new("/var/www", "/images/CON", false);
         assert!(normalized.is_err());
-        let normalized = NormalizedPath::new("/var/www", "/CON");
-        assert!(normalized.is_err());
-
-        let normalized = NormalizedPath::new("/var/www", "/images/NUL/style.css");
-        assert!(normalized.is_err());
-        let normalized = NormalizedPath::new("/var/www", "/images/NUL");
-        assert!(normalized.is_err());
-        let normalized = NormalizedPath::new("/var/www", "/NUL");
+        let normalized = NormalizedPath::new("/var/www", "/CON", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/images/LPT9/style.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/NUL/style.css", false);
         assert!(normalized.is_err());
-        let normalized = NormalizedPath::new("/var/www", "/images/LPT9");
+        let normalized = NormalizedPath::new("/var/www", "/images/NUL", false);
         assert!(normalized.is_err());
-        let normalized = NormalizedPath::new("/var/www", "/LPT9");
+        let normalized = NormalizedPath::new("/var/www", "/NUL", false);
+        assert!(normalized.is_err());
+
+        let normalized = NormalizedPath::new("/var/www", "/images/LPT9/style.css", false);
+        assert!(normalized.is_err());
+        let normalized = NormalizedPath::new("/var/www", "/images/LPT9", false);
+        assert!(normalized.is_err());
+        let normalized = NormalizedPath::new("/var/www", "/LPT9", false);
         assert!(normalized.is_err());
     }
 
     #[tokio::test]
     async fn test_normalized_path_with_unicode_issue() {
-        let normalized = match NormalizedPath::new("/var/www", "/images/style\u{0301}.css") {
+        let normalized = match NormalizedPath::new("/var/www", "/images/style\u{0301}.css", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for unicode normalized path"),
         };
@@ -486,13 +477,13 @@ mod tests {
         assert_eq!(normalized.get_path(), "/images/stylé.css");
         assert_eq!(normalized.get_full_path(), "/var/www/images/stylé.css");
 
-        let normalized = NormalizedPath::new("/var/www", "/images/style\u{200E}.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/style\u{200E}.css", false);
         assert!(normalized.is_err());
-        let normalized = NormalizedPath::new("/var/www", "/images/style\u{200B}file.js");
+        let normalized = NormalizedPath::new("/var/www", "/images/style\u{200B}file.js", false);
         assert!(normalized.is_err());
-        let normalized = NormalizedPath::new("/var/www", "/images/style\u{FF0E}\u{FF0E}/secret");
+        let normalized = NormalizedPath::new("/var/www", "/images/style\u{FF0E}\u{FF0E}/secret", false);
         assert!(normalized.is_err());
-        let normalized = NormalizedPath::new("/var/www", "/images/style/%E2%80%AEevil.js");
+        let normalized = NormalizedPath::new("/var/www", "/images/style/%E2%80%AEevil.js", false);
         assert!(normalized.is_err());
     }
 
@@ -506,25 +497,25 @@ mod tests {
             current_dir = current_dir.replace("\\", "/");
         }
 
-        let normalized = match NormalizedPath::new("./www-admin", "") {
+        let normalized = match NormalizedPath::new("./www-admin", "", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for ./www-admin path"),
         };
         assert_eq!(normalized.get_full_path(), format!("{}/www-admin", current_dir));
 
-        let normalized = match NormalizedPath::new("www-admin", "") {
+        let normalized = match NormalizedPath::new("www-admin", "", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for www-admin path"),
         };
         assert_eq!(normalized.get_full_path(), format!("{}/www-admin", current_dir));
 
-        let normalized = match NormalizedPath::new("./www-admin", "/index.php") {
+        let normalized = match NormalizedPath::new("./www-admin", "/index.php", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for ./www-admin/index.php path"),
         };
         assert_eq!(normalized.get_full_path(), format!("{}/www-admin/index.php", current_dir));
 
-        let normalized = match NormalizedPath::new("", "/index.php") {
+        let normalized = match NormalizedPath::new("", "/index.php", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for /index.php path"),
         };
@@ -534,29 +525,29 @@ mod tests {
     #[tokio::test]
     async fn test_normalized_path_reserved_names_with_extensions() {
         // Windows treats CON.txt, NUL.log, etc. as device names
-        let normalized = NormalizedPath::new("/var/www", "/CON.txt");
+        let normalized = NormalizedPath::new("/var/www", "/CON.txt", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/NUL.log");
+        let normalized = NormalizedPath::new("/var/www", "/NUL.log", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/images/LPT1.pdf");
+        let normalized = NormalizedPath::new("/var/www", "/images/LPT1.pdf", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/AUX.tar.gz");
+        let normalized = NormalizedPath::new("/var/www", "/AUX.tar.gz", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/PRN.doc");
+        let normalized = NormalizedPath::new("/var/www", "/PRN.doc", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/COM1.txt");
+        let normalized = NormalizedPath::new("/var/www", "/COM1.txt", false);
         assert!(normalized.is_err());
     }
 
     #[tokio::test]
     async fn test_normalized_path_backslash_converted_to_slash() {
         // Backslashes should be treated as path separators, not silently removed
-        let normalized = match NormalizedPath::new("/var/www", "/a\\b\\c") {
+        let normalized = match NormalizedPath::new("/var/www", "/a\\b\\c", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for backslash path"),
         };
@@ -567,34 +558,34 @@ mod tests {
     #[tokio::test]
     async fn test_normalized_path_trailing_dot_per_segment() {
         // Trailing dot in a directory segment (Windows strips it silently)
-        let normalized = NormalizedPath::new("/var/www", "/images/test./file.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/test./file.css", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/a./b/c");
+        let normalized = NormalizedPath::new("/var/www", "/a./b/c", false);
         assert!(normalized.is_err());
 
         // Trailing dot on final segment (file)
-        let normalized = NormalizedPath::new("/var/www", "/images/style.");
+        let normalized = NormalizedPath::new("/var/www", "/images/style.", false);
         assert!(normalized.is_err());
     }
 
     #[tokio::test]
     async fn test_normalized_path_trailing_space_per_segment() {
         // Trailing space in a directory segment (Windows strips it silently)
-        let normalized = NormalizedPath::new("/var/www", "/images/test /file.css");
+        let normalized = NormalizedPath::new("/var/www", "/images/test /file.css", false);
         assert!(normalized.is_err());
 
-        let normalized = NormalizedPath::new("/var/www", "/a /b/c");
+        let normalized = NormalizedPath::new("/var/www", "/a /b/c", false);
         assert!(normalized.is_err());
 
         // Trailing space via percent-encoding (survives trim, decoded to space internally)
-        let normalized = NormalizedPath::new("/var/www", "/images/style%20");
+        let normalized = NormalizedPath::new("/var/www", "/images/style%20", false);
         assert!(normalized.is_err());
     }
 
     #[tokio::test]
     async fn test_normalized_path_web_root_multiple_trailing_slashes() {
-        let normalized = match NormalizedPath::new("/var/www//", "/index.html") {
+        let normalized = match NormalizedPath::new("/var/www//", "/index.html", false) {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for web root with multiple trailing slashes"),
         };
@@ -605,7 +596,7 @@ mod tests {
     #[tokio::test]
     async fn test_normalized_path_fullwidth_reverse_solidus() {
         // Fullwidth reverse solidus ＼ should be rejected as a confusable
-        let normalized = NormalizedPath::new("/var/www", "/a\u{FF3C}b");
+        let normalized = NormalizedPath::new("/var/www", "/a\u{FF3C}b", false);
         assert!(normalized.is_err());
     }
 
@@ -613,12 +604,12 @@ mod tests {
     async fn test_normalized_path_max_length() {
         // Path exceeding 4096 bytes should be rejected
         let long_path = format!("/{}", "a".repeat(4096));
-        let normalized = NormalizedPath::new("/var/www", &long_path);
+        let normalized = NormalizedPath::new("/var/www", &long_path, false);
         assert!(normalized.is_err());
 
         // Path at exactly 4096 bytes should be accepted
         let ok_path = format!("/{}", "a".repeat(4095));
-        let normalized = NormalizedPath::new("/var/www", &ok_path);
+        let normalized = NormalizedPath::new("/var/www", &ok_path, false);
         assert!(normalized.is_ok());
     }
 }

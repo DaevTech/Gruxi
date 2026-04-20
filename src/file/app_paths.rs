@@ -40,8 +40,19 @@ impl AppPaths {
     }
 
     fn get_app_paths_win(run_as_service: bool) -> Self {
-        let current_working_dir = Self::get_current_working_dir();
         let binary_path = Self::get_executable_path();
+
+        // If we are running as service on Windows, working dir will be system32 which is not a cool place.
+        // We set working dir to current exe parent in that case. And if not running as service, just get working dir
+        let current_working_dir = if run_as_service {
+            let parent_path_option = binary_path.parent();
+            match parent_path_option {
+                Some(parent_working_dir) => parent_working_dir.to_path_buf(),
+                None => Self::get_current_working_dir(),
+            }
+        } else {
+            Self::get_current_working_dir()
+        };
 
         // Certificates
         let certificates_dir = current_working_dir.join("certs");
@@ -50,11 +61,10 @@ impl AppPaths {
         let default_www_dir = current_working_dir.join("www-default");
         let default_admin_portal_dir = current_working_dir.join("www-admin");
 
-        
         AppPaths {
             is_service: run_as_service,
             binary_path,
-            working_dir: current_working_dir,
+            working_dir: current_working_dir.to_path_buf(),
             certificates_dir,
             logs_dir,
             db_dir,

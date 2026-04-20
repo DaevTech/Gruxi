@@ -116,6 +116,11 @@ async fn start_listener_with_retry(addr: SocketAddr) -> TcpListener {
             Err(e) => {
                 attempts += 1;
                 if attempts >= max_attempts {
+                    // We trigger a global shutdown by cancelling the shutdown token, to ensure the server does not run in a broken state.
+                    let triggers = crate::core::triggers::get_trigger_handler();
+                    if let Some(shutdown_token) = triggers.get_token("shutdown").await {
+                        shutdown_token.cancel();
+                    }
                     panic!("Failed to bind to {} after {} attempts: {}", addr, attempts, e);
                 }
                 error!("Failed to bind to {}: {}. Retrying in {:?}...", addr, e, retry_delay);
@@ -279,7 +284,7 @@ where
         async move {
             // Count the request in monitoring, except for admin bindings
             if !conn_context.binding.is_admin && !conn_context.binding.is_telemetry {
-                 conn_context.monitoring_state.increment_requests_served();
+                conn_context.monitoring_state.increment_requests_served();
             }
 
             let mut gruxi_request = GruxiRequest::from_hyper(req);

@@ -66,7 +66,7 @@ impl ProcessorTrait for PHPProcessor {
     fn initialize(&mut self) {
         // Check and normalize web roots if not already done
         if self.normalized_local_web_root.is_none() {
-            let normalized_path_result = NormalizedPath::new(&self.local_web_root, "");
+            let normalized_path_result = NormalizedPath::new(&self.local_web_root, "", true);
             self.normalized_local_web_root = match normalized_path_result {
                 Ok(path) => Some(path),
                 Err(_) => {
@@ -76,7 +76,7 @@ impl ProcessorTrait for PHPProcessor {
             };
         }
         if self.normalized_fastcgi_web_root.is_none() && !self.fastcgi_web_root.is_empty() {
-            let normalized_path_result = NormalizedPath::new(&self.fastcgi_web_root, "");
+            let normalized_path_result = NormalizedPath::new(&self.fastcgi_web_root, "", true);
             self.normalized_fastcgi_web_root = match normalized_path_result {
                 Ok(path) => Some(path),
                 Err(_) => {
@@ -137,14 +137,14 @@ impl ProcessorTrait for PHPProcessor {
         }
 
         // Validate that local web root can be normalized
-        let normalized_local_web_root_result = NormalizedPath::new(&self.local_web_root, "");
+        let normalized_local_web_root_result = NormalizedPath::new(&self.local_web_root, "", true);
         if normalized_local_web_root_result.is_err() {
             errors.push(format!("Local web root path is invalid: '{}' - Check strange characters and path format", self.local_web_root));
         }
 
         // Validate that fastcgi web root can be normalized
         if self.served_by_type == "php-fpm" {
-            let normalized_fastcgi_web_root_result = NormalizedPath::new(&self.fastcgi_web_root, "");
+            let normalized_fastcgi_web_root_result = NormalizedPath::new(&self.fastcgi_web_root, "", true);
             if normalized_fastcgi_web_root_result.is_err() {
                 errors.push(format!("FastCGI web root path is invalid: '{}' - Check strange characters and path format", self.fastcgi_web_root));
             }
@@ -166,7 +166,7 @@ impl ProcessorTrait for PHPProcessor {
         let mut path = gruxi_request.get_path().to_string();
 
         // Get the file, if it exists
-        let normalized_path_result = NormalizedPath::new(local_web_root, &path);
+        let normalized_path_result = NormalizedPath::new(local_web_root, &path, false);
         let mut normalized_path = match normalized_path_result {
             Ok(path) => path,
             Err(_) => {
@@ -203,9 +203,9 @@ impl ProcessorTrait for PHPProcessor {
                 path = "/index.php".to_string();
 
                 // Check if the index file exists
-                let normalized_path_result = NormalizedPath::new(local_web_root, &path);
-                normalized_path = match normalized_path_result {
-                    Ok(path) => path,
+                let normalized_path_result = normalized_path.set_path(&path, true);
+                match normalized_path_result {
+                    Ok(_) => {},
                     Err(_) => {
                         return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
                     }
@@ -228,9 +228,9 @@ impl ProcessorTrait for PHPProcessor {
             // If it's a directory, we will try to check if there is an index.php file inside
             trace!("File is a directory: {}", normalized_path.get_full_path());
 
-            let normalized_path_result = NormalizedPath::new(normalized_path.get_full_path(), "/index.php");
-            normalized_path = match normalized_path_result {
-                Ok(path) => path,
+            let normalized_path_result = normalized_path.set_path("/index.php", true);
+            match normalized_path_result {
+                Ok(_) => {},
                 Err(_) => {
                     return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
                 }

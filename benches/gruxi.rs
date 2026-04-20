@@ -1,6 +1,6 @@
 mod syslog_benchmark;
 mod normalized_path;
-
+mod request_processing;
 use criterion::{criterion_group, criterion_main};
 
 criterion_group!(
@@ -9,6 +9,7 @@ criterion_group!(
     syslog_benchmark::syslog_benchmark_without_stdout_single,
     syslog_benchmark::syslog_benchmark_without_stdout_high_concurrency,
     normalized_path::normalized_path_benchmark,
+    request_processing::request_processing_benchmark,
 );
 
 criterion_main!(benches);

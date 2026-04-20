@@ -1,4 +1,4 @@
-use crate::error;
+use crate::{error, file::app_paths::get_app_paths};
 use qsu::rt::{InitCtx, RunEnv, SvcEvt, TermCtx, TokioServiceHandler};
 use tokio::select;
 
@@ -130,22 +130,15 @@ pub fn svcevt_handler(evt: SvcEvt) {
 
 pub fn install_service() {
     println!("Installing Gruxi as a system service...");
-    // Get current executable path
-    let exe_path = std::env::current_exe().unwrap_or_else(|e| {
-        eprintln!("Failed to get current executable path: {}", e);
-        std::process::exit(1);
-    });
-    let workdir = exe_path.parent().unwrap_or_else(|| {
-        eprintln!("Failed to get executable parent directory");
-        std::process::exit(1);
-    });
+    // Get working dir
+    let app_paths = get_app_paths();
 
     let result = qsu::installer::RegSvc::new("gruxi")
         .display_name("Gruxi Web Server")
         .description("High performance web server")
         .netservice()
         .autostart()
-        .workdir(workdir.to_string_lossy())
+        .workdir(app_paths.working_dir.to_string_lossy())
         .arg("--service")
         .register();
 

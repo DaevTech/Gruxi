@@ -32,7 +32,7 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, co
     let path = gruxi_request.get_path();
     let method = gruxi_request.get_http_method();
 
-    let normalized_path_result = NormalizedPath::new("", path);
+    let normalized_path_result = NormalizedPath::new("", path, false);
     let normalized_path = match normalized_path_result {
         Ok(np) => np,
         Err(_) => {
