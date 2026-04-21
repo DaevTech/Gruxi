@@ -1,6 +1,6 @@
 use crate::file::app_paths::get_app_paths;
 use crate::file::normalized_path::NormalizedPath;
-use crate::{debug, error, trace};
+use crate::{error, trace};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -109,7 +109,7 @@ impl AccessLogBuffer {
             }
         }
         if logs_received > 0 {
-            debug!("Received {} access log entries in this cycle", logs_received);
+            trace!("Received {} access log entries in this cycle", logs_received);
         }
     }
 
@@ -194,7 +194,7 @@ impl AccessLogBuffer {
                         }
                         let elapsed = start_time.elapsed().as_millis();
                         if elapsed > 0 {
-                            debug!("Access log flush cycle completed in {} ms", elapsed);
+                            trace!("Access log flush cycle completed in {} ms", elapsed);
                         }
                 },
                 _ = shutdown_token.cancelled() => {

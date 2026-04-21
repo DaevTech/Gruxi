@@ -4,7 +4,8 @@ use urlencoding::decode;
 
 use crate::{
     debug,
-    error::{gruxi_error::GruxiError, gruxi_error_enums::GruxiErrorKind}, file::app_paths::get_app_paths,
+    error::{gruxi_error::GruxiError, gruxi_error_enums::GruxiErrorKind},
+    file::app_paths::get_app_paths,
 };
 
 #[derive(Clone, Debug)]
@@ -12,6 +13,8 @@ pub struct NormalizedPath {
     web_root: String,
     path: String,
     full_path: String,
+    original_web_root: String,
+    original_path: String,
 }
 
 const RESERVED_FILENAMES: [&str; 22] = [
@@ -26,6 +29,8 @@ impl NormalizedPath {
             web_root: web_root.trim().to_string(),
             path: path.trim().to_string(),
             full_path: "".to_string(),
+            original_web_root: web_root.trim().to_string(),
+            original_path: path.trim().to_string(),
         };
 
         normalized_path.process(is_path_safe)?;
@@ -54,8 +59,18 @@ impl NormalizedPath {
     }
 
     fn process_web_root(&mut self) -> Result<(), GruxiError> {
-        // Remove ending / from web root
+        if !Self::is_path_absolute(&self.web_root) {
+            let full_path_result = Self::make_path_absolute(&self.web_root);
+            self.web_root = match full_path_result {
+                Ok(p) => p,
+                Err(_) => {
+                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Failed to resolve relative path")));
+                }
+            };
+        }
+        self.web_root = self.web_root.replace('\\', "/");
         self.web_root = self.web_root.trim_end_matches('/').to_string();
+
         Ok(())
     }
 
@@ -65,16 +80,6 @@ impl NormalizedPath {
         if self.web_root.is_empty() && self.path.is_empty() {
             self.full_path = "".to_string();
         } else {
-            if !Self::is_path_absolute(&self.full_path) {
-                let full_path_result = Self::make_path_absolute(&self.full_path);
-                self.full_path = match full_path_result {
-                    Ok(p) => p,
-                    Err(_) => {
-                        return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Internal("Failed to resolve relative path")));
-                    }
-                };
-            }
-
             self.full_path = self.full_path.replace('\\', "/");
         }
         Ok(())
@@ -89,7 +94,7 @@ impl NormalizedPath {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.full_path.is_empty()
+        self.original_web_root.is_empty() && self.original_path.is_empty()
     }
 
     pub fn get_full_path(&self) -> &str {
@@ -519,7 +524,7 @@ mod tests {
             Ok(n) => n,
             Err(_) => panic!("Expected Ok result for /index.php path"),
         };
-        assert_eq!(normalized.get_full_path(), "/index.php");
+        assert_eq!(normalized.get_full_path(), format!("{}/index.php", current_dir));
     }
 
     #[tokio::test]

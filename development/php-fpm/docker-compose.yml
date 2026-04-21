@@ -1,9 +1,9 @@
 services:
   # PHP-FPM service for handling PHP requests
   gruxi-php-fpm:
-    image: php:8.2-fpm-alpine
+    image: php:8.4-fpm-alpine
     volumes:
-      - ../../www-testing:/var/www/html:ro  # Web content accessible to PHP-FPM
+      - ../../www-default:/var/www/html:ro  # Web content accessible to PHP-FPM
     ports:
       - "9000:9000"
     restart: unless-stopped

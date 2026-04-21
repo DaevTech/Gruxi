@@ -228,7 +228,8 @@ impl ProcessorTrait for PHPProcessor {
             // If it's a directory, we will try to check if there is an index.php file inside
             trace!("File is a directory: {}", normalized_path.get_full_path());
 
-            let normalized_path_result = normalized_path.set_path("/index.php", true);
+            // Take the path and add "/index.php" to it, and check if that file exists, if it does, we will serve that instead
+            let normalized_path_result = normalized_path.set_path(&format!("{}{}", normalized_path.get_path(), "/index.php"), true);
             match normalized_path_result {
                 Ok(_) => {},
                 Err(_) => {

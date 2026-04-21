@@ -473,10 +473,9 @@ impl FastCgi {
         }
 
         // Request uri (must include query string for PHP's $_SERVER['REQUEST_URI'])
+        let (path_only_str, query_part) = if let Some(pos) = uri.find('?') { (&uri[..pos], &uri[pos..]) } else { (uri.as_str(), "") };
         let mut request_uri = uri.clone();
         if uri_is_a_dir_with_index_file_inside {
-            // Split off any query string first
-            let (path_only_str, query_part) = if let Some(pos) = uri.find('?') { (&uri[..pos], &uri[pos..]) } else { (uri.as_str(), "") };
             // Add forward slash to the end if missing, but before any query string
             let path_only = if !path_only_str.ends_with('/') { &format!("{}/", path_only_str) } else { path_only_str };
             request_uri = format!("{}{}", path_only, query_part);
@@ -506,6 +505,7 @@ impl FastCgi {
         };
 
         params.insert("REQUEST_METHOD".to_string(), gruxi_request.get_http_method().to_string());
+        params.insert("DOCUMENT_URI".to_string(), path_only_str.to_string());
         params.insert("REQUEST_URI".to_string(), request_uri);
         params.insert("SCRIPT_NAME".to_string(), script_name);
         params.insert("SCRIPT_FILENAME".to_string(), full_script_path.get_full_path().to_string());
@@ -522,7 +522,6 @@ impl FastCgi {
         params.insert("REMOTE_PORT".to_string(), remote_port);
         params.insert("REMOTE_HOST".to_string(), "".to_string());
         params.insert("PATH_INFO".to_string(), path_info);
-        params.insert("REDIRECT_STATUS".to_string(), "200".to_string());
         Ok(params)
     }
 
@@ -598,8 +597,46 @@ mod tests {
 
         assert_eq!(params.get("REQUEST_METHOD").unwrap(), "GET");
         assert_eq!(params.get("REQUEST_URI").unwrap(), "/");
+        assert_eq!(params.get("DOCUMENT_URI").unwrap(), "/");
         assert_eq!(params.get("SCRIPT_NAME").unwrap(), "/index.php");
         assert_eq!(params.get("SCRIPT_FILENAME").unwrap(), "D:/websites/test1/public/index.php");
+        assert_eq!(params.get("DOCUMENT_ROOT").unwrap(), "D:/websites/test1/public");
+        assert_eq!(params.get("PATH_INFO").unwrap(), "");
+        // Verify HTTP_CONTENT_TYPE and HTTP_CONTENT_LENGTH are NOT present
+        assert!(params.get("HTTP_CONTENT_TYPE").is_none());
+        assert!(params.get("HTTP_CONTENT_LENGTH").is_none());
+        // Verify REMOTE_ADDR has no port
+        let remote_addr = params.get("REMOTE_ADDR").unwrap();
+        assert!(!remote_addr.contains(':') || remote_addr.contains("::")); // IPv4 has no colon, IPv6 is fine
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_generate_fastcgi_params_with_path_and_query_string() {
+        // Try with scenario where user requests a path with query string
+        let request = hyper::Request::builder().method("GET").uri("/my-site/index.php?x=1").header("Host", "localhost").body(Bytes::new()).unwrap();
+        let mut gruxi_request = GruxiRequest::new(request);
+
+        let processor_data = PhpProcessorFastCgiData {
+            connect_ip_and_port: String::new(),
+            script_file: NormalizedPath::new("D:/websites/test1/public", "/my-site/index.php", true).unwrap(),
+            uri_is_a_dir_with_index_file_inside: false,
+            local_web_root: NormalizedPath::new("D:/websites/test1/public", "", true).unwrap(),
+            fastcgi_web_root: NormalizedPath::new("", "", true).unwrap(),
+            server_software_spoof: String::new(),
+        };
+
+        gruxi_request.set_processor_data(GruxiRequestProcessorData::PhpProcessorFastCgi(processor_data));
+
+        let params_result = FastCgi::generate_fast_cgi_params(&mut gruxi_request);
+
+        assert!(params_result.is_ok());
+        let params = params_result.unwrap();
+
+        assert_eq!(params.get("REQUEST_METHOD").unwrap(), "GET");
+        assert_eq!(params.get("REQUEST_URI").unwrap(), "/my-site/index.php?x=1");
+        assert_eq!(params.get("DOCUMENT_URI").unwrap(), "/my-site/index.php");
+        assert_eq!(params.get("SCRIPT_NAME").unwrap(), "/my-site/index.php");
+        assert_eq!(params.get("SCRIPT_FILENAME").unwrap(), "D:/websites/test1/public/my-site/index.php");
         assert_eq!(params.get("DOCUMENT_ROOT").unwrap(), "D:/websites/test1/public");
         assert_eq!(params.get("PATH_INFO").unwrap(), "");
         // Verify HTTP_CONTENT_TYPE and HTTP_CONTENT_LENGTH are NOT present

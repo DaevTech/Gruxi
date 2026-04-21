@@ -17,7 +17,7 @@ pub async fn check_path_secure(base_path: &str, test_path: &NormalizedPath, bloc
 
     // Check that the test_path starts with the base_path
     if !test_path.get_full_path().starts_with(&base_path) {
-        trace!("Path is blocked, as it does not start with the web root: '{}' file: '{}'", base_path, test_path.get_full_path());
+        trace!("Path is blocked in static file processor, as it does not start with the web root: '{}' file: '{}'", base_path, test_path.get_full_path());
         return false;
     }
 
@@ -25,7 +25,7 @@ pub async fn check_path_secure(base_path: &str, test_path: &NormalizedPath, bloc
     let file_lowercase = test_path.get_path().to_lowercase();
     for pattern in blocked_file_patterns {
         if file_lowercase.contains(pattern) {
-            trace!("Path is blocked due to blocked file pattern: {} file: {}", pattern, test_path.get_full_path());
+            trace!("Path is blocked in static file processor due to blocked file pattern: {} file: {}", pattern, test_path.get_full_path());
             return false;
         }
     }

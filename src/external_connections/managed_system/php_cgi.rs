@@ -7,11 +7,13 @@ use tokio::{
     select,
 };
 
+use crate::file::normalized_path::NormalizedPath;
 use crate::{
-    error, trace, warn,
     core::triggers::get_trigger_handler,
+    error,
     external_connections::fastcgi::FastCgi,
     network::port_manager::{PortManager, get_port_manager},
+    trace, warn,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,7 +60,11 @@ impl PhpCgi {
 
     pub fn sanitize(&mut self) {
         // Clean up executable path
-        self.executable = self.executable.trim().to_string();
+        let normalized_executable = NormalizedPath::new(&self.executable, "", true);
+        self.executable = match normalized_executable {
+            Ok(ne) => ne.get_full_path().to_string(),
+            Err(_) => self.executable.trim().to_string(), // if normalization fails, we pick it up in validation
+        };
 
         // Clean up name
         self.name = self.name.trim().to_string();
@@ -86,6 +92,13 @@ impl PhpCgi {
         if self.executable.is_empty() {
             errors.push("PHP-CGI executable path cannot be empty.".to_string());
         }
+
+        // Verify that it can be normalized
+        let normalized_executable = NormalizedPath::new(&self.executable, "", true);
+        match normalized_executable {
+            Ok(_) => {}
+            Err(e) => errors.push(format!("PHP-CGI executable path is invalid. Cause: {:?}", e)),
+        };
 
         // Validate that executable exists
         if !self.executable.is_empty() && !std::path::Path::new(&self.executable).exists() {
@@ -248,13 +261,12 @@ impl PhpCgi {
         } else {
             // Check if we need to send a keep-alive
             let time_since_activity = self.last_activity.elapsed();
-            if time_since_activity >= Duration::from_secs(10)
-                && !self.send_keep_alive().await {
-                    warn!("Keep-alive failed, restarting PHP-CGI process");
-                    self.stop().await;
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
-                    self.start().await?;
-                }
+            if time_since_activity >= Duration::from_secs(10) && !self.send_keep_alive().await {
+                warn!("Keep-alive failed, restarting PHP-CGI process");
+                self.stop().await;
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+                self.start().await?;
+            }
         }
         Ok(())
     }

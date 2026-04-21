@@ -618,7 +618,7 @@ const addProcessorToSite = (siteIndex, processorType) => {
         newProcessor = {
             id: processorId,
             web_root: './www-default',
-            web_root_index_file_list: [],
+            web_root_index_file_list: ['index.html'],
         };
         config.value.static_file_processors.push(newProcessor);
         newName = 'Static File Processor';

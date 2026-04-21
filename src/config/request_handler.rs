@@ -179,9 +179,6 @@ impl RequestHandler {
                     GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(_)) => {
                         Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16()))
                     }
-                    GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(_)) => {
-                        Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()))// We dont want to expose that it was blocked due to security
-                    }
 
                     // Proxy errors that we want to convey directly
                     GruxiErrorKind::ProxyProcessor(ProxyProcessorError::UpstreamUnavailable) => {
