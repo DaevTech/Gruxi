@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 1.0.0 - 23 Apr 2026
+
+This is the first stable release of Gruxi, marking a significant milestone in its development. This release includes a wide range of features, improvements, and optimizations that have been implemented and tested over the course of development. The focus has been on performance, security, and usability, making Gruxi a robust and reliable web server for production use.
+
+### Added
+ - Added a specific 404 cache, to cache 404 response for a short time
+
+### Fixed
+ - Fixed some minor issues and a few bugs following the extensive automated and manual testing that was done for this release, to ensure the highest possible quality and stability for production use.
+
+
 # Version 0.5.0 - 7 Apr 2026
 
 ### Added

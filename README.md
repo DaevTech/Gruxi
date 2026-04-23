@@ -107,12 +107,10 @@ The following section documents **performance characteristics** of Gruxi under c
 
 ### Results
 
-* Requests per second: **182,697 req/second**
+* Requests per second: **186,918 req/second**
 * CPU utilization: **25-30 %**
 
-### Benchmark screenshot with details
-
-<img src="https://github.com/DaevTech/Gruxi/blob/main/assets/performance-test-070426-static-files.png" alt="Gruxi Performance Test" width="600">
+[Screenshot from Gruxi performance test](https://github.com/DaevTech/Gruxi/blob/main/assets/performance-test-230426-static-files.png)
 
 > **Note:** These results reflect local lab conditions with no external network traffic. Performance will differ under real-world scenarios with TLS enabled, external clients, and varied content types. Much higher performance is possible with optimized configurations and production hardware. These numbers are intended to demonstrate Gruxi's potential and should not be taken as guarantees for all environments.
 
