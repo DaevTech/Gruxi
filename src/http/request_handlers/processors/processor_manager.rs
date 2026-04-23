@@ -42,6 +42,7 @@ impl ProcessorManager {
 
         // Create load balancers for proxy processors
         for proxy_processor in processor_manager.proxy_processors.values() {
+            // Currently, we load the processors even if the request handler is not enabled.
             let lb = proxy_processor.get_load_balancer_service();
             processor_manager.load_balancer_registry.create(proxy_processor.id.clone(), lb).await;
         }

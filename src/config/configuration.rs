@@ -212,6 +212,44 @@ impl Configuration {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
+    pub fn clean_orphans(&mut self) {
+        // Remove any request handlers that are not referenced by any site
+        let mut referenced_handler_ids = std::collections::HashSet::new();
+        for site in &self.sites {
+            for handler_id in &site.request_handlers {
+                referenced_handler_ids.insert(handler_id);
+            }
+        }
+        self.request_handlers.retain(|handler| referenced_handler_ids.contains(&handler.id));
+
+        // Remove any static file processors that are not referenced by any request handler
+        let mut referenced_static_processor_ids = std::collections::HashSet::new();
+        for handler in &self.request_handlers {
+            if handler.processor_type == "static" {
+                referenced_static_processor_ids.insert(&handler.processor_id);
+            }
+        }
+        self.static_file_processors.retain(|processor| referenced_static_processor_ids.contains(&processor.id));
+
+        // Remove any PHP processors that are not referenced by any request handler
+        let mut referenced_php_processor_ids = std::collections::HashSet::new();
+        for handler in &self.request_handlers {
+            if handler.processor_type == "php" {
+                referenced_php_processor_ids.insert(&handler.processor_id);
+            }
+        }
+        self.php_processors.retain(|processor| referenced_php_processor_ids.contains(&processor.id));
+
+        // Remove any proxy processors that are not referenced by any request handler
+        let mut referenced_proxy_processor_ids = std::collections::HashSet::new();
+        for handler in &self.request_handlers {
+            if handler.processor_type == "proxy" {
+                referenced_proxy_processor_ids.insert(&handler.processor_id);
+            }
+        }
+        self.proxy_processors.retain(|processor| referenced_proxy_processor_ids.contains(&processor.id));
+    }
+
     pub fn get_default() -> Self {
         let mut configuration = Self::new();
 

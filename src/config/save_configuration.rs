@@ -24,6 +24,9 @@ pub fn save_configuration(config: &mut Configuration, force: bool) -> Result<boo
     // Then we validate the configuration
     config.validate()?;
 
+    // Clean orphans (like remove processor no longer used or request handlers not referenced)
+    config.clean_orphans();
+
     // Check if the configuration is different from what's currently in the database
     let current_config = fetch_configuration_in_db().map_err(|e| vec![format!("Failed to fetch current configuration from database: {}", e)])?;
 

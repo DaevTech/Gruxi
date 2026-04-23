@@ -7,7 +7,7 @@ use tokio::time::{self, Duration};
 
 use crate::core::running_state_manager;
 use crate::core::triggers::get_trigger_handler;
-use crate::{debug, error};
+use crate::{debug, error, trace};
 
 // Commands sent to a load balancer task
 pub enum LoadBalancerCommand {
@@ -93,9 +93,15 @@ async fn load_balancer_task<T: LoadBalancerImpl>(mut lb: T, mut rx: mpsc::Receiv
                     }
                 }
             }
-            _ = shutdown_token.cancelled() => break,
-            _ = stop_services_token.cancelled() => break,
-            else => break,
+            _ = shutdown_token.cancelled() => {
+                trace!("Shutting down load balancer task because of shutdown trigger");
+                return;
+            },
+            _ = stop_services_token.cancelled() => {
+                trace!("Shutting down load balancer task because of stop_services trigger");
+                return;
+
+            }
         }
     }
 }

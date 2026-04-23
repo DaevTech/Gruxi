@@ -47,7 +47,6 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, co
 
     // We only want to handle a few paths in the admin portal
 
-
     if path_cleaned == "/login" && method == "POST" {
         handle_login_request(gruxi_request, site).await
     } else if path_cleaned == "/logout" && method == "POST" {
@@ -282,10 +281,15 @@ pub async fn admin_post_configuration_reload(gruxi_request: &mut GruxiRequest, _
         }
     }
 
-    // Trigger the configuration cache reload
-    let triggers = get_trigger_handler();
-    triggers.run_trigger("refresh_cached_configuration").await;
-    triggers.run_trigger("reload_configuration").await;
+    tokio::spawn(async {
+        // Wait 500ms, to let the API response complete
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // Trigger the configuration cache reload
+        let triggers = get_trigger_handler();
+        triggers.run_trigger("refresh_cached_configuration").await;
+        triggers.run_trigger("reload_configuration").await;
+    });
 
     info!("Configuration reload triggered by admin user");
 
@@ -421,9 +425,10 @@ async fn get_session_token_from_request(gruxi_request: &GruxiRequest) -> Option<
     // First, check for Authorization header (Bearer token)
     if let Some(auth_header) = gruxi_request.get_headers().get("Authorization")
         && let Ok(auth_str) = auth_header.to_str()
-            && auth_str.starts_with("Bearer ") {
-                return Some(auth_str[7..].to_string());
-            }
+        && auth_str.starts_with("Bearer ")
+    {
+        return Some(auth_str[7..].to_string());
+    }
 
     None
 }
@@ -568,17 +573,18 @@ async fn list_log_files() -> Result<GruxiResponse, GruxiError> {
                 let path = entry.path();
                 if let Some(extension) = path.extension()
                     && extension == "log"
-                        && let Some(filename) = path.file_name()
-                            && let Some(filename_str) = filename.to_str() {
-                                let metadata = metadata(&path);
-                                let file_size = metadata.map(|m| m.len()).unwrap_or(0);
+                    && let Some(filename) = path.file_name()
+                    && let Some(filename_str) = filename.to_str()
+                {
+                    let metadata = metadata(&path);
+                    let file_size = metadata.map(|m| m.len()).unwrap_or(0);
 
-                                log_files.push(serde_json::json!({
-                                    "filename": filename_str,
-                                    "size": file_size,
-                                    "path": path.to_string_lossy()
-                                }));
-                            }
+                    log_files.push(serde_json::json!({
+                        "filename": filename_str,
+                        "size": file_size,
+                        "path": path.to_string_lossy()
+                    }));
+                }
             }
 
             let response_json = serde_json::json!({
@@ -874,10 +880,7 @@ pub async fn handle_password_change(gruxi_request: &mut GruxiRequest, _admin_sit
     let session = match require_authentication(gruxi_request).await {
         Ok(Some(s)) => s,
         Ok(None) => {
-            let mut response = GruxiResponse::new_with_bytes(
-                hyper::StatusCode::UNAUTHORIZED.as_u16(),
-                bytes::Bytes::from(r#"{"error": "Authentication required"}"#),
-            );
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
@@ -886,10 +889,7 @@ pub async fn handle_password_change(gruxi_request: &mut GruxiRequest, _admin_sit
 
     // Read and parse request body
     if gruxi_request.get_body_size() == 0 {
-        let mut response = GruxiResponse::new_with_bytes(
-            hyper::StatusCode::BAD_REQUEST.as_u16(),
-            bytes::Bytes::from(r#"{"error": "Empty request body"}"#),
-        );
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "Empty request body"}"#));
         response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         return Ok(response);
     }
@@ -903,10 +903,7 @@ pub async fn handle_password_change(gruxi_request: &mut GruxiRequest, _admin_sit
                 "error": "Invalid JSON format",
                 "details": e.to_string()
             });
-            let mut response = GruxiResponse::new_with_bytes(
-                hyper::StatusCode::BAD_REQUEST.as_u16(),
-                bytes::Bytes::from(error_response.to_string()),
-            );
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(error_response.to_string()));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
@@ -928,27 +925,18 @@ pub async fn handle_password_change(gruxi_request: &mut GruxiRequest, _admin_sit
                 "success": true,
                 "message": "Password changed successfully"
             });
-            let mut response = GruxiResponse::new_with_bytes(
-                hyper::StatusCode::OK.as_u16(),
-                bytes::Bytes::from(response_json.to_string()),
-            );
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             Ok(response)
         }
         Ok(false) => {
-            let mut response = GruxiResponse::new_with_bytes(
-                hyper::StatusCode::UNAUTHORIZED.as_u16(),
-                bytes::Bytes::from(r#"{"error": "Incorrect current password"}"#),
-            );
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Incorrect current password"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             Ok(response)
         }
         Err(e) => {
             error!("Failed to change password: {}", e);
-            let mut response = GruxiResponse::new_with_bytes(
-                hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-                bytes::Bytes::from(r#"{"error": "Failed to change password"}"#),
-            );
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Failed to change password"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             Ok(response)
         }
