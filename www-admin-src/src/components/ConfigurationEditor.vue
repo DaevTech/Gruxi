@@ -1110,7 +1110,7 @@ onMounted(() => {
                                                     </div>
 
                                                     <div class="form-field">
-                                                        <label>URL Match Patterns <span class="help-icon" data-tooltip="List of url match patterns. * is used to match on all urls and means that this processor will try to serve all urls, if possible. You can add multiple patterns to match for this processor, such as '/assets/*' and '/static*'. If no * is present in start or end for a pattern, the pattern will match exactly.">?</span></label>
+                                                        <label>URL Match Patterns <span class="help-icon" data-tooltip="'*' alone is used to match on all urls and means that this processor will try to serve all urls, if possible. You can add multiple patterns to match for this processor, such as '/assets/*' and '/static*'. If no * is present in start or end for a pattern, the pattern will match exactly.">?</span></label>
                                                         <TagInput v-model="processor.handler.url_match" placeholder="Enter pattern and press Enter" />
                                                     </div>
 
