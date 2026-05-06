@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 1.0.1 - 06 May 2026
+
+Minor bug fix release
+
+### Fixed
+- #25 Fixed a issue in the static file processor, not correctly serving index file in subdirectories.
+- #3 Fixed a minor issue where username field did not have focus on login page of admin portal, which made it a bit less user friendly.
+
 # Version 1.0.0 - 23 Apr 2026
 
 This is the first stable release of Gruxi, marking a significant milestone in its development. This release includes a wide range of features, improvements, and optimizations that have been implemented and tested over the course of development. The focus has been on performance, security, and usability, making Gruxi a robust and reliable web server for production use.
