@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 
 // Define emits
 const emit = defineEmits(['login-success'])
@@ -55,6 +55,12 @@ const handleSubmit = async () => {
   }
 }
 
+// Focus username field on mount
+const usernameInput = ref(null)
+onMounted(() => {
+  usernameInput.value?.focus()
+})
+
 // Handle Enter key in form
 const handleKeydown = (event) => {
   if (event.key === 'Enter') {
@@ -78,6 +84,7 @@ const handleKeydown = (event) => {
           <label for="username">Username</label>
           <input
             id="username"
+            ref="usernameInput"
             v-model="form.username"
             type="text"
             placeholder="Enter your username"
