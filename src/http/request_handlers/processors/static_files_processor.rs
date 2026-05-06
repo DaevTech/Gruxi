@@ -169,7 +169,7 @@ impl ProcessorTrait for StaticFileProcessor {
                 // Get the cached file, if it exists
                 let normalized_path_result = normalized_path.set_path(&path, true);
                 match normalized_path_result {
-                    Ok(_) => {},
+                    Ok(_) => {}
                     Err(_) => {
                         trace!("Failed or rejected to normalize request path: {}", path);
                         return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
@@ -201,11 +201,12 @@ impl ProcessorTrait for StaticFileProcessor {
             let mut found_index = false;
             for file in &self.web_root_index_file_list {
                 // Get the file, if it exists
-                let normalized_path_result = normalized_path.set_path(file, true);
+                let file_index_to_check = format!("{}/{}", normalized_path.get_path(), file);
+                let normalized_path_result = normalized_path.set_path(&file_index_to_check, true);
                 match normalized_path_result {
-                    Ok(_) => {},
+                    Ok(_) => {}
                     Err(_) => {
-                        trace!("Failed to normalize path: {} and file: {}", normalized_path.get_full_path(), file);
+                        trace!("Failed to normalize path: {}", normalized_path.get_full_path());
                         continue;
                     }
                 };
@@ -322,17 +323,18 @@ impl ProcessorTrait for StaticFileProcessor {
 
         // Set content encoding if gzipped (only for non-range requests)
         if let Some(encoding) = encoding
-            && encoding == "gzip" {
-                let header_value = HeaderValue::from_str("gzip");
-                match header_value {
-                    Err(e) => {
-                        warn!("Failed to set content encoding header for file: {} with gzip. Error: {}", normalized_path.get_full_path(), e);
-                    }
-                    Ok(value) => {
-                        response.headers_mut().insert(hyper::header::CONTENT_ENCODING, value);
-                    }
+            && encoding == "gzip"
+        {
+            let header_value = HeaderValue::from_str("gzip");
+            match header_value {
+                Err(e) => {
+                    warn!("Failed to set content encoding header for file: {} with gzip. Error: {}", normalized_path.get_full_path(), e);
+                }
+                Ok(value) => {
+                    response.headers_mut().insert(hyper::header::CONTENT_ENCODING, value);
                 }
             }
+        }
 
         // Always add Accept-Ranges header to indicate range request support
         response.headers_mut().insert(hyper::header::ACCEPT_RANGES, accept_ranges_bytes());
