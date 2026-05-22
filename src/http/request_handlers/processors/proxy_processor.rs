@@ -3,6 +3,7 @@ use std::time::Duration;
 use crate::error;
 use crate::{
     config::site::Site,
+    debug,
     error::{
         gruxi_error::GruxiError,
         gruxi_error_enums::{GruxiErrorKind, ProxyProcessorError},
@@ -15,10 +16,11 @@ use crate::{
         },
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
-    debug, trace,
+    trace,
 };
 use http::HeaderValue;
 use hyper::Response;
+use hyper::Version;
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
@@ -107,10 +109,7 @@ impl ProxyProcessor {
 
         while i < s_chars.len() {
             if i + from_len <= s_chars.len() {
-                let matches = s_chars[i..i + from_len]
-                    .iter()
-                    .flat_map(|c| c.to_lowercase())
-                    .eq(from_chars.iter().copied());
+                let matches = s_chars[i..i + from_len].iter().flat_map(|c| c.to_lowercase()).eq(from_chars.iter().copied());
 
                 if matches {
                     result.push_str(to);
@@ -132,14 +131,15 @@ impl ProxyProcessor {
         // Parse the Connection header for additional hop-by-hop header names (RFC 2616 §14.10)
         if !is_websocket_upgrade
             && let Some(connection_header) = response.headers().get("Connection")
-                && let Ok(connection_header_str) = connection_header.to_str() {
-                    for token in connection_header_str.split(',') {
-                        let token_trimmed = token.trim();
-                        if !token_trimmed.is_empty() {
-                            hop_by_hop_headers.push(token_trimmed.to_string());
-                        }
-                    }
+            && let Ok(connection_header_str) = connection_header.to_str()
+        {
+            for token in connection_header_str.split(',') {
+                let token_trimmed = token.trim();
+                if !token_trimmed.is_empty() {
+                    hop_by_hop_headers.push(token_trimmed.to_string());
                 }
+            }
+        }
 
         for header in &hop_by_hop_headers {
             response.headers_mut().remove(header);
@@ -155,7 +155,10 @@ impl ProxyProcessor {
                 self.health_check_interval_seconds as u64,
             ),
             _ => {
-                error!("Unsupported load balancing strategy: '{}' in proxy processor: {}. Falling back to round_robin.", self.load_balancing_strategy, self.id);
+                error!(
+                    "Unsupported load balancing strategy: '{}' in proxy processor: {}. Falling back to round_robin.",
+                    self.load_balancing_strategy, self.id
+                );
                 RoundRobin::new(
                     self.upstream_servers.clone(),
                     self.health_check_path.clone(),
@@ -236,7 +239,10 @@ impl ProcessorTrait for ProxyProcessor {
         }
 
         if !self.forced_host_header.is_empty() && HeaderValue::from_str(&self.forced_host_header).is_err() {
-            errors.push(format!("Forced host header '{}' contains invalid characters. It must be a valid HTTP header value.", self.forced_host_header));
+            errors.push(format!(
+                "Forced host header '{}' contains invalid characters. It must be a valid HTTP header value.",
+                self.forced_host_header
+            ));
         }
 
         if !self.health_check_path.is_empty() {
@@ -272,7 +278,7 @@ impl ProcessorTrait for ProxyProcessor {
         };
 
         // Rewrite the request URL to point to the upstream server
-        let original_uri = gruxi_request.get_uri();
+        let original_uri = gruxi_request.get_path_and_query();
         let new_uri = format!("{}{}", server_to_handle_request, original_uri);
 
         // Apply any URL rewrites
@@ -308,6 +314,8 @@ impl ProcessorTrait for ProxyProcessor {
 
         // Update the URI to point to the upstream server (with full URL including scheme/host/port)
         *proxy_request.uri_mut() = upstream_uri;
+        // Set the default HTTP version to 1.1 for the upstream request, we can consider making this configurable in the future if needed
+        *proxy_request.version_mut() = Version::HTTP_11;
 
         // Check if we should preserve the host header or remote it to let hyper set it
         if self.forced_host_header.is_empty() {
@@ -363,7 +371,10 @@ impl ProcessorTrait for ProxyProcessor {
                             is_websocket_upgrade = true;
                         }
                         _ => {
-                            debug!("Upstream returned HTTP 101 but WebSocket upgrade bridge could not be established (missing client or upstream upgrade handle) for proxy processor: {}", self.id);
+                            debug!(
+                                "Upstream returned HTTP 101 but WebSocket upgrade bridge could not be established (missing client or upstream upgrade handle) for proxy processor: {}",
+                                self.id
+                            );
                             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal)));
                         }
                     }
