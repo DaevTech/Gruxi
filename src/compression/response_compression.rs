@@ -1,4 +1,4 @@
-use crate::debug;
+use crate::{debug, trace};
 use crate::file::file_reader_cache::FileReaderCache;
 use crate::http::request_response::gruxi_body::GruxiBody::Buffered;
 use crate::http::request_response::gruxi_request::GruxiRequest;
@@ -11,10 +11,12 @@ use std::io::Write;
 pub async fn maybe_compress_response(request: &GruxiRequest, response: &mut GruxiResponse, file_reader_cache: &FileReaderCache) {
     let mut should_compress = false;
     let content_encoding_header_option = response.headers().get(hyper::header::CONTENT_ENCODING);
+    trace!("Checking if response should be compressed. Content-Encoding header: {:?}", content_encoding_header_option);
 
     match content_encoding_header_option {
         Some(_) => {
             // If content encoding is already present, we skip compression
+            trace!("Content-Encoding header is already present, skipping compression");
             return;
         }
         None => {
@@ -24,21 +26,24 @@ pub async fn maybe_compress_response(request: &GruxiRequest, response: &mut Grux
                 && cache_control_header.to_str().unwrap_or("").contains("no-transform")
             {
                 // If no-transform is present, we skip compression
+                trace!("Cache-Control header contains no-transform, skipping compression");
                 return;
             }
             // If content range is present, we skip compression
             let content_range_header_option = response.headers().get(hyper::header::CONTENT_RANGE);
             if content_range_header_option.is_some() {
                 // If content range is present, we skip compression
+                trace!("Content-Range header is present, skipping compression");
                 return;
             }
 
             // If content encoding is not present, we consider compressing if it's a compressible type and size
             let content_type_header_option = response.get_header(hyper::header::CONTENT_TYPE.as_str());
-            if let Some(content_type_header) = content_type_header_option
-                && request.check_accepted_encoding("gzip") {
+            if let Some(content_type_header) = content_type_header_option && request.check_accepted_encoding("gzip") {
                 let content_length = response.get_body_size();
+                trace!("Compression check: Content-Type header: {}, Content-Length: {}", content_type_header.to_str().unwrap_or(""), content_length);
                 if file_reader_cache.should_compress(content_type_header.to_str().unwrap_or(""), content_length) {
+                    trace!("Content is eligible for compression, will compress response");
                     should_compress = true;
                 }
             }
@@ -46,6 +51,7 @@ pub async fn maybe_compress_response(request: &GruxiRequest, response: &mut Grux
     }
 
     if should_compress {
+        trace!("Compressing response");
         compress_response(response).await;
     }
 }
