@@ -5,9 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 1.0.2 - 22 May 2026
+
+Bug fix release
+
+### Fixed
+ - #28 - Make sure gzip compression is done, even if data is streaming and file cache is disabled
+ - #30 - Fix the proxy processor rewriting urls wrong in certain cases, where uri returns a full url and not just the path and query.
+ - #31 - Fix x-forwarded-host, which should contain port if non-standard. Also x-forwarded-for should only contain raw ip and not any ports.
+
 # Version 1.0.1 - 06 May 2026
 
-Minor bug fix release
+Bug fix release
 
 ### Fixed
 - #25 Fixed a issue in the static file processor, not correctly serving index file in subdirectories.
