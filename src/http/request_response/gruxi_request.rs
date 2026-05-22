@@ -151,15 +151,20 @@ impl GruxiRequest {
     }
 
     pub fn get_remote_ip_string(&self) -> String {
-        if let Some(remote_ip) = self.data.remote_ip {
-            remote_ip.to_string()
+        if let Some(remote_ip) = self.get_remote_ip() {
+            // Strip port from the remote IP for the X-Forwarded-For header, as it should only contain the IP address
+            let ip_only = match remote_ip {
+                SocketAddr::V4(addr) => addr.ip().to_string(),
+                SocketAddr::V6(addr) => addr.ip().to_string(),
+            };
+            ip_only
         } else {
             String::new()
         }
     }
 
     pub fn get_remote_ip_pretty(&self) -> String {
-        if let Some(remote_ip) = self.data.remote_ip {
+        if let Some(remote_ip) = self.get_remote_ip() {
             remote_ip.to_string()
         } else {
             "<unknown>".to_string()
@@ -325,8 +330,12 @@ impl GruxiRequest {
             .insert("X-Forwarded-Proto", HeaderValue::from_str(scheme).unwrap_or(HeaderValue::from_static("http")));
 
         // X-Forwarded-Host header
-        let hostname = &self.data.hostname;
-        self.parts.headers.insert("X-Forwarded-Host", HeaderValue::from_str(hostname).unwrap_or(HeaderValue::from_static("")));
+        let hostname_port = if let Some(port) = self.parts.uri.port_u16() {
+            format!("{}:{}", &self.data.hostname, port)
+        } else {
+            self.data.hostname.to_string()
+        };
+        self.parts.headers.insert("X-Forwarded-Host", HeaderValue::from_str(&hostname_port).unwrap_or(HeaderValue::from_static("")));
     }
 
     pub fn check_accepted_encoding(&self, encoding: &str) -> bool {
