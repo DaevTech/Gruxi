@@ -27,11 +27,11 @@ FROM --platform=$BUILDPLATFORM node:latest AS admin-portal
 
 WORKDIR /app
 
-COPY www-admin-src/yarn.lock www-admin-src/package.json ./
-RUN yarn install --frozen-lockfile
+COPY www-admin-src/package.json ./
+RUN npm install
 
 COPY www-admin-src/ ./
-RUN yarn run build
+RUN npm run build
 
 ############################
 # Runtime image
