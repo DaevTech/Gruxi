@@ -76,7 +76,7 @@ pub async fn compress_response(response: &mut GruxiResponse) {
 
 /// Compress content using gzip
 pub fn compress_content(content: &[u8], gzip_content: &mut Vec<u8>) -> Result<(), std::io::Error> {
-    let mut encoder = GzEncoder::new(gzip_content, flate2::Compression::default());
+    let mut encoder = GzEncoder::new(gzip_content, flate2::Compression::fast());
     encoder.write_all(content)?;
     encoder.finish()?;
     Ok(())

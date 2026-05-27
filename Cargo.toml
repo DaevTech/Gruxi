@@ -19,7 +19,7 @@ futures = "0.3.31"
 bcrypt = "0.19"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-flate2 = "1.0"
+flate2 = { version = "1.0", features = ["zlib-rs"] }
 tls-listener = { version = "0.11", features = ["rustls-core", "rustls-ring", "rt", "tokio-net"] }
 rcgen = { version = "0.14", features = ["ring", "pem"] }
 rand = "0.10.0"
@@ -118,6 +118,6 @@ post_install_script = "/usr/share/gruxi/rpm/postinst"
 shadow-utils = "*"
 
 
-#[[bench]]
-#name = "gruxi"
-#harness = false
+[[bench]]
+name = "gruxi"
+harness = false
