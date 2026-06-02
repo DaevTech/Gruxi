@@ -49,10 +49,10 @@ arc-swap = "1.8"
 # Service implementation
 qsu = { version = "0.10", features = ["rt", "tokio", "installer", "clap", "systemd"] }
 # Telemetry
-opentelemetry = { version = "0.28", features = ["metrics"] }
-opentelemetry_sdk = { version = "0.28", features = ["metrics", "rt-tokio"] }
-opentelemetry-prometheus = "0.28"
-prometheus = "0.13"
+opentelemetry = { version = "0.32", features = ["metrics"] }
+opentelemetry_sdk = { version = "0.32", features = ["metrics", "rt-tokio"] }
+opentelemetry-prometheus = "0.32"
+prometheus = "0.14"
 
 [lib]
 name = "gruxi"
