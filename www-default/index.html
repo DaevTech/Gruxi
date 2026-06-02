@@ -1,10 +1,240 @@
-<!DOCTYPE html>
-<html>
-    <head> </head>
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Gruxi Web Server</title>
+        <style>
+            :root {
+                color-scheme: light;
+                --bg-top: #f4efe6;
+                --bg-bottom: #d7e6e0;
+                --panel: rgba(255, 255, 255, 0.78);
+                --panel-strong: rgba(255, 255, 255, 0.92);
+                --text: #172126;
+                --muted: #51626a;
+                --brand: #0f766e;
+                --brand-deep: #124e66;
+                --accent: #d97706;
+                --border: rgba(23, 33, 38, 0.12);
+                --shadow: 0 24px 80px rgba(18, 36, 43, 0.14);
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                margin: 0;
+                min-height: 100vh;
+                font-family: 'Segoe UI', 'Trebuchet MS', sans-serif;
+                color: var(--text);
+                background: radial-gradient(circle at top left, rgba(217, 119, 6, 0.18), transparent 30%), radial-gradient(circle at right 20%, rgba(15, 118, 110, 0.2), transparent 25%), linear-gradient(160deg, var(--bg-top), var(--bg-bottom));
+                display: grid;
+                place-items: center;
+                padding: 32px;
+            }
+
+            body::before {
+                content: '';
+                position: fixed;
+                inset: 0;
+                background-image: linear-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.2) 1px, transparent 1px);
+                background-size: 36px 36px;
+                mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent 85%);
+                pointer-events: none;
+            }
+
+            main {
+                position: relative;
+                width: min(1080px, 100%);
+                display: grid;
+                gap: 24px;
+            }
+
+            .hero {
+                position: relative;
+                overflow: hidden;
+                padding: 40px;
+                border: 1px solid var(--border);
+                border-radius: 28px;
+                background: var(--panel);
+                backdrop-filter: blur(18px);
+                box-shadow: var(--shadow);
+            }
+
+            .hero::after {
+                content: '';
+                position: absolute;
+                width: 240px;
+                height: 240px;
+                right: -60px;
+                top: -70px;
+                border-radius: 50%;
+                background: radial-gradient(circle, rgba(15, 118, 110, 0.28), rgba(15, 118, 110, 0));
+            }
+
+            .eyebrow {
+                margin: 0 0 14px;
+                text-transform: uppercase;
+                letter-spacing: 0.24em;
+                font-size: 2rem;
+                font-weight: 700;
+                color: var(--brand);
+            }
+
+            h1 {
+                margin: 0;
+                max-width: 10ch;
+                font-size: clamp(2.8rem, 7vw, 5.8rem);
+                line-height: 0.95;
+                letter-spacing: -0.05em;
+            }
+
+            .lead {
+                margin: 20px 0 0;
+                max-width: 700px;
+                font-size: clamp(1.05rem, 2.2vw, 1.28rem);
+                line-height: 1.7;
+                color: var(--muted);
+            }
+
+            .actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 14px;
+                margin-top: 28px;
+            }
+
+            .button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 52px;
+                padding: 0 20px;
+                border-radius: 999px;
+                border: 1px solid transparent;
+                text-decoration: none;
+                font-weight: 700;
+                transition:
+                    transform 0.18s ease,
+                    box-shadow 0.18s ease,
+                    background-color 0.18s ease;
+            }
+
+            .button:hover,
+            .button:focus-visible {
+                transform: translateY(-2px);
+                box-shadow: 0 16px 30px rgba(18, 36, 43, 0.12);
+            }
+
+            .button.primary {
+                color: #ffffff;
+                background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+            }
+
+            .button.secondary {
+                color: var(--text);
+                background: var(--panel-strong);
+                border-color: var(--border);
+            }
+
+            .stats {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 16px;
+            }
+
+            .card {
+                padding: 22px;
+                border-radius: 22px;
+                border: 1px solid var(--border);
+                background: var(--panel-strong);
+                box-shadow: var(--shadow);
+            }
+
+            .card strong {
+                display: block;
+                margin-bottom: 8px;
+                font-size: 1.05rem;
+            }
+
+            .card p {
+                margin: 0;
+                line-height: 1.65;
+                color: var(--muted);
+            }
+
+            .card a {
+                color: var(--brand-deep);
+                text-decoration-thickness: 2px;
+                text-underline-offset: 0.18em;
+            }
+
+            @media (max-width: 760px) {
+                body {
+                    padding: 18px;
+                }
+
+                .hero {
+                    padding: 26px;
+                    border-radius: 24px;
+                }
+
+                h1 {
+                    max-width: none;
+                }
+
+                .stats {
+                    grid-template-columns: 1fr;
+                }
+
+                .button {
+                    width: 100%;
+                }
+            }
+        </style>
+    </head>
     <body>
-        <h1>Welcome to the default page for Gruxi webserver</h1>
-        <p>Dive further into the documentation to explore all features.</p>
-        <p><a href="https://github.com/DaevTech/Gruxi">Link to Gruxi github</a></p>
-        <p><a href="https://gruxi.org">Link to Gruxi documentation</a></p>
+        <main>
+            <section class="hero">
+                <p class="eyebrow">Gruxi Web Server</p>
+                <h1>Fast, sharp, and ready to serve.</h1>
+                <p class="lead">You have reached the default Gruxi landing page. From here you can jump into the project, read the documentation, or open the administration portal to start configuring your server.</p>
+                <p class="lead">
+                    Sign in to the administration portal with username <strong>admin</strong>. The generated password is shown in the output when Gruxi starts for the first time.
+                </p>
+
+                <div class="actions">
+                    <a class="button primary" href="https://localhost:8000">Open Administration Portal</a>
+                    <a class="button secondary" href="https://gruxi.org">Visit Gruxi.org</a>
+                    <a class="button secondary" href="https://github.com/DaevTech/Gruxi">View on GitHub</a>
+                </div>
+            </section>
+
+            <section class="stats" aria-label="Quick links and highlights">
+                <article class="card">
+                    <strong>Project Home</strong>
+                    <p>
+                        Explore guides, configuration details, and release information at
+                        <a href="https://gruxi.org">gruxi.org</a>.
+                    </p>
+                </article>
+                <article class="card">
+                    <strong>Source Code</strong>
+                    <p>
+                        Browse the codebase, releases, and issue tracker on
+                        <a href="https://github.com/DaevTech/Gruxi">GitHub</a>.
+                    </p>
+                </article>
+                <article class="card">
+                    <strong>Administration</strong>
+                    <p>
+                        Manage your local Gruxi instance through the admin portal at
+                        <a href="https://localhost:8000">https://localhost:8000</a>.
+                    </p>
+                </article>
+            </section>
+        </main>
     </body>
 </html>
