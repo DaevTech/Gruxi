@@ -283,6 +283,9 @@ impl ProcessorTrait for StaticFileProcessor {
 
         let mut response = GruxiResponse::new_with_body(status_code, stream);
 
+        // Set a resource id on the response, for caching
+        response.set_resource_id(normalized_path.get_full_path().to_string());
+
         // Handle conditional headers like If-*-Match and If-*Modified-Since if we have an ETag
         // Only for full content requests (status 200)
         if status_code == 200 {

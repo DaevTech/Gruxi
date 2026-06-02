@@ -11,3 +11,4 @@ pub mod tls;
 pub mod error;
 pub mod compression;
 pub mod database;
+pub mod util;

@@ -1,11 +1,17 @@
+use crate::logging::access_logging::AccessLogBuffer;
 use crate::{
-    debug, external_connections::external_system_handler::ExternalSystemHandler, file::file_reader_cache::FileReaderCache, http::{
+    compression::compression_cache::CompressionCache,
+    debug,
+    external_connections::external_system_handler::ExternalSystemHandler,
+    file::file_reader_cache::FileReaderCache,
+    http::{
         client::http_client::HttpClient,
         request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager},
         site_match::binding_site_cache::BindingSiteCache,
-    }, logging::log_rotation::LogRotation
+    },
+    logging::log_rotation::LogRotation,
+    util::access_counters::AccessCounters,
 };
-use crate::logging::access_logging::AccessLogBuffer;
 
 pub struct RunningState {
     pub access_log_buffer: AccessLogBuffer,
@@ -16,6 +22,8 @@ pub struct RunningState {
     pub http_client: HttpClient,
     pub binding_site_cache: BindingSiteCache,
     pub log_rotation: LogRotation,
+    pub compression_cache: CompressionCache,
+    pub access_counters: AccessCounters,
 }
 
 impl RunningState {
@@ -47,10 +55,18 @@ impl RunningState {
         // Start binding site cache
         let binding_site_cache = BindingSiteCache::new();
         binding_site_cache.init().await;
-        debug!("Binding<>site cache initialized");
+        debug!("Binding <> site cache initialized");
 
         // Start log rotation manager
         let log_rotation = LogRotation::new().await;
+
+        // Start compression cache
+        let compression_cache = CompressionCache::new();
+        debug!("Compression cache initialized");
+
+        // Start access counters
+        let access_counters = AccessCounters::new();
+        debug!("Access counters initialized");
 
         RunningState {
             access_log_buffer,
@@ -61,6 +77,8 @@ impl RunningState {
             http_client,
             binding_site_cache,
             log_rotation,
+            compression_cache,
+            access_counters,
         }
     }
 
@@ -94,5 +112,13 @@ impl RunningState {
 
     pub fn get_log_rotation(&self) -> &LogRotation {
         &self.log_rotation
+    }
+
+    pub fn get_compression_cache(&self) -> &CompressionCache {
+        &self.compression_cache
+    }
+
+    pub fn get_access_counters(&self) -> &AccessCounters {
+        &self.access_counters
     }
 }

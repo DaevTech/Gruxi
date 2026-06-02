@@ -21,6 +21,7 @@ pub struct GruxiResponse {
 #[derive(Debug)]
 struct GruxiResponseData {
     body_size_hint: u64,
+    resource_id: Option<String>,
 }
 
 impl GruxiResponse {
@@ -42,7 +43,7 @@ impl GruxiResponse {
         let (parts, _body) = response.into_parts();
         let body = GruxiBody::Buffered(Bytes::new());
 
-        let data = GruxiResponseData { body_size_hint };
+        let data = GruxiResponseData { body_size_hint, resource_id: None };
 
         Self { parts, body, data }
     }
@@ -73,7 +74,7 @@ impl GruxiResponse {
         let body = GruxiBody::Streaming(body);
 
         // Request data
-        let data = GruxiResponseData { body_size_hint};
+        let data = GruxiResponseData { body_size_hint, resource_id: None };
 
         Self { parts, body, data }
     }
@@ -92,7 +93,7 @@ impl GruxiResponse {
         let body = GruxiBody::Buffered(bytes);
 
         // Request data
-        let data = GruxiResponseData { body_size_hint};
+        let data = GruxiResponseData { body_size_hint, resource_id: None };
 
         Self { parts, body, data }
     }
@@ -115,6 +116,14 @@ impl GruxiResponse {
 
     pub fn get_status(&self) -> u16 {
         self.parts.status.as_u16()
+    }
+
+    pub fn get_resource_id(&self) -> String {
+        self.data.resource_id.clone().unwrap_or_else(|| "".to_string())
+    }
+
+    pub fn set_resource_id(&mut self, resource_id: String) {
+        self.data.resource_id = Some(resource_id);
     }
 
     // Returns the full body bytes. Beware this consumes the internal body bytes

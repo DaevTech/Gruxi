@@ -69,8 +69,8 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, co
         admin_get_operation_mode_endpoint(gruxi_request, site).await
     } else if path_cleaned == "/operation-mode" && method == "POST" {
         admin_post_operation_mode_endpoint(gruxi_request, site).await
-    } else if path_cleaned == "/cache/file/clear" && method == "POST" {
-        admin_post_file_cache_clear_endpoint(gruxi_request, site, connection_context).await
+    } else if path_cleaned == "/cache/clear" && method == "POST" {
+        admin_post_cache_clear_endpoint(gruxi_request, site, connection_context).await
     } else if path_cleaned == "/user/password" && method == "POST" {
         handle_password_change(gruxi_request, site).await
     } else {
@@ -838,12 +838,12 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
     Ok(response)
 }
 
-// Admin file cache clear POST endpoint - clears the file reader cache
-pub async fn admin_post_file_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site, connection_context: &Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
+// Admin cache clear POST endpoint - clears the caches
+pub async fn admin_post_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site, connection_context: &Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
     match require_authentication(gruxi_request).await {
         Ok(Some(_session)) => {
-            debug!("User authenticated for file cache clear");
+            debug!("User authenticated for cache clear");
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
@@ -857,8 +857,9 @@ pub async fn admin_post_file_cache_clear_endpoint(gruxi_request: &mut GruxiReque
 
     // Clear the file reader cache
     connection_context.running_state.get_file_reader_cache().clear_cache();
+    connection_context.running_state.get_compression_cache().clear();
 
-    let return_message = "File reader cache cleared".to_string();
+    let return_message = "Caches cleared".to_string();
     let success_response = serde_json::json!({
         "success": true,
         "message": return_message

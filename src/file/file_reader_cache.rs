@@ -8,9 +8,7 @@ use crate::{
     config::cached_configuration::get_cached_configuration,
     core::triggers::get_trigger_handler,
     debug, error,
-    file::{
-        file_entry::{ContentCache, FileEntry, FileMeta},
-    },
+    file::file_entry::{ContentCache, FileEntry, FileMeta},
     http::caching::etag::etag_strong_from_metadata,
     trace, warn,
 };
@@ -47,7 +45,6 @@ pub struct FileReaderCache {
     pub expires_header_enabled: bool,
     pub cache_control_header_enabled: bool,
 }
-
 
 impl FileReaderCache {
     pub async fn new() -> Self {
@@ -174,23 +171,21 @@ impl FileReaderCache {
 
         // Not found in caches, so we populate it, maybe saving it to cache if enabled
         trace!("File/dir not found in cache, reading from disk: {}", file_path);
-        let metadata_result = tokio::fs::metadata(file_path).await;
-        let (length, exists, is_directory, last_modified) = match metadata_result {
-            Ok(metadata) => (metadata.len(), true, metadata.is_dir(), metadata.modified().unwrap_or(SystemTime::now())),
-            Err(_) => (0, false, false, SystemTime::now()),
-        };
-
-        // We check for a quick disconnect if the file/path was not found, to avoid unnecessary work for non-existent files
-        if !exists {
-            if self.is_caching_enabled && self.cache_404.len() < self.cache_404_max_size as usize {
-                self.cache_404.insert(file_path.to_string(), Instant::now());
+        let metadata_result = std::fs::metadata(file_path);
+        let (length, is_directory, last_modified) = match metadata_result {
+            Ok(metadata) => (metadata.len(), metadata.is_dir(), metadata.modified().unwrap_or(SystemTime::now())),
+            Err(_) => {
+                // If file doesn't exist, we add to 404 cache and return an empty result, to avoid unnecessary disk reads for non-existent files in the future
+                if self.is_caching_enabled && self.cache_404.len() < self.cache_404_max_size as usize {
+                    self.cache_404.insert(file_path.to_string(), Instant::now());
+                }
+                return Ok(self.get_empty_file_with_path(file_path));
             }
-            return Ok(self.get_empty_file_with_path(file_path));
-        }
+        };
 
         // Determine MIME type, if we have a file
         let mut mime_type = String::new();
-        if !is_directory && exists {
+        if !is_directory {
             mime_type = mime_guess::from_path(file_path).first_or_octet_stream().to_string();
             trace!("Guessed MIME type for {}: {}", file_path, mime_type);
         }
@@ -198,7 +193,7 @@ impl FileReaderCache {
         let should_compress = self.should_compress(&mime_type, length);
 
         // Calculate ETag if enabled
-        let etag_header = if self.etag_enabled && !is_directory && exists {
+        let etag_header = if self.etag_enabled && !is_directory {
             let etag_value = etag_strong_from_metadata(length, last_modified);
             Some(etag_value)
         } else {
@@ -249,7 +244,7 @@ impl FileReaderCache {
             meta: FileMeta {
                 file_path: file_path_string.clone(),
                 is_directory,
-                exists,
+                exists: true,
                 length,
                 is_too_large_to_store: length > self.max_file_size,
                 mime_type,
@@ -263,18 +258,17 @@ impl FileReaderCache {
         };
 
         // Pre-fetch content of file if caching is enabled
-        if self.is_caching_enabled && !is_directory && exists && length <= self.max_file_size {
-            match tokio::fs::read(file_path).await {
+        if self.is_caching_enabled && !is_directory && length <= self.max_file_size {
+            match std::fs::read(file_path) {
                 Ok(file_bytes) => {
                     let raw_bytes = Bytes::from(file_bytes);
                     file_entry.content.raw = Some(raw_bytes);
 
                     if should_compress {
                         let raw_content = file_entry.content.raw.as_ref().unwrap();
-                        let mut gzip_content = Vec::new();
-                        match compress_content(raw_content, &mut gzip_content) {
-                            Ok(_) => {
-                                file_entry.content.gzip = Some(Bytes::from(gzip_content));
+                        match compress_content(raw_content) {
+                            Ok(compressed_bytes) => {
+                                file_entry.content.gzip = Some(Bytes::from(compressed_bytes));
                             }
                             Err(e) => {
                                 warn!("Failed to compress file {}: {}", file_path, e);
@@ -309,7 +303,8 @@ impl FileReaderCache {
     // Check if a MIME type should be compressed
     pub fn should_compress(&self, mime_type: &str, content_length: u64) -> bool {
         if self.gzip_enabled {
-            let check_should_compress = (content_length == 0 || content_length > 1024) && content_length < 10 * 1024 * 1024 && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
+            let check_should_compress =
+                (content_length == 0 || content_length > 1024) && content_length < 10 * 1024 * 1024 && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
             trace!(
                 "Should compress check for MIME type {} and content_length: {} - Result: {}",
                 mime_type, content_length, check_should_compress
@@ -360,7 +355,12 @@ impl FileReaderCache {
             let cache_404_len_before = cache_404.len();
             cache_404.retain(|_, instant| instant.elapsed() <= max_item_lifetime_duration);
             let cache_404_len_after = cache_404.len();
-            trace!("[FileCacheUpdate] 404 cache cleanup completed - Cache count before ({}) - Cache count after ({}) - Removed {} entries", cache_404_len_before, cache_404_len_after, cache_404_len_before - cache_404_len_after);
+            trace!(
+                "[FileCacheUpdate] 404 cache cleanup completed - Cache count before ({}) - Cache count after ({}) - Removed {} entries",
+                cache_404_len_before,
+                cache_404_len_after,
+                cache_404_len_before - cache_404_len_after
+            );
 
             // Check if we are above the eviction threshold, and if so, we remove items that have been in cache for too long
             trace!("[FileCacheUpdate] Checking if we are above the eviction threshold, so we can delete files in cache that have been in cache for too long");

@@ -213,10 +213,10 @@ impl FileEntry {
         if self.content.raw.is_none() && self.content.gzip.is_none() {
             trace!("No cached file data content is present, so we return from the filesystem instead (full if small and stream if big)");
 
-            // For smaller files (<= 64 KB), return full content, otherwise stream
-            if self.meta.length <= 64 * 1024 {
+            // For smaller files (<= 128 KB), return full content, otherwise stream
+            if self.meta.length <= 128 * 1024 {
                 // Small file, return full
-                let file_bytes = match tokio::fs::read(&self.meta.file_path).await {
+                let file_bytes = match std::fs::read(&self.meta.file_path) {
                     Ok(bytes) => bytes,
                     Err(e) => {
                         trace!("Failed to read file {} for full content: {}", self.meta.file_path, e);
@@ -236,7 +236,7 @@ impl FileEntry {
                 }
             };
 
-            let stream = ReaderStream::new(file).map_ok(Frame::data);
+            let stream = ReaderStream::with_capacity(file, 64 * 1024).map_ok(Frame::data);
             let streambody = http_body_util::BodyExt::map_err(StreamBody::new(stream), box_err);
             return (BoxBody::new(streambody), ContentResult::Full { encoding: None });
         }

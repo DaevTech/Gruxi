@@ -138,7 +138,7 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
 
     // Consider gzipping content if not already gzipped
     if running_state.get_file_reader_cache().gzip_enabled {
-        maybe_compress_response(&gruxi_request, &mut response, running_state.get_file_reader_cache()).await;
+        maybe_compress_response(&gruxi_request, &mut response, running_state).await;
     }
 
     // Vector for additional headers to set

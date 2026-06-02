@@ -78,7 +78,7 @@ const clearFileCache = async () => {
             return;
         }
 
-        const response = await fetch('/cache/file/clear', {
+        const response = await fetch('/cache/clear', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${token}`,

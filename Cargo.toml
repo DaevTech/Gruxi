@@ -2,7 +2,7 @@
 name = "gruxi"
 homepage = "https://gruxi.org"
 description = "High‑performance web server"
-version = "1.0.2"
+version = "1.0.3"
 license = "MIT"
 edition = "2024"
 
@@ -17,9 +17,10 @@ serde_json = "1.0.141"
 mime_guess = "2.0.5"
 futures = "0.3.31"
 bcrypt = "0.19"
+moka = { version = "0.5", features = ["future"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-flate2 = { version = "1.0", features = ["zlib-rs"] }
+flate2 = { version = "1.0", features = ["zlib-rs"], default-features = false }
 tls-listener = { version = "0.11", features = ["rustls-core", "rustls-ring", "rt", "tokio-net"] }
 rcgen = { version = "0.14", features = ["ring", "pem"] }
 rand = "0.10.0"
