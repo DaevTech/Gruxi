@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive } from 'vue';
+import { apiFetch } from '../api';
 
 const emit = defineEmits(['close', 'password-changed']);
 
@@ -45,13 +46,8 @@ const handleSubmit = async () => {
     successMessage.value = '';
 
     try {
-        const token = localStorage.getItem('gruxi_session_token');
-        const response = await fetch('/user/password', {
+        const response = await apiFetch('/user/password', {
             method: 'POST',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-            },
             body: JSON.stringify({
                 old_password: form.oldPassword,
                 new_password: form.newPassword,

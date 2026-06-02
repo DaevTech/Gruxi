@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
+import { apiFetch } from './api'
 import LoginForm from './components/LoginForm.vue'
 import AdminDashboard from './components/AdminDashboard.vue'
 
@@ -13,34 +14,18 @@ const user = reactive({
 
 // Check for existing session on app load
 onMounted(async () => {
-  const savedToken = localStorage.getItem('gruxi_session_token')
-  const savedUsername = localStorage.getItem('gruxi_username')
+  try {
+    const response = await apiFetch('/basic', {
+      method: 'GET'
+    })
 
-  if (savedToken && savedUsername) {
-    // Verify the token is still valid by making a test request
-    try {
-      const response = await fetch('/config', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${savedToken}`,
-          'Content-Type': 'application/json'
-        }
-      })
-
-      if (response.ok) {
-        user.sessionToken = savedToken
-        user.username = savedUsername
-        isAuthenticated.value = true
-      } else {
-        // Token is invalid, clear it
-        localStorage.removeItem('gruxi_session_token')
-        localStorage.removeItem('gruxi_username')
-      }
-    } catch (error) {
-      console.error('Error verifying session:', error)
-      localStorage.removeItem('gruxi_session_token')
-      localStorage.removeItem('gruxi_username')
+    if (response.ok) {
+      const data = await response.json()
+      user.username = data.username || ''
+      isAuthenticated.value = true
     }
+  } catch (error) {
+    console.error('Error verifying session:', error)
   }
 
   isLoading.value = false
@@ -49,23 +34,15 @@ onMounted(async () => {
 // Handle successful login
 const handleLoginSuccess = (loginData) => {
   user.username = loginData.username
-  user.sessionToken = loginData.session_token
+  user.sessionToken = ''
   isAuthenticated.value = true
-
-  // Save to localStorage
-  localStorage.setItem('gruxi_session_token', loginData.session_token)
-  localStorage.setItem('gruxi_username', loginData.username)
 }
 
 // Handle logout
 const handleLogout = async () => {
   try {
-    await fetch('/logout', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${user.sessionToken}`,
-        'Content-Type': 'application/json'
-      }
+    await apiFetch('/logout', {
+      method: 'POST'
     })
   } catch (error) {
     console.error('Error during logout:', error)
@@ -74,10 +51,6 @@ const handleLogout = async () => {
     user.username = ''
     user.sessionToken = ''
     isAuthenticated.value = false
-
-    // Clear localStorage
-    localStorage.removeItem('gruxi_session_token')
-    localStorage.removeItem('gruxi_username')
   }
 }
 </script>

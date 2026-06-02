@@ -14,10 +14,13 @@ use crate::http::http_server::ConnectionContext;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::{debug, error, info, trace};
+use chrono::Utc;
 use http::HeaderValue;
+use hyper::header::SET_COOKIE;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use tokio::fs::read_to_string;
+use uuid::Uuid;
 
 use std::fs::{metadata, read_dir};
 use std::path::Path;
@@ -27,6 +30,10 @@ use tokio_util::bytes;
 
 const JSON_HEADER_VALUE: HeaderValue = HeaderValue::from_static("application/json");
 const TEXT_PLAIN_HEADER_VALUE: HeaderValue = HeaderValue::from_static("text/plain");
+const ADMIN_SESSION_COOKIE_NAME: &str = "__Host-gruxi_admin_session";
+const ADMIN_CSRF_COOKIE_NAME: &str = "__Host-gruxi_admin_csrf";
+const ADMIN_CSRF_HEADER_NAME: &str = "X-CSRF-Token";
+const ADMIN_COOKIE_MAX_AGE_SECONDS: i64 = 24 * 60 * 60;
 
 pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
     let path = gruxi_request.get_path();
@@ -154,17 +161,19 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
 
     info!("Successful login for user: {}", user.username);
 
+    let csrf_token = generate_csrf_token();
+
     // Return success response with session token
     let response_json = serde_json::json!({
         "success": true,
         "message": "Login successful",
-        "session_token": session.token,
         "username": session.username,
         "expires_at": session.expires_at.to_rfc3339()
     });
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
     response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+    attach_admin_auth_cookies(gruxi_request, &mut response, &session.token, &csrf_token, session.expires_at.timestamp())?;
     Ok(response)
 }
 
@@ -189,23 +198,27 @@ pub async fn handle_logout_request(gruxi_request: &mut GruxiRequest, _admin_site
                 });
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
                 response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+                clear_admin_auth_cookies(gruxi_request, &mut response)?;
                 Ok(response)
             }
             Ok(false) => {
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::NOT_FOUND.as_u16(), bytes::Bytes::from(r#"{"error": "Session not found"}"#));
                 response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+                clear_admin_auth_cookies(gruxi_request, &mut response)?;
                 Ok(response)
             }
             Err(e) => {
                 error!("Failed to logout session: {}", e);
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(), bytes::Bytes::from(r#"{"error": "Internal server error"}"#));
                 response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+                clear_admin_auth_cookies(gruxi_request, &mut response)?;
                 Ok(response)
             }
         }
     } else {
         let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::BAD_REQUEST.as_u16(), bytes::Bytes::from(r#"{"error": "No session token provided"}"#));
         response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+        clear_admin_auth_cookies(gruxi_request, &mut response)?;
         Ok(response)
     }
 }
@@ -264,7 +277,7 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
 
 pub async fn admin_post_configuration_reload(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
-    match require_authentication(gruxi_request).await {
+    match require_authenticated_action(gruxi_request).await {
         Ok(Some(_session)) => {
             // User is authenticated, proceed with reloading configuration
             debug!("User authenticated, reloading configuration");
@@ -312,7 +325,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
     }
 
     // Check authentication first
-    match require_authentication(gruxi_request).await {
+    match require_authenticated_action(gruxi_request).await {
         Ok(Some(_session)) => {
             debug!("User authenticated for configuration update");
         }
@@ -422,6 +435,10 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
 
 // Helper function to extract session token from request
 async fn get_session_token_from_request(gruxi_request: &GruxiRequest) -> Option<String> {
+    if let Some(session_cookie) = get_cookie_value(gruxi_request, &[ADMIN_SESSION_COOKIE_NAME]) {
+        return Some(session_cookie);
+    }
+
     // First, check for Authorization header (Bearer token)
     if let Some(auth_header) = gruxi_request.get_headers().get("Authorization")
         && let Ok(auth_str) = auth_header.to_str()
@@ -448,6 +465,7 @@ pub async fn require_authentication(gruxi_request: &GruxiRequest) -> Result<Opti
             Ok(None) => {
                 let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid or expired session"}"#));
                 response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+                let _ = clear_admin_auth_cookies(gruxi_request, &mut response);
                 Err(response)
             }
             Err(e) => {
@@ -462,6 +480,16 @@ pub async fn require_authentication(gruxi_request: &GruxiRequest) -> Result<Opti
         response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
         Err(response)
     }
+}
+
+pub async fn require_authenticated_action(gruxi_request: &GruxiRequest) -> Result<Option<crate::core::admin_user::Session>, GruxiResponse> {
+    let session = require_authentication(gruxi_request).await?;
+
+    if let Err(response) = require_csrf_token(gruxi_request) {
+        return Err(response);
+    }
+
+    Ok(session)
 }
 
 // Admin monitoring endpoint - returns monitoring data as JSON
@@ -493,8 +521,22 @@ pub async fn admin_monitoring_endpoint(gruxi_request: &mut GruxiRequest, _admin_
 pub async fn admin_get_basic_data_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
     match require_authentication(gruxi_request).await {
-        Ok(Some(_session)) => {
+        Ok(Some(session)) => {
             debug!("User authenticated, retrieving basic data for admin portal");
+
+            let app_paths = get_app_paths();
+            let csrf_token = generate_csrf_token();
+
+            let response_json = serde_json::json!({
+                "gruxi_version": env!("CARGO_PKG_VERSION"),
+                "app_paths": app_paths,
+                "username": session.username
+            });
+
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            attach_admin_csrf_cookie(gruxi_request, &mut response, &csrf_token, session.expires_at.timestamp())?;
+            return Ok(response);
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
@@ -505,17 +547,6 @@ pub async fn admin_get_basic_data_endpoint(gruxi_request: &mut GruxiRequest, _ad
             return Ok(auth_response);
         }
     }
-
-    let app_paths = get_app_paths();
-
-    let response_json = serde_json::json!({
-        "gruxi_version": env!("CARGO_PKG_VERSION"),
-        "app_paths": app_paths
-    });
-
-    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
-    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
-    Ok(response)
 }
 
 // Admin healthcheck endpoint - returns simple status without authentication
@@ -768,7 +799,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
     }
 
     // Check authentication first
-    match require_authentication(gruxi_request).await {
+    match require_authenticated_action(gruxi_request).await {
         Ok(Some(_session)) => {
             debug!("User authenticated for operation mode update");
         }
@@ -841,7 +872,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
 // Admin cache clear POST endpoint - clears the caches
 pub async fn admin_post_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site, connection_context: &Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
-    match require_authentication(gruxi_request).await {
+    match require_authenticated_action(gruxi_request).await {
         Ok(Some(_session)) => {
             debug!("User authenticated for cache clear");
         }
@@ -878,7 +909,7 @@ struct PasswordChangeRequest {
 
 pub async fn handle_password_change(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check authentication
-    let session = match require_authentication(gruxi_request).await {
+    let session = match require_authenticated_action(gruxi_request).await {
         Ok(Some(s)) => s,
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
@@ -928,6 +959,7 @@ pub async fn handle_password_change(gruxi_request: &mut GruxiRequest, _admin_sit
             });
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            clear_admin_auth_cookies(gruxi_request, &mut response)?;
             Ok(response)
         }
         Ok(false) => {
@@ -942,4 +974,115 @@ pub async fn handle_password_change(gruxi_request: &mut GruxiRequest, _admin_sit
             Ok(response)
         }
     }
+}
+
+fn generate_csrf_token() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+fn require_csrf_token(gruxi_request: &GruxiRequest) -> Result<(), GruxiResponse> {
+    let cookie_token = match get_cookie_value(gruxi_request, &[ADMIN_CSRF_COOKIE_NAME]) {
+        Some(token) => token,
+        None => {
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::FORBIDDEN.as_u16(), bytes::Bytes::from(r#"{"error": "Missing CSRF cookie"}"#));
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            return Err(response);
+        }
+    };
+
+    let header_token = match gruxi_request.get_headers().get(ADMIN_CSRF_HEADER_NAME).and_then(|header| header.to_str().ok()) {
+        Some(token) if !token.is_empty() => token,
+        _ => {
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::FORBIDDEN.as_u16(), bytes::Bytes::from(r#"{"error": "Missing CSRF token"}"#));
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+            return Err(response);
+        }
+    };
+
+    if header_token != cookie_token {
+        let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::FORBIDDEN.as_u16(), bytes::Bytes::from(r#"{"error": "Invalid CSRF token"}"#));
+        response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+        return Err(response);
+    }
+
+    Ok(())
+}
+
+fn get_cookie_value(gruxi_request: &GruxiRequest, cookie_names: &[&str]) -> Option<String> {
+    for cookie_header in gruxi_request.get_headers().get_all("Cookie") {
+        let cookie_header = match cookie_header.to_str() {
+            Ok(cookie_header) => cookie_header,
+            Err(_) => continue,
+        };
+
+        for cookie in cookie_header.split(';') {
+            let trimmed_cookie = cookie.trim();
+            let Some((name, value)) = trimmed_cookie.split_once('=') else {
+                continue;
+            };
+
+            if cookie_names.iter().any(|cookie_name| name == *cookie_name) {
+                return Some(value.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn attach_admin_auth_cookies(_gruxi_request: &GruxiRequest, response: &mut GruxiResponse, session_token: &str, csrf_token: &str, expires_at_timestamp: i64) -> Result<(), GruxiError> {
+    let max_age = (expires_at_timestamp - Utc::now().timestamp()).max(0);
+    append_set_cookie_header(
+        response,
+        build_cookie_header(ADMIN_SESSION_COOKIE_NAME, session_token, Some(max_age), true, true),
+    )?;
+    append_set_cookie_header(
+        response,
+        build_cookie_header(ADMIN_CSRF_COOKIE_NAME, csrf_token, Some(max_age), false, true),
+    )?;
+    Ok(())
+}
+
+fn attach_admin_csrf_cookie(_gruxi_request: &GruxiRequest, response: &mut GruxiResponse, csrf_token: &str, expires_at_timestamp: i64) -> Result<(), GruxiError> {
+    let max_age = (expires_at_timestamp - Utc::now().timestamp()).max(0);
+    append_set_cookie_header(
+        response,
+        build_cookie_header(ADMIN_CSRF_COOKIE_NAME, csrf_token, Some(max_age), false, true),
+    )?;
+    Ok(())
+}
+
+fn clear_admin_auth_cookies(_gruxi_request: &GruxiRequest, response: &mut GruxiResponse) -> Result<(), GruxiError> {
+    append_set_cookie_header(response, build_cookie_header(ADMIN_SESSION_COOKIE_NAME, "", Some(0), true, true))?;
+    append_set_cookie_header(response, build_cookie_header(ADMIN_CSRF_COOKIE_NAME, "", Some(0), false, true))?;
+    Ok(())
+}
+
+fn append_set_cookie_header(response: &mut GruxiResponse, cookie_value: String) -> Result<(), GruxiError> {
+    let header_value = HeaderValue::from_str(&cookie_value).map_err(|_| GruxiError::new_with_kind_only(GruxiErrorKind::AdminApi(AdminApiError::InvalidRequest)))?;
+    response.headers_mut().append(SET_COOKIE, header_value);
+    Ok(())
+}
+
+fn build_cookie_header(name: &str, value: &str, max_age: Option<i64>, http_only: bool, secure: bool) -> String {
+    let mut cookie = format!("{}={}; Path=/; SameSite=Strict", name, value);
+
+    if secure {
+        cookie.push_str("; Secure");
+    }
+
+    if http_only {
+        cookie.push_str("; HttpOnly");
+    }
+
+    if let Some(max_age_value) = max_age {
+        cookie.push_str(&format!("; Max-Age={}", max_age_value));
+        if max_age_value == 0 {
+            cookie.push_str("; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+        }
+    } else {
+        cookie.push_str(&format!("; Max-Age={}", ADMIN_COOKIE_MAX_AGE_SECONDS));
+    }
+
+    cookie
 }

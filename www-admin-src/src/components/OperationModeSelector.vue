@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import { apiFetch } from '../api'
 
 const props = defineProps({
   user: {
@@ -23,18 +24,8 @@ const modes = [
 // Fetch current operation mode
 const fetchOperationMode = async () => {
   try {
-    const token = localStorage.getItem('gruxi_session_token')
-    if (!token) {
-      console.error('No session token available')
-      return
-    }
-
-    const response = await fetch('/operation-mode', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
+    const response = await apiFetch('/operation-mode', {
+      method: 'GET'
     })
 
     if (response.ok) {
@@ -61,19 +52,8 @@ const changeOperationMode = async (event) => {
   errorMessage.value = ''
 
   try {
-    const token = localStorage.getItem('gruxi_session_token')
-    if (!token) {
-      errorMessage.value = 'Not authenticated'
-      isChanging.value = false
-      return
-    }
-
-    const response = await fetch('/operation-mode', {
+    const response = await apiFetch('/operation-mode', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
       body: JSON.stringify({ mode: newMode })
     })
 

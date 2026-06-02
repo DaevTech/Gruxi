@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
+import { apiFetch } from '../api';
 import LogViewer from './LogViewer.vue';
 import ConfigurationEditor from './ConfigurationEditor.vue';
 import OperationModeSelector from './OperationModeSelector.vue';
@@ -72,18 +73,8 @@ const clearFileCache = async () => {
 
     try {
         isClearingFileCache.value = true;
-        const token = localStorage.getItem('gruxi_session_token');
-        if (!token) {
-            console.error('No session token available');
-            return;
-        }
-
-        const response = await fetch('/cache/clear', {
+        const response = await apiFetch('/cache/clear', {
             method: 'POST',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-            },
         });
 
         if (response.ok) {
@@ -113,24 +104,15 @@ const toggleSidebar = () => {
 // Function to fetch basic data from API
 const updateBasicData = async () => {
     try {
-        const token = props.user?.sessionToken || localStorage.getItem('gruxi_session_token');
-        if (!token) {
-            basicData.gruxiVersion = '...';
-            return;
-        }
-
-        const response = await fetch('/basic', {
+        const response = await apiFetch('/basic', {
             method: 'GET',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-            },
         });
 
         if (response.ok) {
             const data = await response.json();
             basicData.gruxiVersion = data.gruxi_version || '...';
             basicData.appPaths = data.app_paths || null;
+            props.user.username = data.username || props.user.username;
         } else if (response.status === 401) {
             emit('logout');
         } else {
@@ -152,19 +134,8 @@ const updateStats = async () => {
     }
 
     try {
-        const token = localStorage.getItem('gruxi_session_token');
-        if (!token) {
-            console.error('No session token available');
-            stats.serverStatus = 'Running';
-            return;
-        }
-
-        const response = await fetch('/monitoring', {
+        const response = await apiFetch('/monitoring', {
             method: 'GET',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-            },
         });
 
         if (response.ok) {
@@ -216,7 +187,7 @@ const updateStats = async () => {
 // Function to check server health using the healthcheck endpoint
 const checkHealth = async () => {
     try {
-        const response = await fetch('/healthcheck', {
+        const response = await apiFetch('/healthcheck', {
             method: 'GET',
         });
 

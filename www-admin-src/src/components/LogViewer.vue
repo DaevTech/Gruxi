@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, onMounted, nextTick } from 'vue'
+import { apiFetch } from '../api'
 
 // Define props
 const props = defineProps({
@@ -42,12 +43,8 @@ const loadLogFiles = async () => {
   error.value = ''
 
   try {
-    const response = await fetch('/logs', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${props.user.sessionToken}`,
-        'Content-Type': 'application/json'
-      }
+    const response = await apiFetch('/logs', {
+      method: 'GET'
     })
 
     if (response.ok) {
@@ -83,12 +80,8 @@ const loadLogContent = async (filename) => {
   logContent.value = ''
 
   try {
-    const response = await fetch(`/logs/${filename}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${props.user.sessionToken}`,
-        'Content-Type': 'application/json'
-      }
+    const response = await apiFetch(`/logs/${filename}`, {
+      method: 'GET'
     })
 
     if (response.ok) {

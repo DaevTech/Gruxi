@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
+import { apiFetch } from '../api'
 
 // Define emits
 const emit = defineEmits(['login-success'])
@@ -24,7 +25,7 @@ const handleSubmit = async () => {
   error.value = ''
 
   try {
-    const response = await fetch('/login', {
+    const response = await apiFetch('/login', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

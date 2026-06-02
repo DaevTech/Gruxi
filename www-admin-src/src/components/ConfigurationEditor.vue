@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
+import { apiFetch } from '../api';
 import TagInput from './TagInput.vue';
 
 // Define props
@@ -70,12 +71,8 @@ const loadConfiguration = async () => {
     error.value = '';
 
     try {
-        const response = await fetch('/config', {
+        const response = await apiFetch('/config', {
             method: 'GET',
-            headers: {
-                Authorization: `Bearer ${props.user.sessionToken}`,
-                'Content-Type': 'application/json',
-            },
         });
 
         if (response.ok) {
@@ -115,12 +112,8 @@ const confirmReloadConfiguration = async () => {
     const maxRetries = 5;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch('/configuration/reload', {
+            const response = await apiFetch('/configuration/reload', {
                 method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${props.user.sessionToken}`,
-                    'Content-Type': 'application/json',
-                },
             });
 
             if (response.ok) {
@@ -156,12 +149,8 @@ const saveConfiguration = async () => {
     successMessage.value = '';
 
     try {
-        const response = await fetch('/config', {
+        const response = await apiFetch('/config', {
             method: 'POST',
-            headers: {
-                Authorization: `Bearer ${props.user.sessionToken}`,
-                'Content-Type': 'application/json',
-            },
             body: JSON.stringify(config.value),
         });
 
