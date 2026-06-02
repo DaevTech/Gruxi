@@ -8,7 +8,7 @@ pub struct CompressionCache {
     cache: Cache<String, Bytes>,
 }
 
-const COMPRESSION_CACHE_MAX_CAPACITY: usize = 100;
+const COMPRESSION_CACHE_MAX_CAPACITY: u64 = 100;
 const COMPRESSION_CACHE_TTL_SECONDS: u64 = 10;
 const COMPRESSION_CACHE_TTI_SECONDS: u64 = 5;
 const COMPRESSION_CACHE_MAX_SIZE: usize = 1 * 1024 * 1024; // 1 MB
@@ -23,7 +23,7 @@ impl CompressionCache {
     }
 
     pub async fn get(&self, key: &String) -> Option<Bytes> {
-        self.cache.get(key)
+        self.cache.get(key).await
     }
 
     pub async fn insert(&self, key: String, value: Bytes) {

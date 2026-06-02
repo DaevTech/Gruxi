@@ -66,7 +66,8 @@ mod tests {
         assert!(window.hit()); // Exceeds window size
         assert_eq!(window.get_hit_count(), 3);
         sleep(Duration::from_secs(1));
-        assert!(window.hit()); // Old hits should be cleaned up
+        assert_eq!(window.get_hit_count(), 0);
+        assert!(!window.hit()); // Old hits should be cleaned up
         assert_eq!(window.get_hit_count(), 1);
     }
 }
