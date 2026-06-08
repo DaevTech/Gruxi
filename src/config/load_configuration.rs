@@ -227,6 +227,11 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
         let value: String = statement.read(1).map_err(|e| format!("Failed to read value: {}", e))?;
 
         match key.as_str() {
+            // Caching
+            "caching_is_short_lived_caches_allowed" => {
+                core.caching.is_short_lived_caches_allowed = value.parse::<bool>().map_err(|e| format!("Failed to parse caching_is_short_lived_caches_allowed: {}", e))?;
+            }
+
             // File cache
             "file_cache_is_enabled" => {
                 core.file_cache.is_enabled = value.parse::<bool>().map_err(|e| format!("Failed to parse file_cache_is_enabled: {}", e))?;

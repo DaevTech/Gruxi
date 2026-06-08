@@ -1,4 +1,5 @@
 use crate::config::admin_portal::AdminPortal;
+use crate::config::caching::Caching;
 use crate::config::core::Core;
 use crate::config::file_cache::FileCache;
 use crate::config::gzip::Gzip;
@@ -52,6 +53,7 @@ impl Configuration {
             sites: vec![],
             binding_sites: vec![],
             core: Core {
+                caching: Caching::new(),
                 file_cache: FileCache::new(),
                 gzip: Gzip::new(),
                 server_settings: ServerSettings::new(),

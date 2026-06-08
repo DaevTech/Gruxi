@@ -2,12 +2,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileCache {
-    pub is_enabled: bool,
-    pub cache_item_size: u64,              // in number of items, to aim for, not a hard limit
-    pub cache_max_size_per_file: u64,      // Max size per file in bytes
-    pub cache_update_thread_interval: u64, // in seconds
-    pub max_item_lifetime: u64,            // in seconds
-    pub forced_eviction_threshold: u64,    // 1-99 %
+    pub is_enabled: bool,                   // Whether main file cache is enabled
+    pub cache_item_size: u64,               // in number of items, to aim for, not a hard limit
+    pub cache_max_size_per_file: u64,       // Max size per file in bytes
+    pub cache_update_thread_interval: u64,  // in seconds
+    pub max_item_lifetime: u64,             // in seconds
+    pub forced_eviction_threshold: u64,     // 1-99 %
 }
 
 impl Default for FileCache {
@@ -22,9 +22,9 @@ impl FileCache {
             is_enabled: true,
             cache_item_size: 1000,
             cache_max_size_per_file: 1024 * 1024, // bytes
-            cache_update_thread_interval: 30,         // seconds
-            max_item_lifetime: 60,                    // seconds
-            forced_eviction_threshold: 80,            // 1-99%
+            cache_update_thread_interval: 30,     // seconds
+            max_item_lifetime: 60,                // seconds
+            forced_eviction_threshold: 80,        // 1-99%
         }
     }
 

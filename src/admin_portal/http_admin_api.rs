@@ -485,9 +485,7 @@ pub async fn require_authentication(gruxi_request: &GruxiRequest) -> Result<Opti
 pub async fn require_authenticated_action(gruxi_request: &GruxiRequest) -> Result<Option<crate::core::admin_user::Session>, GruxiResponse> {
     let session = require_authentication(gruxi_request).await?;
 
-    if let Err(response) = require_csrf_token(gruxi_request) {
-        return Err(response);
-    }
+    require_csrf_token(gruxi_request)?;
 
     Ok(session)
 }
@@ -536,15 +534,15 @@ pub async fn admin_get_basic_data_endpoint(gruxi_request: &mut GruxiRequest, _ad
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             attach_admin_csrf_cookie(gruxi_request, &mut response, &csrf_token, session.expires_at.timestamp())?;
-            return Ok(response);
+            Ok(response)
         }
         Ok(None) => {
             let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
             response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
-            return Ok(response);
+            Ok(response)
         }
         Err(auth_response) => {
-            return Ok(auth_response);
+            Ok(auth_response)
         }
     }
 }
@@ -980,6 +978,7 @@ fn generate_csrf_token() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
+#[allow(clippy::result_large_err)]
 fn require_csrf_token(gruxi_request: &GruxiRequest) -> Result<(), GruxiResponse> {
     let cookie_token = match get_cookie_value(gruxi_request, &[ADMIN_CSRF_COOKIE_NAME]) {
         Some(token) => token,
@@ -1021,7 +1020,7 @@ fn get_cookie_value(gruxi_request: &GruxiRequest, cookie_names: &[&str]) -> Opti
                 continue;
             };
 
-            if cookie_names.iter().any(|cookie_name| name == *cookie_name) {
+            if cookie_names.contains(&name) {
                 return Some(value.to_string());
             }
         }

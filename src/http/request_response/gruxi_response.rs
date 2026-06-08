@@ -119,7 +119,7 @@ impl GruxiResponse {
     }
 
     pub fn get_resource_id(&self) -> String {
-        self.data.resource_id.clone().unwrap_or_else(|| "".to_string())
+        self.data.resource_id.clone().unwrap_or_default()
     }
 
     pub fn set_resource_id(&mut self, resource_id: String) {

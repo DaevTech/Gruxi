@@ -206,6 +206,9 @@ fn save_static_file_processor(connection: &Connection, processor: &StaticFilePro
 }
 
 fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> {
+    // Save caching settings
+    save_server_settings(connection, "caching_is_short_lived_caches_allowed", &core.caching.is_short_lived_caches_allowed.to_string())?;
+
     // Save file cache settings
     save_server_settings(connection, "file_cache_is_enabled", &core.file_cache.is_enabled.to_string())?;
     save_server_settings(connection, "file_cache_cache_item_size", &core.file_cache.cache_item_size.to_string())?;

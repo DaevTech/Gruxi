@@ -10,40 +10,47 @@ use crate::{
     debug, error,
     file::file_entry::{ContentCache, FileEntry, FileMeta},
     http::caching::etag::etag_strong_from_metadata,
-    trace, warn,
+    trace,
+    util::access_counters::ACCESS_COUNTERS,
+    warn,
 };
 
 use dashmap::DashMap;
 
 use hyper::body::Bytes;
+use moka::future::Cache;
 use tokio::{
     select,
     time::{Instant, interval},
 };
 
+pub const CACHE_404_MAX_SIZE: u64 = 10000; // Max size of cache is currently hardcoded, but we may need to let it scale with X sites in some clever way, instead of global max
+
 pub struct FileReaderCache {
     // Normal content cache
-    pub cache: Arc<DashMap<String, Arc<FileEntry>>>,
-    pub cache_max_capacity: u64,
+    cache: Arc<DashMap<String, Arc<FileEntry>>>,
+    cache_max_capacity: u64,
 
     // 404 cache
-    pub cache_404: Arc<DashMap<String, Instant>>,
-    pub cache_404_max_size: u64,
+    cache_404: Cache<String, bool>,
+
+    // Short lived cache when primary cache is disabled
+    cache_short_lived: Option<Cache<String, Arc<FileEntry>>>,
 
     // General cache settings
-    pub is_caching_enabled: bool,
-    pub cached_items_last_checked: Arc<DashMap<String, (Instant, Instant, SystemTime)>>, // key:filepath, value:(added time, last checked time, last modified time)
-    pub max_file_size: u64,
+    is_caching_enabled: bool,
+    cached_items_last_checked: Arc<DashMap<String, (Instant, Instant, SystemTime)>>, // key:filepath, value:(added time, last checked time, last modified time)
+    max_file_size: u64,
 
     // Compression related
-    pub gzip_enabled: bool,
-    pub compressible_content_types: Vec<String>,
+    gzip_enabled: bool,
+    compressible_content_types: Vec<String>,
 
     // Caching related headers
-    pub etag_enabled: bool,
-    pub last_modified_header_enabled: bool,
-    pub expires_header_enabled: bool,
-    pub cache_control_header_enabled: bool,
+    etag_enabled: bool,
+    last_modified_header_enabled: bool,
+    expires_header_enabled: bool,
+    cache_control_header_enabled: bool,
 }
 
 impl FileReaderCache {
@@ -52,8 +59,12 @@ impl FileReaderCache {
         let cached_configuration = get_cached_configuration();
         let config = cached_configuration.get_configuration();
 
-        let file_data_config = &config.core.file_cache;
+        // Get some data from caching config
+        let caching_config = &config.core.caching;
+        let is_short_lived_caches_allowed = caching_config.is_short_lived_caches_allowed;
 
+        // Get some data from file cache config
+        let file_data_config = &config.core.file_cache;
         let is_caching_enabled = file_data_config.is_enabled;
         let max_file_size = file_data_config.cache_max_size_per_file;
         let capacity = file_data_config.cache_item_size;
@@ -82,35 +93,32 @@ impl FileReaderCache {
         let cached_items_last_checked = Arc::new(DashMap::new());
 
         // 404 cache
-        let cache_404 = Arc::new(DashMap::new());
-        let cache_404_max_size = 10000; // Max size of cache is currently hardcoded, but we may need to let it scale with X sites in some clever way, instead of global max
+        let cache_404 = Cache::builder().max_capacity(CACHE_404_MAX_SIZE).time_to_live(Duration::from_secs(max_item_lifetime)).build();
 
         // Start the cache update thread
         if is_caching_enabled {
             // Update/cache cache thread
             let cache_clone_update = cache.clone();
-            let cache_404_clone_update = cache_404.clone();
             let last_checked_clone = cached_items_last_checked.clone();
             let eviction_threshold: f64 = (capacity as f64 * (forced_eviction_threshold as f64 / 100.0)).round();
 
             tokio::spawn(async move {
-                Self::update_cache(
-                    cache_clone_update,
-                    cache_404_clone_update,
-                    last_checked_clone,
-                    cache_update_thread_interval,
-                    max_item_lifetime,
-                    eviction_threshold as u64,
-                )
-                .await;
+                Self::update_cache(cache_clone_update, last_checked_clone, cache_update_thread_interval, max_item_lifetime, eviction_threshold as u64).await;
             });
         }
+
+        // Short lived cache when primary cache is disabled
+        let cache_short_lived = if !is_caching_enabled && is_short_lived_caches_allowed {
+            let cache = Cache::builder().max_capacity(capacity).time_to_live(Duration::from_secs(10)).build();
+            Some(cache) // Initialize short-lived cache
+        } else {
+            None
+        };
 
         FileReaderCache {
             cache,
             cache_max_capacity: capacity,
             cache_404,
-            cache_404_max_size,
             is_caching_enabled,
             cached_items_last_checked,
             max_file_size,
@@ -120,6 +128,7 @@ impl FileReaderCache {
             last_modified_header_enabled,
             expires_header_enabled,
             cache_control_header_enabled,
+            cache_short_lived,
         }
     }
 
@@ -127,10 +136,18 @@ impl FileReaderCache {
         self.cache.len() as u64
     }
 
+    pub fn get_404_cache_item_count(&self) -> u64 {
+        self.cache_404.entry_count()
+    }
+
     pub fn clear_cache(&self) {
         self.cache.clear();
         self.cached_items_last_checked.clear();
-        self.cache_404.clear();
+        self.cache_404.invalidate_all();
+        if let Some(cache) = &self.cache_short_lived {
+            cache.invalidate_all();
+        }
+
         trace!("File reader cache cleared");
     }
 
@@ -164,20 +181,29 @@ impl FileReaderCache {
         }
 
         // Also check the 404 cache to short circuit if we know the file doesn't exist, to avoid unnecessary disk reads
-        if self.is_caching_enabled && self.cache_404.get(file_path).is_some() {
+        if self.is_caching_enabled && self.cache_404.get(file_path).await.is_some() {
             trace!("File found in 404 cache, so we short circuit and return empty result for file: '{}'", file_path);
             return Ok(self.get_empty_file_with_path(file_path));
         }
 
+        // If caching is disabled, we check our short lived cache for the file
+        if !self.is_caching_enabled
+            && let Some(cache) = &self.cache_short_lived
+            && let Some(cached_entry) = cache.get(file_path).await
+        {
+            trace!("File found in short-lived cache: {}", file_path);
+            return Ok(cached_entry);
+        }
+
         // Not found in caches, so we populate it, maybe saving it to cache if enabled
         trace!("File/dir not found in cache, reading from disk: {}", file_path);
-        let metadata_result = std::fs::metadata(file_path);
+        let metadata_result = tokio::fs::metadata(file_path).await;
         let (length, is_directory, last_modified) = match metadata_result {
             Ok(metadata) => (metadata.len(), metadata.is_dir(), metadata.modified().unwrap_or(SystemTime::now())),
             Err(_) => {
                 // If file doesn't exist, we add to 404 cache and return an empty result, to avoid unnecessary disk reads for non-existent files in the future
-                if self.is_caching_enabled && self.cache_404.len() < self.cache_404_max_size as usize {
-                    self.cache_404.insert(file_path.to_string(), Instant::now());
+                if self.is_caching_enabled {
+                    self.cache_404.insert(file_path.to_string(), true).await;
                 }
                 return Ok(self.get_empty_file_with_path(file_path));
             }
@@ -189,8 +215,6 @@ impl FileReaderCache {
             mime_type = mime_guess::from_path(file_path).first_or_octet_stream().to_string();
             trace!("Guessed MIME type for {}: {}", file_path, mime_type);
         }
-
-        let should_compress = self.should_compress(&mime_type, length);
 
         // Calculate ETag if enabled
         let etag_header = if self.etag_enabled && !is_directory {
@@ -258,28 +282,19 @@ impl FileReaderCache {
         };
 
         // Pre-fetch content of file if caching is enabled
-        if self.is_caching_enabled && !is_directory && length <= self.max_file_size {
-            match std::fs::read(file_path) {
-                Ok(file_bytes) => {
-                    let raw_bytes = Bytes::from(file_bytes);
-                    file_entry.content.raw = Some(raw_bytes);
+        if self.is_caching_enabled {
+            self.populate_file_entry_with_content(&mut file_entry).await;
+        } else if self.cache_short_lived.is_some() {
+            // If main cache is disabled, we trigger access counter for this file to determine if it should be added to short lived cache
+            let hits_ceiling = ACCESS_COUNTERS.file_access_counter.record_access(&file_path_string);
+            if hits_ceiling {
+                trace!("File access counter hit ceiling for file {}, so we will add it to short-lived cache", file_path_string);
+                self.populate_file_entry_with_content(&mut file_entry).await;
 
-                    if should_compress {
-                        let raw_content = file_entry.content.raw.as_ref().unwrap();
-                        match compress_content(raw_content) {
-                            Ok(compressed_bytes) => {
-                                file_entry.content.gzip = Some(Bytes::from(compressed_bytes));
-                            }
-                            Err(e) => {
-                                warn!("Failed to compress file {}: {}", file_path, e);
-                            }
-                        }
-                    }
-
-                    trace!("File content cached for file: {}", file_path);
-                }
-                Err(e) => {
-                    trace!("Failed to read file {}: {}", file_path, e);
+                if let Some(cache) = &self.cache_short_lived {
+                    let file_entry_arc = Arc::new(file_entry);
+                    cache.insert(file_path_string.clone(), file_entry_arc.clone()).await;
+                    return Ok(file_entry_arc);
                 }
             }
         }
@@ -300,6 +315,32 @@ impl FileReaderCache {
         Ok(file_entry_arc)
     }
 
+    async fn populate_file_entry_with_content(&self, file_entry: &mut FileEntry) {
+        if !file_entry.meta.is_directory && file_entry.meta.length <= self.max_file_size {
+            match tokio::fs::read(&file_entry.meta.file_path).await {
+                Ok(file_bytes) => {
+                    file_entry.content.raw = Some(Bytes::from(file_bytes));
+
+                    if self.should_compress(&file_entry.meta.mime_type, file_entry.meta.length) {
+                        let raw_content = file_entry.content.raw.as_ref().unwrap();
+                        match compress_content(raw_content) {
+                            Ok(compressed_bytes) => {
+                                file_entry.content.gzip = Some(Bytes::from(compressed_bytes));
+                            }
+                            Err(e) => {
+                                warn!("Failed to compress file {}: {}", file_entry.meta.file_path, e);
+                            }
+                        }
+                    }
+                    trace!("File content cached for file: {}", file_entry.meta.file_path);
+                }
+                Err(e) => {
+                    trace!("Failed to read file {}: {}", file_entry.meta.file_path, e);
+                }
+            }
+        }
+    }
+
     // Check if a MIME type should be compressed
     pub fn should_compress(&self, mime_type: &str, content_length: u64) -> bool {
         if self.gzip_enabled {
@@ -317,7 +358,6 @@ impl FileReaderCache {
     // Handle updating data on the cached items, based on the last modified
     async fn update_cache(
         cache: Arc<DashMap<String, Arc<FileEntry>>>,
-        cache_404: Arc<DashMap<String, Instant>>,
         cached_items_last_checked: Arc<DashMap<String, (Instant, Instant, SystemTime)>>,
         cache_update_thread_interval: u64,
         max_item_lifetime: u64,
@@ -349,18 +389,6 @@ impl FileReaderCache {
             }
 
             let start_time = Instant::now();
-
-            // Clear out the 404 cache for entries that are older than the max item lifetime, to allow re-checking of previously not found files
-            trace!("[FileCacheUpdate] Cleaning up 404 cache for entries older than max item lifetime");
-            let cache_404_len_before = cache_404.len();
-            cache_404.retain(|_, instant| instant.elapsed() <= max_item_lifetime_duration);
-            let cache_404_len_after = cache_404.len();
-            trace!(
-                "[FileCacheUpdate] 404 cache cleanup completed - Cache count before ({}) - Cache count after ({}) - Removed {} entries",
-                cache_404_len_before,
-                cache_404_len_after,
-                cache_404_len_before - cache_404_len_after
-            );
 
             // Check if we are above the eviction threshold, and if so, we remove items that have been in cache for too long
             trace!("[FileCacheUpdate] Checking if we are above the eviction threshold, so we can delete files in cache that have been in cache for too long");

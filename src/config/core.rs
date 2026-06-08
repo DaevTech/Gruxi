@@ -1,3 +1,4 @@
+use crate::config::caching::Caching;
 use crate::config::http_caching::HttpCaching;
 use crate::config::logging::Logging;
 use crate::config::telemetry::Telemetry;
@@ -9,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Core {
+    pub caching: Caching,
     pub file_cache: FileCache,
     pub gzip: Gzip,
     pub server_settings: ServerSettings,
@@ -21,6 +23,7 @@ pub struct Core {
 
 impl Core {
     pub fn sanitize(&mut self) {
+        self.caching.sanitize();
         self.file_cache.sanitize();
         self.gzip.sanitize();
         self.server_settings.sanitize();
@@ -33,6 +36,13 @@ impl Core {
 
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
+
+        // Validate caching settings
+        if let Err(caching_errors) = self.caching.validate() {
+            for error in caching_errors {
+                errors.push(format!("Caching: {}", error));
+            }
+        }
 
         // Validate file cache settings
         if let Err(file_cache_errors) = self.file_cache.validate() {

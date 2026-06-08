@@ -110,9 +110,10 @@ impl GruxiRequest {
 
         // Host / :authority header
         if let Some(host) = parts.headers.get(HOST)
-            && let Ok(host) = host.to_str() {
-                hostname = host.to_string();
-            }
+            && let Ok(host) = host.to_str()
+        {
+            hostname = host.to_string();
+        }
 
         // Absolute-form URI (proxy requests) takes precedence
         if let Some(authority) = parts.uri.authority() {
@@ -153,11 +154,10 @@ impl GruxiRequest {
     pub fn get_remote_ip_string(&self) -> String {
         if let Some(remote_ip) = self.get_remote_ip() {
             // Strip port from the remote IP for the X-Forwarded-For header, as it should only contain the IP address
-            let ip_only = match remote_ip {
+            match remote_ip {
                 SocketAddr::V4(addr) => addr.ip().to_string(),
                 SocketAddr::V6(addr) => addr.ip().to_string(),
-            };
-            ip_only
+            }
         } else {
             String::new()
         }
@@ -295,14 +295,15 @@ impl GruxiRequest {
         // Check the connection header for any additional hop-by-hop headers, before we remove the connection header itself
         if !is_upgrade
             && let Some(connection_header) = connection_header_option
-                && let Ok(connection_header_str) = connection_header.to_str() {
-                    for token in connection_header_str.split(',') {
-                        let token_trimmed = token.trim();
-                        if !token_trimmed.is_empty() {
-                            hop_by_hop_headers.push(token_trimmed.to_string());
-                        }
-                    }
+            && let Ok(connection_header_str) = connection_header.to_str()
+        {
+            for token in connection_header_str.split(',') {
+                let token_trimmed = token.trim();
+                if !token_trimmed.is_empty() {
+                    hop_by_hop_headers.push(token_trimmed.to_string());
                 }
+            }
+        }
 
         for header in &hop_by_hop_headers {
             self.remove_header(header);
@@ -335,11 +336,15 @@ impl GruxiRequest {
         } else {
             self.data.hostname.to_string()
         };
-        self.parts.headers.insert("X-Forwarded-Host", HeaderValue::from_str(&hostname_port).unwrap_or(HeaderValue::from_static("")));
+        self.parts
+            .headers
+            .insert("X-Forwarded-Host", HeaderValue::from_str(&hostname_port).unwrap_or(HeaderValue::from_static("")));
     }
 
     pub fn check_accepted_encoding(&self, encoding: &str) -> bool {
-        if let Some(accept_encoding_header) = self.parts.headers.get("Accept-Encoding") && let Ok(accept_encoding_str) = accept_encoding_header.to_str() {
+        if let Some(accept_encoding_header) = self.parts.headers.get("Accept-Encoding")
+            && let Ok(accept_encoding_str) = accept_encoding_header.to_str()
+        {
             return accept_encoding_str.split(',').any(|entry| {
                 let mut parts = entry.trim().splitn(2, ';');
                 let name = parts.next().unwrap_or("").trim();
@@ -349,7 +354,8 @@ impl GruxiRequest {
                 // If there's a quality value of 0, the encoding is explicitly not accepted
                 if let Some(params) = parts.next()
                     && let Some(q) = params.trim().strip_prefix("q=").or_else(|| params.trim().strip_prefix("Q="))
-                    && let Ok(quality) = q.trim().parse::<f32>() {
+                    && let Ok(quality) = q.trim().parse::<f32>()
+                {
                     return quality > 0.0;
                 }
                 true
@@ -359,26 +365,18 @@ impl GruxiRequest {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use hyper::Request;
 
     fn make_request_with_accept_encoding(value: &str) -> GruxiRequest {
-        let req = Request::builder()
-            .uri("http://localhost/")
-            .header("Accept-Encoding", value)
-            .body(Bytes::new())
-            .unwrap();
+        let req = Request::builder().uri("http://localhost/").header("Accept-Encoding", value).body(Bytes::new()).unwrap();
         GruxiRequest::new(req)
     }
 
     fn make_request_without_accept_encoding() -> GruxiRequest {
-        let req = Request::builder()
-            .uri("http://localhost/")
-            .body(Bytes::new())
-            .unwrap();
+        let req = Request::builder().uri("http://localhost/").body(Bytes::new()).unwrap();
         GruxiRequest::new(req)
     }
 

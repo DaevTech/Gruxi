@@ -1,6 +1,8 @@
 use crate::core::{running_state_manager::get_running_state_manager, triggers::get_trigger_handler};
-use crate::{debug, trace};
+use crate::debug;
+use crate::file::file_reader_cache::CACHE_404_MAX_SIZE;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use tokio::time::Instant;
 use tokio::{select, sync::OnceCell};
 
 pub struct MonitoringState {
@@ -9,9 +11,15 @@ pub struct MonitoringState {
     requests_served_per_sec: AtomicUsize,
     active_connections: AtomicUsize,
     server_start_time: std::time::Instant,
-    file_cache_enabled: AtomicBool,
-    file_cache_current_items: AtomicUsize,
-    file_cache_max_items: AtomicUsize,
+    file_cache: FileCacheStats,
+}
+
+pub struct FileCacheStats {
+    enabled: AtomicBool,
+    current_items: AtomicUsize,
+    max_items: AtomicUsize,
+    not_found_cache_items: AtomicUsize,
+    not_found_cache_max_items: AtomicUsize,
 }
 
 impl MonitoringState {
@@ -25,9 +33,13 @@ impl MonitoringState {
             requests_served_per_sec: AtomicUsize::new(0),
             active_connections: AtomicUsize::new(0), // Updated from http server
             server_start_time: std::time::Instant::now(),
-            file_cache_enabled: AtomicBool::new(configuration.core.file_cache.is_enabled),
-            file_cache_current_items: AtomicUsize::new(0), // Updated from monitoring thread
-            file_cache_max_items: AtomicUsize::new(configuration.core.file_cache.cache_item_size as usize),
+            file_cache: FileCacheStats {
+                enabled: AtomicBool::new(configuration.core.file_cache.is_enabled),
+                current_items: AtomicUsize::new(0),
+                max_items: AtomicUsize::new(configuration.core.file_cache.cache_item_size as usize),
+                not_found_cache_items: AtomicUsize::new(0),
+                not_found_cache_max_items: AtomicUsize::new(CACHE_404_MAX_SIZE as usize),
+            },
         }
     }
 
@@ -40,6 +52,8 @@ impl MonitoringState {
     async fn monitoring_task() {
         let update_interval_seconds = 1;
         let update_interval = tokio::time::Duration::from_secs(update_interval_seconds as u64);
+
+        let mut last_update_instant = Instant::now();
 
         let triggers = get_trigger_handler();
         let configuration_trigger_result = triggers.get_trigger("reload_configuration");
@@ -54,12 +68,15 @@ impl MonitoringState {
 
         loop {
             let monitoring_state = get_monitoring_state().await;
+            let elapsed_secs = last_update_instant.elapsed().as_secs_f64();
+            last_update_instant = Instant::now();
 
             // Calculate requests per second
             let current_requests = monitoring_state.get_requests_served();
             let last_requests = monitoring_state.requests_served_last.load(Ordering::Relaxed);
             let requests_diff = current_requests.saturating_sub(last_requests);
-            let requests_per_sec: f64 = requests_diff as f64 / update_interval_seconds as f64;
+
+            let requests_per_sec: f64 = requests_diff as f64 / elapsed_secs.max(0.001);
             monitoring_state.requests_served_per_sec.store(requests_per_sec.to_bits() as usize, Ordering::Relaxed);
             monitoring_state.requests_served_last.store(current_requests, Ordering::Relaxed);
             // Fetch some data from file cache
@@ -68,7 +85,11 @@ impl MonitoringState {
                 let running_state = running_state_manager.get_running_state();
                 let file_reader_cache = running_state.get_file_reader_cache();
 
-                monitoring_state.file_cache_current_items.store(file_reader_cache.get_current_item_count() as usize, Ordering::Relaxed);
+                monitoring_state.file_cache.current_items.store(file_reader_cache.get_current_item_count() as usize, Ordering::Relaxed);
+                monitoring_state
+                    .file_cache
+                    .not_found_cache_items
+                    .store(file_reader_cache.get_404_cache_item_count() as usize, Ordering::Relaxed);
 
                 // Clone the configuration values we need, then drop the guard
                 let (file_cache_enabled, file_cache_max_items) = {
@@ -76,11 +97,10 @@ impl MonitoringState {
                     let configuration = cached_configuration.get_configuration();
                     (configuration.core.file_cache.is_enabled, configuration.core.file_cache.cache_item_size as usize)
                 };
-                monitoring_state.file_cache_enabled.store(file_cache_enabled, Ordering::Relaxed);
-                monitoring_state.file_cache_max_items.store(file_cache_max_items, Ordering::Relaxed);
-            }
 
-            trace!("Monitoring data updated");
+                monitoring_state.file_cache.enabled.store(file_cache_enabled, Ordering::Relaxed);
+                monitoring_state.file_cache.max_items.store(file_cache_max_items, Ordering::Relaxed);
+            }
 
             select! {
                 _ = configuration_token.cancelled() => {
@@ -133,15 +153,15 @@ impl MonitoringState {
     }
 
     pub fn get_file_cache_enabled(&self) -> bool {
-        self.file_cache_enabled.load(Ordering::Relaxed)
+        self.file_cache.enabled.load(Ordering::Relaxed)
     }
 
     pub fn get_file_cache_current_items(&self) -> usize {
-        self.file_cache_current_items.load(Ordering::Relaxed)
+        self.file_cache.current_items.load(Ordering::Relaxed)
     }
 
     pub fn get_file_cache_max_items(&self) -> usize {
-        self.file_cache_max_items.load(Ordering::Relaxed)
+        self.file_cache.max_items.load(Ordering::Relaxed)
     }
 
     pub async fn get_json(&self) -> serde_json::Value {
@@ -156,9 +176,11 @@ impl MonitoringState {
             "active_connections": active_connections,
             "uptime_seconds": monitoring_state.server_start_time.elapsed().as_secs(),
             "file_cache": {
-                "enabled": monitoring_state.file_cache_enabled.load(Ordering::Relaxed),
-                "current_items": monitoring_state.file_cache_current_items.load(Ordering::Relaxed),
-                "max_items": monitoring_state.file_cache_max_items.load(Ordering::Relaxed),
+                "enabled": monitoring_state.file_cache.enabled.load(Ordering::Relaxed),
+                "current_items": monitoring_state.file_cache.current_items.load(Ordering::Relaxed),
+                "max_items": monitoring_state.file_cache.max_items.load(Ordering::Relaxed),
+                "not_found_current_items": monitoring_state.file_cache.not_found_cache_items.load(Ordering::Relaxed),
+                "not_found_max_items": monitoring_state.file_cache.not_found_cache_max_items.load(Ordering::Relaxed),
             }
         })
     }

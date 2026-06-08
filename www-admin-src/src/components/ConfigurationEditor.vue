@@ -1554,6 +1554,29 @@ onMounted(() => {
                         </div>
                     </div>
 
+                    <!-- Caching Settings -->
+                    <div class="binding-item">
+                        <div class="item-header compact" @click="toggleCoreSubsection('caching')">
+                            <div class="header-left">
+                                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('caching') }">▶</span>
+                                <span class="hierarchy-indicator">⚡</span>
+                                <h4>Caching</h4>
+                            </div>
+                        </div>
+
+                        <div v-if="isCoreSubsectionExpanded('caching')" class="item-content">
+                            <div class="form-grid compact">
+                                <div class="form-field full-width">
+                                    <label>
+                                        <input v-model="config.core.caching.is_short_lived_caches_allowed" type="checkbox" />
+                                        Allow Short-Lived Caches
+                                        <span class="help-icon" data-tooltip="Allow short-lived caches for data that are frequently accessed and for a short duration. This can help improve performance primarily when the main file cache is disabled and data is frequently accessed.">?</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- File Cache Settings -->
                     <div class="binding-item">
                         <div class="item-header compact" @click="toggleCoreSubsection('fileCache')">
@@ -1575,6 +1598,7 @@ onMounted(() => {
                                         <span class="help-icon" data-tooltip="Enable or disable file caching in the Gruxi server.">?</span>
                                     </label>
                                 </div>
+
                                 <div class="form-field">
                                     <label>Max Cached Items (count) <span class="help-icon" data-tooltip="Maximum number of files to cache in the file cache.">?</span></label>
                                     <input v-model.number="config.core.file_cache.cache_item_size" type="number" min="1" />

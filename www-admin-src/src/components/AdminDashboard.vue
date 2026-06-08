@@ -41,7 +41,7 @@ const menuItems = [
 
 // Server stats (real data from monitoring endpoint)
 const stats = reactive({
-    serverStatus: 'Loading...',
+    serverStatus: null, // null = unknown, true = healthy, false = unhealthy
     uptime: '...',
     requests: 0,
     requestsPerSec: 0,
@@ -50,6 +50,10 @@ const stats = reactive({
         enabled: false,
         currentItems: 0,
         maxItems: 0,
+        mainCachePercent: 0,
+        notFoundCurrentItems: 0,
+        notFoundMaxItems: 0,
+        notFoundCachePercent: 0,
     },
     lastUpdated: new Date(),
 });
@@ -126,10 +130,11 @@ const updateBasicData = async () => {
 // Function to fetch real monitoring data from API
 const updateStats = async () => {
     // First check if server is healthy
-    const isHealthy = await checkHealth();
+    if (stats.serverStatus === null) {
+        await checkHealth();
+    }
 
-    if (!isHealthy) {
-        stats.serverStatus = 'Unavailable';
+    if (stats.serverStatus !== true) {
         return;
     }
 
@@ -142,7 +147,6 @@ const updateStats = async () => {
             const data = await response.json();
 
             // Update stats with real monitoring data
-            stats.serverStatus = 'Running';
             stats.requests = data.requests_served || 0;
             stats.requestsPerSec = data.requests_per_sec || 0;
             stats.activeConnections = data.active_connections || 0;
@@ -152,6 +156,10 @@ const updateStats = async () => {
                 stats.fileCache.enabled = data.file_cache.enabled || false;
                 stats.fileCache.currentItems = data.file_cache.current_items || 0;
                 stats.fileCache.maxItems = data.file_cache.max_items || 0;
+                stats.fileCache.mainCachePercent = parseFloat((stats.fileCache.currentItems / stats.fileCache.maxItems) * 100).toFixed(2);
+                stats.fileCache.notFoundCurrentItems = data.file_cache.not_found_current_items || 0;
+                stats.fileCache.notFoundMaxItems = data.file_cache.not_found_max_items || 0;
+                stats.fileCache.notFoundCachePercent = parseFloat((stats.fileCache.notFoundCurrentItems / stats.fileCache.notFoundMaxItems) * 100).toFixed(2);
             }
 
             // Convert uptime seconds to human readable format
@@ -161,26 +169,24 @@ const updateStats = async () => {
             const minutes = Math.floor((uptimeSeconds % 3600) / 60);
 
             if (days > 0) {
-                stats.uptime = `${days} day${days !== 1 ? 's' : ''}, ${hours} hour${hours !== 1 ? 's' : ''}`;
+                stats.uptime = `${days}d ${hours}h`;
             } else if (hours > 0) {
-                stats.uptime = `${hours} hour${hours !== 1 ? 's' : ''}, ${minutes} minute${minutes !== 1 ? 's' : ''}`;
+                stats.uptime = `${hours}h ${minutes}m`;
+            } else if (minutes > 0) {
+                stats.uptime = `${minutes}m`;
             } else {
-                stats.uptime = `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+                stats.uptime = `${uptimeSeconds}s`;
             }
 
             stats.lastUpdated = new Date();
         } else if (response.status === 401) {
             // Session expired, redirect to login
-            stats.serverStatus = 'Running'; // Server is up, just auth issue
             emit('logout');
         } else {
             console.error('Failed to fetch monitoring data:', response.status);
-            stats.serverStatus = 'Running'; // Server responded, so it's running
         }
     } catch (error) {
         console.error('Error fetching monitoring data:', error);
-        // If healthcheck passed but monitoring failed, server is still running
-        stats.serverStatus = 'Running';
     }
 };
 
@@ -192,11 +198,14 @@ const checkHealth = async () => {
         });
 
         if (response.ok) {
+            stats.serverStatus = true;
             return true; // Server is healthy
         }
+        stats.serverStatus = false;
         return false; // Server is not healthy
     } catch (error) {
         console.error('Health check failed:', error);
+        stats.serverStatus = false;
         return false; // Server is not reachable
     }
 };
@@ -273,6 +282,7 @@ onMounted(() => {
     updateBasicData();
     updateStats();
     startStatsInterval();
+    setInterval(checkHealth, 5 * 1000);
 });
 
 // Cleanup on unmount
@@ -309,8 +319,8 @@ onUnmounted(() => {
                         <button :class="['nav-link', { active: activeView === item.id }]" @click="setActiveView(item.id)">
                             <span v-if="!sidebarCollapsed" class="nav-text">
                                 {{ item.name }}
-                                <span v-if="item.id === 'server-status'" :class="['menu-status-indicator', stats.serverStatus === 'Running' ? 'online' : 'offline']">
-                                    {{ stats.serverStatus === 'Running' ? 'Online' : 'Offline' }}
+                                <span v-if="item.id === 'server-status'" :class="['menu-status-indicator', stats.serverStatus ? 'online' : 'offline']">
+                                    {{ stats.serverStatus ? 'Online' : 'Offline' }}
                                 </span>
                             </span>
                             <span v-else class="nav-text-collapsed">{{ item.name.charAt(0) }}</span>
@@ -342,7 +352,7 @@ onUnmounted(() => {
             <header class="top-header">
                 <div class="header-left">
                     <h1 class="page-title">
-                        {{ activeView === 'user-profile' ? 'User Profile' : (menuItems.find((item) => item.id === activeView)?.name || 'Overview') }}
+                        {{ activeView === 'user-profile' ? 'User Profile' : menuItems.find((item) => item.id === activeView)?.name || 'Overview' }}
                     </h1>
                     <div v-if="activeView === 'server-status'" class="header-status-info">
                         <span class="last-updated">Last updated: {{ lastUpdatedFormatted }}</span>
@@ -373,7 +383,9 @@ onUnmounted(() => {
                                 <div class="stat-header">
                                     <h3>Server Status</h3>
                                 </div>
-                                <div class="stat-value large">{{ stats.serverStatus }}</div>
+                                <div class="stat-value large greentext" v-if="stats.serverStatus === true">Up</div>
+                                <div class="stat-value large redtext" v-if="stats.serverStatus === false">Down</div>
+                                <div class="stat-value large" v-if="stats.serverStatus === null">Unknown</div>
                             </div>
 
                             <div class="stat-card">
@@ -388,7 +400,13 @@ onUnmounted(() => {
                                     <h3>Requests Served</h3>
                                 </div>
                                 <div class="stat-value">{{ formatRequestCount(stats.requests) }}</div>
-                                <div class="stat-subtitle">~ {{ stats.requestsPerSec }} req/sec right now</div>
+                            </div>
+
+                            <div class="stat-card">
+                                <div class="stat-header">
+                                    <h3>Requests/Second</h3>
+                                </div>
+                                <div class="stat-value">{{ formatRequestCount(stats.requestsPerSec) }}</div>
                             </div>
 
                             <div class="stat-card">
@@ -398,6 +416,7 @@ onUnmounted(() => {
                                 <div class="stat-value">{{ stats.activeConnections }}</div>
                             </div>
                         </div>
+
                         <div class="stats-row">
                             <div class="stat-card">
                                 <div class="stat-header">
@@ -409,11 +428,18 @@ onUnmounted(() => {
                                     </div>
                                 </div>
                                 <div class="stat-value">
-                                    {{ stats.fileCache.enabled ? `${stats.fileCache.currentItems}` : 'Disabled' }}
+                                    {{ stats.fileCache.enabled ? stats.fileCache.mainCachePercent + '%' : 'Disabled' }}
                                 </div>
-                                <div class="stat-subtitle">
-                                    {{ stats.fileCache.enabled ? 'files cached' : '' }}
+                                <div class="stat-subtitle">{{ stats.fileCache.currentItems }} / {{ stats.fileCache.maxItems }} files cached</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-header">
+                                    <h3>File Not Found Cache</h3>
                                 </div>
+                                <div class="stat-value">
+                                    {{ stats.fileCache.enabled ? stats.fileCache.notFoundCachePercent + '%' : 'Disabled' }}
+                                </div>
+                                <div class="stat-subtitle">{{ stats.fileCache.notFoundCurrentItems }} / {{ stats.fileCache.notFoundMaxItems }} cached</div>
                             </div>
                             <div class="stat-card hidden"></div>
                             <div class="stat-card hidden"></div>
@@ -786,6 +812,7 @@ onUnmounted(() => {
     border: 1px solid #e5e7eb;
     transition: all 0.2s;
     border-left: 4px solid #3b82f6;
+    position: relative;
 }
 
 .stat-card.hidden {
@@ -831,6 +858,14 @@ onUnmounted(() => {
 .stat-value.small {
     font-size: 1.25rem;
     font-weight: 600;
+}
+
+.stat-value.greentext {
+    color: #10b981;
+}
+
+.stat-value.redtext {
+    color: #ef4444;
 }
 
 .stat-indicator {
@@ -899,8 +934,8 @@ onUnmounted(() => {
 }
 
 .stat-actions {
-    display: flex;
-    justify-content: flex-start;
+    position: absolute;
+    right: 20px;
 }
 
 .stat-action-btn {

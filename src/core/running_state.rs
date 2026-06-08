@@ -10,20 +10,18 @@ use crate::{
         site_match::binding_site_cache::BindingSiteCache,
     },
     logging::log_rotation::LogRotation,
-    util::access_counters::AccessCounters,
 };
 
 pub struct RunningState {
-    pub access_log_buffer: AccessLogBuffer,
-    pub file_reader_cache: FileReaderCache,
-    pub request_handler_manager: RequestHandlerManager,
-    pub processor_manager: ProcessorManager,
-    pub external_system_handler: ExternalSystemHandler,
-    pub http_client: HttpClient,
-    pub binding_site_cache: BindingSiteCache,
-    pub log_rotation: LogRotation,
-    pub compression_cache: CompressionCache,
-    pub access_counters: AccessCounters,
+    access_log_buffer: AccessLogBuffer,
+    file_reader_cache: FileReaderCache,
+    request_handler_manager: RequestHandlerManager,
+    processor_manager: ProcessorManager,
+    external_system_handler: ExternalSystemHandler,
+    http_client: HttpClient,
+    binding_site_cache: BindingSiteCache,
+    log_rotation: LogRotation,
+    compression_cache: CompressionCache,
 }
 
 impl RunningState {
@@ -64,10 +62,6 @@ impl RunningState {
         let compression_cache = CompressionCache::new();
         debug!("Compression cache initialized");
 
-        // Start access counters
-        let access_counters = AccessCounters::new();
-        debug!("Access counters initialized");
-
         RunningState {
             access_log_buffer,
             file_reader_cache,
@@ -78,7 +72,6 @@ impl RunningState {
             binding_site_cache,
             log_rotation,
             compression_cache,
-            access_counters,
         }
     }
 
@@ -116,9 +109,5 @@ impl RunningState {
 
     pub fn get_compression_cache(&self) -> &CompressionCache {
         &self.compression_cache
-    }
-
-    pub fn get_access_counters(&self) -> &AccessCounters {
-        &self.access_counters
     }
 }

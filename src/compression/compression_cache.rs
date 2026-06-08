@@ -11,7 +11,7 @@ pub struct CompressionCache {
 const COMPRESSION_CACHE_MAX_CAPACITY: u64 = 100;
 const COMPRESSION_CACHE_TTL_SECONDS: u64 = 10;
 const COMPRESSION_CACHE_TTI_SECONDS: u64 = 5;
-const COMPRESSION_CACHE_MAX_SIZE: usize = 1 * 1024 * 1024; // 1 MB
+const COMPRESSION_CACHE_MAX_SIZE: usize = 1024 * 1024; // 1 MB
 
 impl CompressionCache {
     pub fn new() -> Self {
@@ -36,5 +36,11 @@ impl CompressionCache {
 
     pub fn clear(&self) {
         self.cache.invalidate_all();
+    }
+}
+
+impl Default for CompressionCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
