@@ -139,38 +139,6 @@
                 border-color: var(--border);
             }
 
-            .stats {
-                display: grid;
-                grid-template-columns: repeat(3, minmax(0, 1fr));
-                gap: 16px;
-            }
-
-            .card {
-                padding: 22px;
-                border-radius: 22px;
-                border: 1px solid var(--border);
-                background: var(--panel-strong);
-                box-shadow: var(--shadow);
-            }
-
-            .card strong {
-                display: block;
-                margin-bottom: 8px;
-                font-size: 1.05rem;
-            }
-
-            .card p {
-                margin: 0;
-                line-height: 1.65;
-                color: var(--muted);
-            }
-
-            .card a {
-                color: var(--brand-deep);
-                text-decoration-thickness: 2px;
-                text-underline-offset: 0.18em;
-            }
-
             @media (max-width: 760px) {
                 body {
                     padding: 18px;
@@ -183,10 +151,6 @@
 
                 h1 {
                     max-width: none;
-                }
-
-                .stats {
-                    grid-template-columns: 1fr;
                 }
 
                 .button {
@@ -212,29 +176,6 @@
                 </div>
             </section>
 
-            <section class="stats" aria-label="Quick links and highlights">
-                <article class="card">
-                    <strong>Project Home</strong>
-                    <p>
-                        Explore guides, configuration details, and release information at
-                        <a href="https://gruxi.org">gruxi.org</a>.
-                    </p>
-                </article>
-                <article class="card">
-                    <strong>Source Code</strong>
-                    <p>
-                        Browse the codebase, releases, and issue tracker on
-                        <a href="https://github.com/DaevTech/Gruxi">GitHub</a>.
-                    </p>
-                </article>
-                <article class="card">
-                    <strong>Administration</strong>
-                    <p>
-                        Manage your local Gruxi instance through the admin portal at
-                        <a href="https://localhost:8000">https://localhost:8000</a>.
-                    </p>
-                </article>
-            </section>
         </main>
     </body>
 </html>

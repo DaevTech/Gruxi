@@ -1,10 +1,11 @@
 use crate::core::{running_state_manager::get_running_state_manager, triggers::get_trigger_handler};
-use crate::debug;
+use crate::{debug, trace};
 use crate::file::file_reader_cache::CACHE_404_MAX_SIZE;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::time::Instant;
 use tokio::{select, sync::OnceCell};
 
+#[derive(Debug)]
 pub struct MonitoringState {
     requests_served: AtomicUsize,
     requests_served_last: AtomicUsize,
@@ -14,6 +15,7 @@ pub struct MonitoringState {
     file_cache: FileCacheStats,
 }
 
+#[derive(Debug)]
 pub struct FileCacheStats {
     enabled: AtomicBool,
     current_items: AtomicUsize,
@@ -77,6 +79,7 @@ impl MonitoringState {
             let requests_diff = current_requests.saturating_sub(last_requests);
 
             let requests_per_sec: f64 = requests_diff as f64 / elapsed_secs.max(0.001);
+            let requests_per_sec = requests_per_sec.round().clamp(0.0, f64::MAX);
             monitoring_state.requests_served_per_sec.store(requests_per_sec.to_bits() as usize, Ordering::Relaxed);
             monitoring_state.requests_served_last.store(current_requests, Ordering::Relaxed);
             // Fetch some data from file cache
@@ -101,6 +104,8 @@ impl MonitoringState {
                 monitoring_state.file_cache.enabled.store(file_cache_enabled, Ordering::Relaxed);
                 monitoring_state.file_cache.max_items.store(file_cache_max_items, Ordering::Relaxed);
             }
+
+            trace!("Monitoring data updated with data: {:?}", monitoring_state);
 
             select! {
                 _ = configuration_token.cancelled() => {
