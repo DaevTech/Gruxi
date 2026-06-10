@@ -120,6 +120,6 @@ post_install_script = "/usr/share/gruxi/rpm/postinst"
 shadow-utils = "*"
 
 
-[[bench]]
-name = "gruxi"
-harness = false
+# [[bench]]
+# name = "gruxi"
+# harness = false
