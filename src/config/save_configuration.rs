@@ -246,6 +246,8 @@ fn save_core_config(connection: &Connection, core: &Core) -> Result<(), String> 
         save_server_settings(connection, "telemetry_bearer_token", "")?;
     }
 
+    save_server_settings(connection, "admin_portal_allow_unauthenticated_access", &core.admin_portal.allow_unauthenticated_access.to_string())?;
+
     // Save TLS settings
     save_server_settings(connection, "tls_account_email", &core.tls_settings.account_email)?;
     save_server_settings(connection, "tls_use_staging_server", &core.tls_settings.use_staging_server.to_string())?;

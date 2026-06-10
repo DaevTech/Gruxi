@@ -288,16 +288,12 @@ impl ProcessorTrait for StaticFileProcessor {
 
         // Handle conditional headers like If-*-Match and If-*Modified-Since if we have an ETag
         // Only for full content requests (status 200)
-        if status_code == 200 {
-            match &file_data.meta.etag_header {
-                None => {}
-                Some(etag) => {
-                    if handle_conditional_headers(gruxi_request, &mut response, etag, &file_data.meta.last_modified) {
-                        // If we handled a conditional request, return the response as is (304 Not Modified)
-                        return Ok(response);
-                    }
-                }
-            }
+        if status_code == 200
+            && let Some(etag) = file_data.meta.etag_header.as_ref()
+            && handle_conditional_headers(gruxi_request, &mut response, etag, &file_data.meta.last_modified)
+        {
+            // If we handled a conditional request, return the response as is (304 Not Modified)
+            return Ok(response);
         }
 
         // Set Content-Range header for single range responses

@@ -86,7 +86,7 @@ async fn handle_metrics_endpoint(
         }
     }
 
-    let metrics_text = metrics_exporter::render_metrics().await;
+    let metrics_text = metrics_exporter::render_metrics();
 
     let mut response = GruxiResponse::new_with_bytes(
         hyper::StatusCode::OK.as_u16(),

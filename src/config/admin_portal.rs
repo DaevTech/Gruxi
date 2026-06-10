@@ -11,6 +11,7 @@ pub struct AdminPortal {
     pub tls_automatic_enabled: bool,
     pub tls_certificate_path: Option<String>,
     pub tls_key_path: Option<String>,
+    pub allow_unauthenticated_access: bool,
 }
 
 impl Default for AdminPortal {
@@ -29,6 +30,7 @@ impl AdminPortal {
             tls_automatic_enabled: false,
             tls_certificate_path: None,
             tls_key_path: None,
+            allow_unauthenticated_access: false,
         }
     }
 
@@ -94,10 +96,6 @@ impl AdminPortal {
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
-    }
-
-    pub fn get_domain_name(&self) -> String {
-        self.domain_name.clone()
     }
 
     pub fn get_tls_certificate_path(&self) -> String {

@@ -34,7 +34,7 @@ pub fn request_processing_benchmark(c: &mut Criterion) {
         shutdown_token: CancellationToken::new(),
         stop_services_token: CancellationToken::new(),
         http_builder: HttpAutoBuilder::new(TokioExecutor::new()),
-        monitoring_state: rt.block_on(get_monitoring_state()),
+        monitoring_state: get_monitoring_state(),
     });
 
     // Bench with a trusted path that does not require decoding, to test the fast path

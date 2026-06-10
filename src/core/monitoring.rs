@@ -1,9 +1,9 @@
-use crate::core::{running_state_manager::get_running_state_manager, triggers::get_trigger_handler};
-use crate::{debug, trace};
+use crate::core::running_state_manager::get_running_state_manager;
 use crate::file::file_reader_cache::CACHE_404_MAX_SIZE;
+use crate::{debug, trace};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::time::Instant;
-use tokio::{select, sync::OnceCell};
 
 #[derive(Debug)]
 pub struct MonitoringState {
@@ -11,7 +11,7 @@ pub struct MonitoringState {
     requests_served_last: AtomicUsize,
     requests_served_per_sec: AtomicUsize,
     active_connections: AtomicUsize,
-    server_start_time: std::time::Instant,
+    server_start_time: Instant,
     file_cache: FileCacheStats,
 }
 
@@ -25,16 +25,16 @@ pub struct FileCacheStats {
 }
 
 impl MonitoringState {
-    pub async fn new() -> Self {
+    pub fn new() -> Self {
         let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
         let configuration = cached_configuration.get_configuration();
 
         MonitoringState {
-            requests_served: AtomicUsize::new(0),      // Updated from http server
-            requests_served_last: AtomicUsize::new(0), // Updated from monitoring thread
-            requests_served_per_sec: AtomicUsize::new(0),
-            active_connections: AtomicUsize::new(0), // Updated from http server
-            server_start_time: std::time::Instant::now(),
+            requests_served: AtomicUsize::new(0),         // Updated from http server
+            requests_served_last: AtomicUsize::new(0),    // Updated from monitoring thread
+            requests_served_per_sec: AtomicUsize::new(0), // Calculated in monitoring thread
+            active_connections: AtomicUsize::new(0),      // Updated from http server
+            server_start_time: Instant::now(), // Server start time is set when the monitoring state is initialized
             file_cache: FileCacheStats {
                 enabled: AtomicBool::new(configuration.core.file_cache.is_enabled),
                 current_items: AtomicUsize::new(0),
@@ -52,24 +52,17 @@ impl MonitoringState {
     }
 
     async fn monitoring_task() {
+        // Initial wait a bit before starting to gather metrics, to allow the server to start up and serve some requests
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+        // Setup
         let update_interval_seconds = 1;
         let update_interval = tokio::time::Duration::from_secs(update_interval_seconds as u64);
 
         let mut last_update_instant = Instant::now();
 
-        let triggers = get_trigger_handler();
-        let configuration_trigger_result = triggers.get_trigger("reload_configuration");
-        let configuration_trigger = match configuration_trigger_result {
-            Some(trigger) => trigger,
-            None => {
-                panic!("Failed to get reload_configuration trigger - Monitoring task exiting - Please report a bug");
-            }
-        };
-
-        let mut configuration_token = configuration_trigger.read().await.clone();
-
         loop {
-            let monitoring_state = get_monitoring_state().await;
+            let monitoring_state = get_monitoring_state();
             let elapsed_secs = last_update_instant.elapsed().as_secs_f64();
             last_update_instant = Instant::now();
 
@@ -82,6 +75,7 @@ impl MonitoringState {
             let requests_per_sec = requests_per_sec.round().clamp(0.0, f64::MAX);
             monitoring_state.requests_served_per_sec.store(requests_per_sec.to_bits() as usize, Ordering::Relaxed);
             monitoring_state.requests_served_last.store(current_requests, Ordering::Relaxed);
+
             // Fetch some data from file cache
             {
                 let running_state_manager = get_running_state_manager().await;
@@ -107,30 +101,12 @@ impl MonitoringState {
 
             trace!("Monitoring data updated with data: {:?}", monitoring_state);
 
-            select! {
-                _ = configuration_token.cancelled() => {
-                    // Get a new token
-                    let configuration_trigger_result = triggers.get_trigger("reload_configuration");
-                    let configuration_trigger = match configuration_trigger_result {
-                        Some(trigger) => trigger,
-                        None => {
-                            debug!("Failed to get reload_configuration trigger - Monitoring task exiting");
-                            return;
-                        }
-                    };
-                    configuration_token = configuration_trigger.read().await.clone();
-                },
-                _ = tokio::time::sleep(update_interval) => {}
-            }
+            tokio::time::sleep(update_interval).await;
         }
     }
 
     pub fn increment_requests_served(&self) {
         self.requests_served.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn decrement_requests_served(&self) {
-        self.requests_served.fetch_sub(1, Ordering::Relaxed);
     }
 
     pub fn get_requests_served(&self) -> usize {
@@ -169,8 +145,16 @@ impl MonitoringState {
         self.file_cache.max_items.load(Ordering::Relaxed)
     }
 
+    pub fn get_file_not_found_cache_current_items(&self) -> usize {
+        self.file_cache.not_found_cache_items.load(Ordering::Relaxed)
+    }
+
+    pub fn get_file_not_found_cache_max_items(&self) -> usize {
+        self.file_cache.not_found_cache_max_items.load(Ordering::Relaxed)
+    }
+
     pub async fn get_json(&self) -> serde_json::Value {
-        let monitoring_state = get_monitoring_state().await;
+        let monitoring_state = get_monitoring_state();
 
         // Get the active connections minus one to account for the current monitoring request
         let active_connections = monitoring_state.active_connections.load(Ordering::Relaxed);
@@ -191,8 +175,14 @@ impl MonitoringState {
     }
 }
 
-static CURRENT_STATE_SINGLETON: OnceCell<MonitoringState> = OnceCell::const_new();
+impl Default for MonitoringState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-pub async fn get_monitoring_state() -> &'static MonitoringState {
-    CURRENT_STATE_SINGLETON.get_or_init(|| async { MonitoringState::new().await }).await
+static CURRENT_STATE_SINGLETON: OnceLock<MonitoringState> = OnceLock::new();
+
+pub fn get_monitoring_state() -> &'static MonitoringState {
+    CURRENT_STATE_SINGLETON.get_or_init(MonitoringState::new)
 }

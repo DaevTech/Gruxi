@@ -34,7 +34,7 @@ const saveErrors = ref([]);
 const successMessage = ref('');
 const originalConfig = ref(null);
 const config = ref(null);
-const suggestedTelemetryToken = ref(Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join(''));
+const suggestedTelemetryToken = ref(Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, '0')).join(''));
 
 // Track which sections are expanded (all collapsed by default)
 const expandedSections = reactive({
@@ -1506,10 +1506,16 @@ onMounted(() => {
 
                         <div v-if="isCoreSubsectionExpanded('adminPortal')" class="item-content">
                             <div class="form-grid compact">
+                                <h5>General</h5>
                                 <div class="form-field">
                                     <label>Domain Name <span class="help-icon" data-tooltip="The domain name for the admin portal. Required when using automatic TLS. Example: admin.example.com">?</span></label>
                                     <input v-model="config.core.admin_portal.domain_name" type="text" placeholder="admin.example.com" />
                                 </div>
+
+                                <hr />
+
+                                <h5>TLS Settings for Admin Portal</h5>
+
                                 <div class="form-field full-width">
                                     <label>
                                         <input v-model="config.core.admin_portal.tls_automatic_enabled" type="checkbox" />
@@ -1530,6 +1536,18 @@ onMounted(() => {
                                     >
                                     <input v-model="config.core.admin_portal.tls_key_path" type="text" />
                                 </div>
+
+                                <hr />
+
+                                <h5>Unauthenticated Access to Admin Portal</h5>
+
+                                <div class="form-field full-width">
+                                    <label>
+                                        <input v-model="config.core.admin_portal.allow_unauthenticated_access" type="checkbox" />
+                                        Allow Unauthenticated Access to Admin Portal
+                                        <span class="help-icon" data-tooltip="When enabled, users can access the admin portal without authentication, which can be nice in local development environments. This is not recommended for production environments unless secured by other means.">?</span>
+                                    </label>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1547,7 +1565,9 @@ onMounted(() => {
                         <div v-if="isCoreSubsectionExpanded('telemetry')" class="item-content">
                             <div class="form-grid compact">
                                 <div class="form-field full-width">
-                                    <label>Bearer Token <span class="help-icon" data-tooltip="The bearer token required to access the telemetry endpoints on the telemetry binding (port 8001). When set, a dedicated TLS binding is created automatically. Leave empty to disable the telemetry endpoints.">?</span> <span class="admin-badge admin-badge-no-upper">RANDOM SUGGESTION: {{ suggestedTelemetryToken }}</span></label>
+                                    <label
+                                        >Bearer Token <span class="help-icon" data-tooltip="The bearer token required to access the telemetry endpoints on the telemetry binding (port 8001). When set, a dedicated TLS binding is created automatically. Leave empty to disable the telemetry endpoints.">?</span> <span class="admin-badge admin-badge-no-upper">RANDOM SUGGESTION: {{ suggestedTelemetryToken }}</span></label
+                                    >
                                     <input v-model="config.core.telemetry.bearer_token" type="text" placeholder="Enter bearer token for telemetry endpoints" />
                                 </div>
                             </div>
@@ -1561,65 +1581,77 @@ onMounted(() => {
                                 <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('caching') }">▶</span>
                                 <span class="hierarchy-indicator">⚡</span>
                                 <h4>Caching</h4>
+                                <span v-if="config.core.file_cache?.is_enabled" class="default-badge">FILE CACHE ENABLED</span>
+                                <span v-if="!config.core.file_cache?.is_enabled" class="admin-badge">FILE CACHE DISABLED</span>
+                                <span v-if="!config.core.file_cache?.is_enabled && config.core.caching?.is_short_lived_caches_allowed" class="default-badge">SHORT LIVED CACHE ENABLED</span>
+                                <span v-if="config.core.http_caching?.enabled_caching" class="default-badge">HTTP CACHING HEADERS ENABLED</span>
                             </div>
                         </div>
 
                         <div v-if="isCoreSubsectionExpanded('caching')" class="item-content">
                             <div class="form-grid compact">
+                                <h5>General</h5>
                                 <div class="form-field full-width">
                                     <label>
                                         <input v-model="config.core.caching.is_short_lived_caches_allowed" type="checkbox" />
-                                        Allow Short-Lived Caches
-                                        <span class="help-icon" data-tooltip="Allow short-lived caches for data that are frequently accessed and for a short duration. This can help improve performance primarily when the main file cache is disabled and data is frequently accessed.">?</span>
+                                        Allow Short-Lived Caches when File Cache is Disabled
+                                        <span class="help-icon" data-tooltip="Allow short-lived caches for data that are frequently accessed and for a short duration. This only has effect if main file cache is disabled.">?</span>
                                     </label>
                                 </div>
                             </div>
-                        </div>
-                    </div>
 
-                    <!-- File Cache Settings -->
-                    <div class="binding-item">
-                        <div class="item-header compact" @click="toggleCoreSubsection('fileCache')">
-                            <div class="header-left">
-                                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('fileCache') }">▶</span>
-                                <span class="hierarchy-indicator">📁</span>
-                                <h4>File Cache</h4>
-                                <span v-if="config.core.file_cache.is_enabled" class="default-badge">ENABLED</span>
-                                <span v-else class="admin-badge">DISABLED</span>
-                            </div>
-                        </div>
+                            <hr />
 
-                        <div v-if="isCoreSubsectionExpanded('fileCache')" class="item-content">
                             <div class="form-grid compact">
+                                <h5>File Cache</h5>
+
+                                <div class="form-grid">
+                                    <div class="form-field full-width">
+                                        <label>
+                                            <input v-model="config.core.file_cache.is_enabled" type="checkbox" />
+                                            Enable File Caching
+                                            <span class="help-icon" data-tooltip="Enable or disable file caching in the Gruxi server.">?</span>
+                                        </label>
+                                    </div>
+
+                                    <div class="form-field">
+                                        <label>Max Cached Items (count) <span class="help-icon" data-tooltip="Maximum number of files to cache in the file cache.">?</span></label>
+                                        <input v-model.number="config.core.file_cache.cache_item_size" type="number" min="1" />
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Max Size Per File (MB) <span class="help-icon" data-tooltip="Maximum size of each file to be cached in megabytes.">?</span></label>
+                                        <input v-model.number="fileCacheMaxSizePerFileMb" type="number" min="0" step="0.01" />
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Cache Update Thread Interval (seconds) <span class="help-icon" data-tooltip="Interval in seconds for the cache update thread to run, which periodically cleans up expired cache items and check for file updates.">?</span></label>
+                                        <input v-model.number="config.core.file_cache.cache_update_thread_interval" type="number" min="1" />
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Max Time To Keep a File (seconds) <span class="help-icon" data-tooltip="Maximum time in seconds to keep a file in the cache before it is eligible for eviction. Will be applied when the cache reaches its maximum size or over the percentage threshold.">?</span></label>
+                                        <input v-model.number="config.core.file_cache.max_item_lifetime" type="number" min="0" />
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Forced Eviction Threshold (%) <span class="help-icon" data-tooltip="Percentage threshold at which eviction of cached files occurs, to prevent reaching maximum cache size.">?</span></label>
+                                        <input v-model.number="config.core.file_cache.forced_eviction_threshold" type="number" min="1" max="99" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr />
+
+                             <div class="form-grid compact">
+                                <h5>HTTP Caching Headers</h5>
+
                                 <div class="form-field full-width">
                                     <label>
-                                        <input v-model="config.core.file_cache.is_enabled" type="checkbox" />
-                                        Enable File Caching
-                                        <span class="help-icon" data-tooltip="Enable or disable file caching in the Gruxi server.">?</span>
+                                        <input v-model="config.core.http_caching.enabled_caching" type="checkbox" />
+                                        Enable HTTP Caching Headers
+                                        <span class="help-icon" data-tooltip="When enabled, Gruxi will add caching-related HTTP headers (ETag, Last-Modified, Expires, Cache-Control) to responses for static files. This improves performance by allowing browsers to cache files locally.">?</span>
                                     </label>
                                 </div>
-
-                                <div class="form-field">
-                                    <label>Max Cached Items (count) <span class="help-icon" data-tooltip="Maximum number of files to cache in the file cache.">?</span></label>
-                                    <input v-model.number="config.core.file_cache.cache_item_size" type="number" min="1" />
-                                </div>
-                                <div class="form-field">
-                                    <label>Max Size Per File (MB) <span class="help-icon" data-tooltip="Maximum size of each file to be cached in megabytes.">?</span></label>
-                                    <input v-model.number="fileCacheMaxSizePerFileMb" type="number" min="0" step="0.01" />
-                                </div>
-                                <div class="form-field">
-                                    <label>Cache Update Thread Interval (seconds) <span class="help-icon" data-tooltip="Interval in seconds for the cache update thread to run, which periodically cleans up expired cache items and check for file updates.">?</span></label>
-                                    <input v-model.number="config.core.file_cache.cache_update_thread_interval" type="number" min="1" />
-                                </div>
-                                <div class="form-field">
-                                    <label>Max Time To Keep a File (seconds) <span class="help-icon" data-tooltip="Maximum time in seconds to keep a file in the cache before it is eligible for eviction. Will be applied when the cache reaches its maximum size or over the percentage threshold.">?</span></label>
-                                    <input v-model.number="config.core.file_cache.max_item_lifetime" type="number" min="0" />
-                                </div>
-                                <div class="form-field">
-                                    <label>Forced Eviction Threshold (%) <span class="help-icon" data-tooltip="Percentage threshold at which eviction of cached files occurs, to prevent reaching maximum cache size.">?</span></label>
-                                    <input v-model.number="config.core.file_cache.forced_eviction_threshold" type="number" min="1" max="99" />
-                                </div>
                             </div>
+
+
                         </div>
                     </div>
 
@@ -1686,29 +1718,6 @@ onMounted(() => {
                         </div>
                     </div>
 
-                    <!-- HTTP Caching Settings -->
-                    <div class="binding-item">
-                        <div class="item-header compact" @click="toggleCoreSubsection('httpCaching')">
-                            <div class="header-left">
-                                <span class="section-icon" :class="{ expanded: isCoreSubsectionExpanded('httpCaching') }">▶</span>
-                                <span class="hierarchy-indicator">🔄</span>
-                                <h4>HTTP Caching</h4>
-                                <span v-if="config.core.http_caching?.enabled_caching" class="default-badge">ENABLED</span>
-                            </div>
-                        </div>
-
-                        <div v-if="isCoreSubsectionExpanded('httpCaching')" class="item-content">
-                            <div class="form-grid compact">
-                                <div class="form-field full-width">
-                                    <label>
-                                        <input v-model="config.core.http_caching.enabled_caching" type="checkbox" />
-                                        Enable HTTP Caching Headers
-                                        <span class="help-icon" data-tooltip="When enabled, Gruxi will add caching-related HTTP headers (ETag, Last-Modified, Expires, Cache-Control) to responses for static files. This improves performance by allowing browsers to cache files locally.">?</span>
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
 
                     <!-- Logging Settings -->
                     <div class="binding-item">
@@ -1736,6 +1745,8 @@ onMounted(() => {
                                     </label>
                                 </div>
 
+                                <hr />
+
                                 <div class="form-field">
                                     <label>
                                         <input v-model="config.core.logging.rotate_by_size" type="checkbox" />
@@ -1747,6 +1758,8 @@ onMounted(() => {
                                     <label>Max Log File Size (MB) <span class="help-icon" data-tooltip="Maximum log file size before rotation occurs (in MB).">?</span></label>
                                     <input v-model.number="config.core.logging.max_log_file_size_mb" type="number" min="1" />
                                 </div>
+
+                                <hr />
 
                                 <div class="form-field">
                                     <label>
@@ -1763,6 +1776,8 @@ onMounted(() => {
                                         <option value="monthly">Monthly</option>
                                     </select>
                                 </div>
+
+                                <hr />
 
                                 <div class="form-field">
                                     <label>
@@ -1888,6 +1903,12 @@ onMounted(() => {
     max-width: 500px;
 }
 
+hr {
+    margin: 25px 0;
+    border: none;
+    border-top: 1px solid #10b981;
+}
+
 .width-auto-fit {
     width: fit-content;
 }
@@ -1994,6 +2015,7 @@ onMounted(() => {
 
 .form-field select {
     margin-bottom: 1rem;
+    inline-size: fit-content;
 }
 
 .list-field.compact {

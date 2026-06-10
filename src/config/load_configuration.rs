@@ -271,6 +271,11 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             }
 
             // Admin portal settings
+            "telemetry_bearer_token" => {
+                if !value.is_empty() {
+                    core.telemetry.bearer_token = Some(value);
+                }
+            }
             "admin_portal_domain_name" => {
                 core.admin_portal.domain_name = value;
             }
@@ -283,10 +288,8 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             "admin_portal_tls_key_path" => {
                 core.admin_portal.tls_key_path = Some(value);
             }
-            "telemetry_bearer_token" => {
-                if !value.is_empty() {
-                    core.telemetry.bearer_token = Some(value);
-                }
+            "admin_portal_allow_unauthenticated_access" => {
+                core.admin_portal.allow_unauthenticated_access = value.parse::<bool>().map_err(|e| format!("Failed to parse admin_portal_allow_unauthenticated_access: {}", e))?;
             }
 
             // TLS settings

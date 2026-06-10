@@ -93,7 +93,7 @@ pub async fn initialize_server() {
             shutdown_token: shutdown_token.clone(),
             stop_services_token: stop_services_token.clone(),
             running_state,
-            monitoring_state: get_monitoring_state().await,
+            monitoring_state: get_monitoring_state(),
             http_builder: HttpAutoBuilder::new(TokioExecutor::new()),
         };
 

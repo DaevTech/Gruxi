@@ -1,8 +1,9 @@
 use crate::admin_portal::login_rate_limiter::get_login_rate_limiter;
+use crate::config::cached_configuration::get_cached_configuration;
 use crate::config::configuration::Configuration;
 use crate::config::save_configuration::save_configuration;
 use crate::config::site::Site;
-use crate::core::admin_user::{LoginRequest, authenticate_user, change_user_password, create_session, invalidate_session, verify_session_token};
+use crate::core::admin_user::{LoginRequest, Session, authenticate_user, change_user_password, create_session, create_unauthenticated_admin_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
 use crate::core::triggers::get_trigger_handler;
@@ -127,7 +128,7 @@ pub async fn handle_login_request(gruxi_request: &mut GruxiRequest, _admin_site:
     }
 
     // Authenticate user
-    let user = match authenticate_user(&login_request.username, &login_request.password) {
+    let user = match authenticate_user(&login_request.username, &login_request.password, true) {
         Ok(Some(user)) => user,
         Ok(None) => {
             rate_limiter.record_failed_attempt(&login_request.username).await;
@@ -508,43 +509,69 @@ pub async fn admin_monitoring_endpoint(gruxi_request: &mut GruxiRequest, _admin_
     }
 
     // Get monitoring data
-    let monitoring_data = get_monitoring_state().await.get_json().await;
+    let monitoring_data = get_monitoring_state().get_json().await;
 
     let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(monitoring_data.to_string()));
     response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
     Ok(response)
 }
 
+fn maybe_get_unauthenticated_session() -> Option<Session> {
+    let configuration = get_cached_configuration().get_configuration();
+    if configuration.core.admin_portal.allow_unauthenticated_access {
+        debug!("Allowing unauthenticated access to admin portal based on configuration");
+        // Create a unauthenticated admin session
+        create_unauthenticated_admin_session()
+    } else {
+        None
+    }
+}
+
 // Get basic data on the server
 pub async fn admin_get_basic_data_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
-    // Check authentication first
-    match require_authentication(gruxi_request).await {
-        Ok(Some(session)) => {
-            debug!("User authenticated, retrieving basic data for admin portal");
-
-            let app_paths = get_app_paths();
-            let csrf_token = generate_csrf_token();
-
-            let response_json = serde_json::json!({
-                "gruxi_version": env!("CARGO_PKG_VERSION"),
-                "app_paths": app_paths,
-                "username": session.username
-            });
-
-            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
-            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
-            attach_admin_csrf_cookie(gruxi_request, &mut response, &csrf_token, session.expires_at.timestamp())?;
-            Ok(response)
-        }
+    // First, we check the current authentication
+    let session_result = require_authentication(gruxi_request).await;
+    let session = match session_result {
+        Ok(Some(session)) => session,
         Ok(None) => {
-            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
-            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
-            Ok(response)
+            // If no session, we check if unauthenticated access is allowed - if so, we proceed without authentication
+            let session_option = maybe_get_unauthenticated_session();
+            match session_option {
+                Some(session) => session,
+                None => {
+                    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Authentication required"}"#));
+                    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+                    return Ok(response);
+                }
+            }
         }
         Err(auth_response) => {
-            Ok(auth_response)
+            // If no session, we check if unauthenticated access is allowed - if so, we proceed without authentication
+            let session_option = maybe_get_unauthenticated_session();
+            match session_option {
+                Some(session) => session,
+                None => {
+                    return Ok(auth_response);
+                }
+            }
         }
-    }
+    };
+
+    debug!("User authenticated, retrieving basic data for admin portal");
+
+    let app_paths = get_app_paths();
+    let csrf_token = generate_csrf_token();
+
+    let response_json = serde_json::json!({
+        "gruxi_version": env!("CARGO_PKG_VERSION"),
+        "app_paths": app_paths,
+        "username": session.username
+    });
+
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(response_json.to_string()));
+    response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
+    attach_admin_auth_cookies(gruxi_request, &mut response, &session.token, &csrf_token, session.expires_at.timestamp())?;
+    Ok(response)
 }
 
 // Admin healthcheck endpoint - returns simple status without authentication
@@ -1031,23 +1058,8 @@ fn get_cookie_value(gruxi_request: &GruxiRequest, cookie_names: &[&str]) -> Opti
 
 fn attach_admin_auth_cookies(_gruxi_request: &GruxiRequest, response: &mut GruxiResponse, session_token: &str, csrf_token: &str, expires_at_timestamp: i64) -> Result<(), GruxiError> {
     let max_age = (expires_at_timestamp - Utc::now().timestamp()).max(0);
-    append_set_cookie_header(
-        response,
-        build_cookie_header(ADMIN_SESSION_COOKIE_NAME, session_token, Some(max_age), true, true),
-    )?;
-    append_set_cookie_header(
-        response,
-        build_cookie_header(ADMIN_CSRF_COOKIE_NAME, csrf_token, Some(max_age), false, true),
-    )?;
-    Ok(())
-}
-
-fn attach_admin_csrf_cookie(_gruxi_request: &GruxiRequest, response: &mut GruxiResponse, csrf_token: &str, expires_at_timestamp: i64) -> Result<(), GruxiError> {
-    let max_age = (expires_at_timestamp - Utc::now().timestamp()).max(0);
-    append_set_cookie_header(
-        response,
-        build_cookie_header(ADMIN_CSRF_COOKIE_NAME, csrf_token, Some(max_age), false, true),
-    )?;
+    append_set_cookie_header(response, build_cookie_header(ADMIN_SESSION_COOKIE_NAME, session_token, Some(max_age), true, true))?;
+    append_set_cookie_header(response, build_cookie_header(ADMIN_CSRF_COOKIE_NAME, csrf_token, Some(max_age), false, true))?;
     Ok(())
 }
 

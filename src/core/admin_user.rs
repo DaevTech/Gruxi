@@ -36,6 +36,29 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+
+pub fn create_unauthenticated_admin_session() -> Option<Session> {
+    // Fetch admin user from database
+    let user_result = authenticate_user("admin", "", false);
+    let user = match user_result {
+        Ok(Some(u)) => u,
+        _ => {
+            error!("Failed to fetch admin user for unauthenticated session");
+            return None;
+        }
+    };
+
+    // Create session for admin user
+    let session_result = create_session(&user);
+    match session_result {
+        Ok(session) => Some(session),
+        Err(_) => {
+            error!("Failed to create session for admin user");
+            None
+        }
+    }
+}
+
 pub fn create_default_admin_user(connection: &Connection) -> Result<(), String> {
     // Check if admin user already exists
     let mut statement = connection
@@ -132,7 +155,7 @@ fn get_random_hashed_password() -> Result<(String, String), ()> {
     Ok((random_password, password_hash))
 }
 
-pub fn authenticate_user(username: &str, password: &str) -> Result<Option<User>, String> {
+pub fn authenticate_user(username: &str, password: &str, should_check_password: bool) -> Result<Option<User>, String> {
     let connection = get_database_connection()?;
 
     let mut statement = connection
@@ -152,7 +175,11 @@ pub fn authenticate_user(username: &str, password: &str) -> Result<Option<User>,
             let is_active = is_active != 0;
 
             // Verify password
-            let password_valid = bcrypt::verify(password, &password_hash).map_err(|e| format!("Failed to verify password: {}", e))?;
+            let password_valid = if should_check_password {
+                bcrypt::verify(password, &password_hash).map_err(|e| format!("Failed to verify password: {}", e))?
+            } else {
+                true
+            };
 
             if password_valid {
                 let created_at = DateTime::parse_from_rfc3339(&created_at_str)
@@ -209,9 +236,6 @@ pub fn create_session(user: &User) -> Result<Session, String> {
 
     let expires_at_str = session.expires_at.to_rfc3339();
     let created_at_str = session.created_at.to_rfc3339();
-
-    // Make sure to clean existing sessions for this user before creating a new one
-    invalidate_sessions_for_user(&connection, &user.username)?;
 
     // Insert new session into database
     let mut stmt = connection
@@ -307,32 +331,24 @@ pub fn invalidate_session(token: &str) -> Result<bool, String> {
     }
 }
 
-pub fn change_user_password(
-    username: &str,
-    old_password: &str,
-    new_password: &str,
-) -> Result<bool, String> {
+pub fn change_user_password(username: &str, old_password: &str, new_password: &str) -> Result<bool, String> {
     // Verify old password first
-    let user = match authenticate_user(username, old_password) {
+    let user = match authenticate_user(username, old_password, true) {
         Ok(Some(u)) => u,
         Ok(None) => return Ok(false),
         Err(e) => return Err(e),
     };
 
-    let new_password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
-        .map_err(|e| format!("Failed to hash password: {}", e))?;
+    let new_password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST).map_err(|e| format!("Failed to hash password: {}", e))?;
 
     let connection = get_database_connection()?;
 
     let mut stmt = connection
         .prepare("UPDATE users SET password_hash = ? WHERE id = ?")
         .map_err(|e| format!("Failed to prepare password update statement: {}", e))?;
-    stmt.bind((1, new_password_hash.as_str()))
-        .map_err(|e| format!("Failed to bind new password hash: {}", e))?;
-    stmt.bind((2, user.id))
-        .map_err(|e| format!("Failed to bind user id: {}", e))?;
-    stmt.next()
-        .map_err(|e| format!("Failed to update password: {}", e))?;
+    stmt.bind((1, new_password_hash.as_str())).map_err(|e| format!("Failed to bind new password hash: {}", e))?;
+    stmt.bind((2, user.id)).map_err(|e| format!("Failed to bind user id: {}", e))?;
+    stmt.next().map_err(|e| format!("Failed to update password: {}", e))?;
 
     // Invalidate all existing sessions for this user
     invalidate_sessions_for_user(&connection, username)?;
