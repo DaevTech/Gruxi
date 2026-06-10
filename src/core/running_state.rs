@@ -1,3 +1,4 @@
+use crate::config::cached_configuration::get_cached_configuration;
 use crate::logging::access_logging::AccessLogBuffer;
 use crate::{
     compression::compression_cache::CompressionCache,
@@ -26,6 +27,11 @@ pub struct RunningState {
 
 impl RunningState {
     pub async fn new() -> Self {
+        // Get configuration
+        let cached_configuration = get_cached_configuration();
+        let config = cached_configuration.get_configuration();
+
+        // Access log buffer
         let access_log_buffer = AccessLogBuffer::new().await;
         access_log_buffer.start_flushing_task();
         debug!("Access log buffers initialized");
@@ -35,7 +41,7 @@ impl RunningState {
         debug!("External system handler initialized");
 
         // Start file read cache
-        let file_reader_cache = FileReaderCache::new().await;
+        let file_reader_cache = FileReaderCache::new(&config);
         debug!("File reader cache initialized");
 
         // Start request handler manager
@@ -51,8 +57,8 @@ impl RunningState {
         debug!("HTTP client initialized");
 
         // Start binding site cache
-        let binding_site_cache = BindingSiteCache::new();
-        binding_site_cache.init().await;
+        let mut binding_site_cache = BindingSiteCache::new();
+        binding_site_cache.init();
         debug!("Binding <> site cache initialized");
 
         // Start log rotation manager

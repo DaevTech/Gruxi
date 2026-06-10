@@ -11,7 +11,7 @@ pub struct ResourceAccessCounter {
 impl ResourceAccessCounter {
     pub fn new(window_duration: std::time::Duration, window_size: u32) -> Self {
         Self {
-            access_counters: DashMap::new(),
+            access_counters: DashMap::with_shard_amount(64),
             window_duration,
             window_size,
         }

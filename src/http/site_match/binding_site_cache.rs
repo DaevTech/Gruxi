@@ -1,11 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use dashmap::DashMap;
-
 use crate::config::{binding::Binding, binding_site_relation::BindingSiteRelationship, cached_configuration::get_cached_configuration, site::Site};
 
 pub struct BindingSiteCache {
-    binding_to_sites: DashMap<String, Arc<Vec<Site>>>,
+    binding_to_sites: HashMap<String, Arc<Vec<Site>>>,
 }
 
 impl Default for BindingSiteCache {
@@ -16,17 +14,17 @@ impl Default for BindingSiteCache {
 
 impl BindingSiteCache {
     pub fn new() -> Self {
-        BindingSiteCache { binding_to_sites: DashMap::new() }
+        BindingSiteCache { binding_to_sites: HashMap::new() }
     }
 
-    pub async fn init(&self) {
+    pub fn init(&mut self) {
         // Get the configuration
         let cached_configuration = get_cached_configuration();
         let configuration = cached_configuration.get_configuration();
         self.populate_cache(&configuration.bindings, &configuration.sites, &configuration.binding_sites);
     }
 
-    fn populate_cache(&self, bindings: &[Binding], sites: &[Site], binding_sites: &[BindingSiteRelationship]) {
+    fn populate_cache(&mut self, bindings: &[Binding], sites: &[Site], binding_sites: &[BindingSiteRelationship]) {
         // Clear existing cache
         self.binding_to_sites.clear();
 
@@ -51,7 +49,7 @@ impl BindingSiteCache {
     }
 
     pub fn get_sites_for_binding(&self, binding_id: &str) -> Arc<Vec<Site>> {
-        self.binding_to_sites.get(binding_id).map(|entry| Arc::clone(&entry)).unwrap_or_else(|| Arc::new(Vec::new()))
+        self.binding_to_sites.get(binding_id).map(Arc::clone).unwrap_or_else(|| Arc::new(Vec::new()))
     }
 }
 
@@ -86,7 +84,7 @@ mod tests {
             site_id: site4.id.clone(),
         };
 
-        let cache = BindingSiteCache::new();
+        let mut cache = BindingSiteCache::new();
         cache.populate_cache(
             &vec![binding1.clone(), binding2.clone()],
             &vec![site1.clone(), site2.clone(), site3.clone(), site4.clone()],

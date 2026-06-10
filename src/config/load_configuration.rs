@@ -1,13 +1,14 @@
 use crate::admin_portal::init::add_admin_portal_to_configuration;
-use crate::telemetry::init::add_telemetry_to_configuration;
 use crate::config::binding_site_relation::BindingSiteRelationship;
+use crate::config::configuration::CURRENT_CONFIGURATION_VERSION;
 use crate::database::database_migration::migrate_database;
-use crate::database::database_schema::{CURRENT_DB_SCHEMA_VERSION, get_schema_version, set_schema_version};
+use crate::database::database_schema::{get_schema_version, set_schema_version};
 use crate::external_connections::managed_system::php_cgi;
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
 use crate::http::request_handlers::processors::php_processor::{self, PHPProcessor};
 use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor, ProxyProcessorRewrite};
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
+use crate::telemetry::init::add_telemetry_to_configuration;
 use crate::{
     config::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::HeaderKV, site::Site},
     core::database_connection::get_database_connection,
@@ -21,8 +22,8 @@ pub fn init() -> Configuration {
     let schema_version = get_schema_version();
 
     // Determine if we need to migrate
-    if schema_version > 0 && schema_version < CURRENT_DB_SCHEMA_VERSION {
-        info!("Database schema version {} is older than current version {}, migrating...", schema_version, CURRENT_DB_SCHEMA_VERSION);
+    if schema_version > 0 && schema_version < CURRENT_CONFIGURATION_VERSION {
+        info!("Database schema version {} is older than current version {}, migrating...", schema_version, CURRENT_CONFIGURATION_VERSION);
         migrate_database();
     }
 
@@ -38,7 +39,7 @@ pub fn init() -> Configuration {
             }
 
             // Update schema version to value of constant CURRENT_CONFIGURATION_VERSION
-            let set_schema_version_result = set_schema_version(CURRENT_DB_SCHEMA_VERSION).map_err(|e| vec![format!("Failed to set schema version: {}", e)]);
+            let set_schema_version_result = set_schema_version(CURRENT_CONFIGURATION_VERSION).map_err(|e| vec![format!("Failed to set schema version: {}", e)]);
             if let Err(e) = set_schema_version_result {
                 panic!("Failed to set schema version: {:?}", e);
             }
@@ -242,15 +243,10 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
             "file_cache_cache_max_size_per_file" => {
                 core.file_cache.cache_max_size_per_file = value.parse::<u64>().map_err(|e| format!("Failed to parse file_cache_cache_max_size_per_file: {}", e))?;
             }
-            "file_cache_update_thread_interval" => {
-                core.file_cache.cache_update_thread_interval = value.parse::<u64>().map_err(|e| format!("Failed to parse file_cache_update_thread_interval: {}", e))?;
-            }
             "file_cache_max_item_lifetime" => {
                 core.file_cache.max_item_lifetime = value.parse::<u64>().map_err(|e| format!("Failed to parse file_cache_max_item_lifetime: {}", e))?;
             }
-            "file_cache_forced_eviction_threshold" => {
-                core.file_cache.forced_eviction_threshold = value.parse::<u64>().map_err(|e| format!("Failed to parse file_cache_forced_eviction_threshold: {}", e))?;
-            }
+
             // Gzip
             "gzip_is_enabled" => {
                 core.gzip.is_enabled = value.parse::<bool>().map_err(|e| format!("Failed to parse gzip_is_enabled: {}", e))?;
@@ -437,10 +433,7 @@ fn load_binding_sites_relationships(connection: &Connection) -> Result<Vec<Bindi
         let binding_id: String = statement.read(0).map_err(|e| format!("Failed to read binding_id: {}", e))?;
         let site_id: String = statement.read(1).map_err(|e| format!("Failed to read site_id: {}", e))?;
 
-        binding_sites.push(BindingSiteRelationship {
-            binding_id,
-            site_id,
-        });
+        binding_sites.push(BindingSiteRelationship { binding_id, site_id });
     }
 
     Ok(binding_sites)

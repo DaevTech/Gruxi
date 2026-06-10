@@ -1615,24 +1615,16 @@ onMounted(() => {
                                     </div>
 
                                     <div class="form-field">
-                                        <label>Max Cached Items (count) <span class="help-icon" data-tooltip="Maximum number of files to cache in the file cache.">?</span></label>
+                                        <label>Max Cached Files/Directories <span class="help-icon" data-tooltip="Maximum number of files/directories to cache in the file cache.">?</span></label>
                                         <input v-model.number="config.core.file_cache.cache_item_size" type="number" min="1" />
                                     </div>
                                     <div class="form-field">
-                                        <label>Max Size Per File (MB) <span class="help-icon" data-tooltip="Maximum size of each file to be cached in megabytes.">?</span></label>
+                                        <label>Max Size Per File (MB) <span class="help-icon" data-tooltip="Maximum size of each file to be cached in megabytes. If larger, the file will not be cached.">?</span></label>
                                         <input v-model.number="fileCacheMaxSizePerFileMb" type="number" min="0" step="0.01" />
                                     </div>
                                     <div class="form-field">
-                                        <label>Cache Update Thread Interval (seconds) <span class="help-icon" data-tooltip="Interval in seconds for the cache update thread to run, which periodically cleans up expired cache items and check for file updates.">?</span></label>
-                                        <input v-model.number="config.core.file_cache.cache_update_thread_interval" type="number" min="1" />
-                                    </div>
-                                    <div class="form-field">
-                                        <label>Max Time To Keep a File (seconds) <span class="help-icon" data-tooltip="Maximum time in seconds to keep a file in the cache before it is eligible for eviction. Will be applied when the cache reaches its maximum size or over the percentage threshold.">?</span></label>
+                                        <label>Max Time To Keep a File Cached (seconds) <span class="help-icon" data-tooltip="Maximum time in seconds to keep a file/directory in the cache before it is eligible for eviction. Longer durations will also make file changes less frequently reflected in the cache.">?</span></label>
                                         <input v-model.number="config.core.file_cache.max_item_lifetime" type="number" min="0" />
-                                    </div>
-                                    <div class="form-field">
-                                        <label>Forced Eviction Threshold (%) <span class="help-icon" data-tooltip="Percentage threshold at which eviction of cached files occurs, to prevent reaching maximum cache size.">?</span></label>
-                                        <input v-model.number="config.core.file_cache.forced_eviction_threshold" type="number" min="1" max="99" />
                                     </div>
                                 </div>
                             </div>

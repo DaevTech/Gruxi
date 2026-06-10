@@ -1,8 +1,5 @@
 use sqlite::State;
-
-use crate::core::database_connection::get_database_connection;
-
-pub const CURRENT_DB_SCHEMA_VERSION: i32 = 8;
+use crate::{config::configuration::CURRENT_CONFIGURATION_VERSION, core::database_connection::get_database_connection};
 
 pub struct DatabaseSchema {
     pub version: i32,
@@ -20,7 +17,7 @@ impl DatabaseSchema {
         let init_sql = get_init_sql();
 
         Self {
-            version: CURRENT_DB_SCHEMA_VERSION,
+            version: CURRENT_CONFIGURATION_VERSION,
             init_sql,
         }
     }
