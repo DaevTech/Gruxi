@@ -140,13 +140,14 @@ impl ProcessorTrait for StaticFileProcessor {
         let file_reader_cache = connection_context.running_state.get_file_reader_cache();
 
         let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-        let mut file_data = match file_data_result {
-            Ok(data) => data,
-            Err(e) => {
-                trace!("We could not get data on the file: {}, so we cannot handle with static file processor", e);
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
+        let mut file_data = match file_data_result.meta.exists {
+            true => file_data_result,
+            false => {
+                trace!("File does not exist: {}", normalized_path.get_full_path());
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
             }
         };
+
 
         // Make sure the trailing slash logic is correct
         let trailing_slash_result = trailing_slash_check(file_data.clone(), &path);
@@ -177,11 +178,11 @@ impl ProcessorTrait for StaticFileProcessor {
                 };
 
                 let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-                file_data = match file_data_result {
-                    Ok(data) => data,
-                    Err(e) => {
-                        trace!("We could not get data on the file: {}, so we cannot handle with static file processor", e);
-                        return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::PathError(e))));
+                file_data = match file_data_result.meta.exists {
+                    true => file_data_result,
+                    false => {
+                        trace!("File does not exist: {}", normalized_path.get_full_path());
+                        return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
                     }
                 };
             } else {
@@ -201,7 +202,7 @@ impl ProcessorTrait for StaticFileProcessor {
             let mut found_index = false;
             for file in &self.web_root_index_file_list {
                 // Get the file, if it exists
-                let file_index_to_check = format!("{}/{}", normalized_path.get_path(), file);
+                let file_index_to_check = format!("{}{}", normalized_path.get_path(), file);
                 let normalized_path_result = normalized_path.set_path(&file_index_to_check, true);
                 match normalized_path_result {
                     Ok(_) => {}
@@ -212,18 +213,13 @@ impl ProcessorTrait for StaticFileProcessor {
                 };
 
                 let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-                file_data = match file_data_result {
-                    Ok(data) => data,
-                    Err(_) => {
+                file_data = match file_data_result.meta.exists {
+                    true => file_data_result,
+                    false => {
                         trace!("Index files in dir does not exist: {}", normalized_path.get_full_path());
                         continue;
                     }
                 };
-
-                if !file_data.meta.exists {
-                    trace!("Index files in dir does not exist: {}", normalized_path.get_full_path());
-                    continue;
-                }
 
                 trace!("Found index file: {}", normalized_path.get_full_path());
                 found_index = true;

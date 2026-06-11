@@ -11,7 +11,7 @@ use crate::http::request_response::gruxi_request_processor_data::{GruxiRequestPr
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::{
     config::site::Site,
-    http::{http_util::empty_response_with_status, request_handlers::processor_trait::ProcessorTrait, request_response::gruxi_request::GruxiRequest},
+    http::{request_handlers::processor_trait::ProcessorTrait, request_response::gruxi_request::GruxiRequest},
 };
 use crate::{debug, error, trace};
 use serde::{Deserialize, Serialize};
@@ -177,10 +177,11 @@ impl ProcessorTrait for PHPProcessor {
         let file_reader_cache = connection_context.running_state.get_file_reader_cache();
 
         let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-        let mut file_data = match file_data_result {
-            Ok(data) => data,
-            Err(e) => {
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
+        let mut file_data = match file_data_result.meta.exists {
+            true => file_data_result,
+            false => {
+                trace!("File does not exist: {}", normalized_path.get_full_path());
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
             }
         };
 
@@ -205,17 +206,17 @@ impl ProcessorTrait for PHPProcessor {
                 // Check if the index file exists
                 let normalized_path_result = normalized_path.set_path(&path, true);
                 match normalized_path_result {
-                    Ok(_) => {},
+                    Ok(_) => {}
                     Err(_) => {
                         return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
                     }
                 };
 
                 let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-                file_data = match file_data_result {
-                    Ok(data) => data,
-                    Err(e) => {
-                        return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::PathError(e))));
+                file_data = match file_data_result.meta.exists {
+                    true => file_data_result,
+                    false => {
+                        return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
                     }
                 };
             } else {
@@ -225,34 +226,32 @@ impl ProcessorTrait for PHPProcessor {
 
         let mut uri_is_a_dir_with_index_file_inside = false;
         if file_data.meta.is_directory {
+
             // If it's a directory, we will try to check if there is an index.php file inside
             trace!("File is a directory: {}", normalized_path.get_full_path());
 
             // Take the path and add "/index.php" to it, and check if that file exists, if it does, we will serve that instead
             let normalized_path_result = normalized_path.set_path(&format!("{}{}", normalized_path.get_path(), "/index.php"), true);
             match normalized_path_result {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(_) => {
                     return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
                 }
             };
 
             let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-            file_data = match file_data_result {
-                Ok(data) => data,
-                Err(_) => {
-                    return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
+            match file_data_result.meta.exists {
+                true => file_data_result,
+                false => {
+                    trace!("Index files in dir does not exist: {}", normalized_path.get_full_path());
+                    return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
                 }
             };
-
-            if !file_data.meta.exists {
-                trace!("Index files in dir does not exist: {}", normalized_path.get_full_path());
-                return Ok(empty_response_with_status(hyper::StatusCode::NOT_FOUND));
-            }
 
             trace!("Found index file: {}", normalized_path.get_full_path());
             uri_is_a_dir_with_index_file_inside = true;
         }
+        drop(file_data);
 
         // Now get the IP and port to connect to
         let connect_ip_and_port_result = self.get_ip_and_port(connection_context.running_state.get_external_system_handler()).await;

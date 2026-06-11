@@ -13,6 +13,7 @@ use crate::{
     warn,
 };
 
+use dashmap::DashMap;
 use hyper::body::Bytes;
 use moka::future::Cache;
 
@@ -35,12 +36,14 @@ pub struct FileReaderCache {
     // Compression related
     gzip_enabled: bool,
     compressible_content_types: Vec<String>,
+    compressible_content_types_cache: DashMap<String, bool>,
 
     // Caching related headers
     etag_enabled: bool,
     last_modified_header_enabled: bool,
     expires_header_enabled: bool,
     cache_control_header_enabled: bool,
+    cache_control_header_cache: DashMap<String, String>,
 }
 
 impl FileReaderCache {
@@ -70,6 +73,7 @@ impl FileReaderCache {
         let expires_header_enabled = http_caching_config.enable_header_expires;
         // Cache-control header enabled
         let cache_control_header_enabled = http_caching_config.enable_header_cache_control;
+        let cache_control_header_cache = DashMap::new();
 
         // Create the actual caches
         let cache = Cache::builder().max_capacity(capacity).time_to_live(Duration::from_secs(max_item_lifetime)).build();
@@ -92,10 +96,12 @@ impl FileReaderCache {
             max_file_size,
             gzip_enabled,
             compressible_content_types: compressible_content_types.clone(),
+            compressible_content_types_cache: DashMap::new(),
             etag_enabled,
             last_modified_header_enabled,
             expires_header_enabled,
             cache_control_header_enabled,
+            cache_control_header_cache,
             cache_short_lived,
         }
     }
@@ -125,7 +131,6 @@ impl FileReaderCache {
                 is_directory: false,
                 exists: false,
                 length: 0,
-                is_too_large_to_store: false,
                 mime_type: String::new(),
                 last_modified: SystemTime::now(),
                 etag_header: None,
@@ -137,31 +142,46 @@ impl FileReaderCache {
         })
     }
 
-    // Get file data
-    pub async fn get_file(&self, file_path: &str) -> Result<Arc<FileEntry>, std::io::Error> {
-        // Check the positive cache first
-        if self.is_caching_enabled
-            && let Some(cached_entry) = self.cache.get(file_path).await
-        {
-            trace!("File found in cache: {}", file_path);
-            return Ok(cached_entry);
+    pub async fn get_file(&self, file_path: &str) -> Arc<FileEntry> {
+        if self.is_caching_enabled {
+            // Check the 404 cache to short circuit if we know the file doesn't exist, to avoid unnecessary disk reads
+            if self.cache_404.get(file_path).await.is_some() {
+                trace!("File found in 404 cache, so we short circuit and return empty result for file: '{}'", file_path);
+                return self.get_empty_file_with_path(file_path);
+            }
+
+            // Check our main cache and populate if possible, otherwise return a empty file entry
+            let file_cached_option = self.cache.optionally_get_with_by_ref(file_path, self.get_fresh_file(file_path)).await;
+            match file_cached_option {
+                Some(cached_entry) => {
+                    trace!("File found in cache: {}", file_path);
+                    return cached_entry;
+                }
+                None => {
+                    // File not found, so we return empty, this only happens first time a file is not found, after that it should be in 404 cache
+                    return self.get_empty_file_with_path(file_path);
+                }
+            }
+        } else {
+            // If cache is NOT enabled, we check if short lived cache exist
+            if let Some(cache) = &self.cache_short_lived
+                && let Some(cached_entry) = cache.get(file_path).await
+            {
+                trace!("File found in short-lived cache: {}", file_path);
+                return cached_entry;
+            }
+
+            // If no short lived cache, we get it fresh, but we dont add it to cache, since caching is disabled
+            if let Some(fresh_entry) = self.get_fresh_file(file_path).await {
+                return fresh_entry;
+            }
         }
 
-        // Also check the 404 cache to short circuit if we know the file doesn't exist, to avoid unnecessary disk reads
-        if self.is_caching_enabled && self.cache_404.get(file_path).await.is_some() {
-            trace!("File found in 404 cache, so we short circuit and return empty result for file: '{}'", file_path);
-            return Ok(self.get_empty_file_with_path(file_path));
-        }
+        // If we reach here, it means the file was not found in any cache and didnt exist, so we return a "non found" file entry
+        self.get_empty_file_with_path(file_path)
+    }
 
-        // If caching is disabled, we check our short lived cache for the file
-        if !self.is_caching_enabled
-            && let Some(cache) = &self.cache_short_lived
-            && let Some(cached_entry) = cache.get(file_path).await
-        {
-            trace!("File found in short-lived cache: {}", file_path);
-            return Ok(cached_entry);
-        }
-
+    async fn get_fresh_file(&self, file_path: &str) -> Option<Arc<FileEntry>> {
         // Not found in caches, so we populate it, maybe saving it to cache if enabled
         trace!("File/dir not found in cache, reading from disk: {}", file_path);
         let metadata_result = tokio::fs::metadata(file_path).await;
@@ -172,7 +192,7 @@ impl FileReaderCache {
                 if self.is_caching_enabled {
                     self.cache_404.insert(file_path.to_string(), ()).await;
                 }
-                return Ok(self.get_empty_file_with_path(file_path));
+                return None;
             }
         };
 
@@ -208,26 +228,7 @@ impl FileReaderCache {
         };
 
         // Cache control header if enabled
-        let cache_control_header_value = if self.cache_control_header_enabled {
-            let control_value = if mime_type == "text/css"
-                || mime_type == "text/javascript"
-                || mime_type == "application/javascript"
-                || mime_type == "application/wasm"
-                || mime_type.starts_with("font/")
-                || mime_type.starts_with("image/")
-                || mime_type.starts_with("video/")
-                || mime_type.starts_with("audio/")
-            {
-                "public, max-age=31536000, immutable" // 1 year for static files
-            } else if mime_type == "text/html" {
-                "no-cache" // Always revalidate HTML files
-            } else {
-                "public, max-age=86400" // 1 day for other files
-            };
-            Some(control_value.to_string())
-        } else {
-            None
-        };
+        let cache_control_header_value = self.get_cache_control_header(&mime_type);
 
         let file_path_string = file_path.to_string();
 
@@ -237,7 +238,6 @@ impl FileReaderCache {
                 is_directory,
                 exists: true,
                 length,
-                is_too_large_to_store: length > self.max_file_size,
                 mime_type,
                 last_modified,
                 etag_header,
@@ -261,21 +261,12 @@ impl FileReaderCache {
                 if let Some(cache) = &self.cache_short_lived {
                     let file_entry_arc = Arc::new(file_entry);
                     cache.insert(file_path_string.clone(), file_entry_arc.clone()).await;
-                    return Ok(file_entry_arc);
+                    return Some(file_entry_arc);
                 }
             }
         }
 
-        // Create Arc to return
-        let file_entry_arc = Arc::new(file_entry);
-
-        // Add to cache if enabled
-        if self.is_caching_enabled {
-            trace!("Adding file to cache: {:?}", &file_entry_arc.meta);
-            self.cache.insert(file_path_string.clone(), file_entry_arc.clone()).await;
-        }
-
-        Ok(file_entry_arc)
+        Some(Arc::new(file_entry))
     }
 
     async fn populate_file_entry_with_content(&self, file_entry: &mut FileEntry) {
@@ -307,14 +298,54 @@ impl FileReaderCache {
     // Check if a MIME type should be compressed
     pub fn should_compress(&self, mime_type: &str, content_length: u64) -> bool {
         if self.gzip_enabled {
+            // First, check cache
+            if let Some(cached_result) = self.compressible_content_types_cache.get(mime_type) {
+                trace!(
+                    "Should compress check (from cache) for MIME type {} and content_length: {} - Result: {}",
+                    mime_type, content_length, *cached_result
+                );
+                return *cached_result;
+            }
+
             let check_should_compress =
                 (content_length == 0 || content_length > 1024) && content_length < 10 * 1024 * 1024 && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
             trace!(
                 "Should compress check for MIME type {} and content_length: {} - Result: {}",
                 mime_type, content_length, check_should_compress
             );
+            self.compressible_content_types_cache.insert(mime_type.to_string(), check_should_compress);
             return check_should_compress;
         }
         false
+    }
+
+    fn get_cache_control_header(&self, mime_type: &str) -> Option<String> {
+        if !self.cache_control_header_enabled {
+            return None;
+        }
+        // Check if we have a cached value for this MIME type
+        if let Some(cached_value) = self.cache_control_header_cache.get(mime_type) {
+            return Some(cached_value.value().clone());
+        }
+
+        let control_value = if mime_type == "text/css"
+            || mime_type == "text/javascript"
+            || mime_type == "application/javascript"
+            || mime_type == "application/wasm"
+            || mime_type.starts_with("font/")
+            || mime_type.starts_with("image/")
+            || mime_type.starts_with("video/")
+            || mime_type.starts_with("audio/")
+        {
+            "public, max-age=31536000, immutable" // 1 year for static files
+        } else if mime_type == "text/html" {
+            "no-cache" // Always revalidate HTML files
+        } else {
+            "public, max-age=86400" // 1 day for other files
+        };
+
+        // Cache the computed value for future use
+        self.cache_control_header_cache.insert(mime_type.to_string(), control_value.to_string());
+        Some(control_value.to_string())
     }
 }

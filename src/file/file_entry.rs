@@ -38,7 +38,6 @@ pub struct FileMeta {
     pub is_directory: bool,
     pub exists: bool,
     pub length: u64,
-    pub is_too_large_to_store: bool,
     pub mime_type: String,
     pub last_modified: SystemTime,
     // Response caching headers
