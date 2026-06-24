@@ -19,7 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  - #32 - Improve compression handling without the main file cache by introducing a hot-file short-lived compression cache.
  - #36 - Replace the primary file cache implementation with Moka and simplify cache management.
  - #36 - Simplify cache-related configuration by removing eviction-threshold and cache update interval settings.
- - #36 - Simplify version handling by keeping a single version instead of separate configuration and database schema versions.
  - #17 - Change the file reader cache so concurrent requests for the same file share a single file system read, preventing cache stampedes.
  - #17 - Optimize cache-control and compressible mime-type handling by caching those lookups.
  - #27 - Refresh the default HTML page and add a link to the administration portal for easier first-time setup.
