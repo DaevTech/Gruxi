@@ -9,46 +9,58 @@ rust-version = "1.96"
 
 [dependencies]
 hyper = { version = "1", features = ["server", "http1", "http2"] }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "io-util", "time", "sync", "macros", "process", "signal"] }
-http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "http2", "client", "client-legacy"] }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "io-util", "time", "sync", "macros", "process", "signal"] }
+tokio-util = "0.7"
+
+# DB
 sqlite = { version = "0.37", features = ["bundled"] }
+
+# Data structures
+moka = { version = "0.12", features = ["future"] }
+dashmap = "6.1"
+crossbeam-channel = "0.5"
+arc-swap = "1.8"
+
+# Utilities
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 mime_guess = "2.0"
 futures = "0.3"
 bcrypt = "0.19"
-moka = { version = "0.12", features = ["future"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 flate2 = { version = "1.0", features = ["zlib-rs"], default-features = false }
-tls-listener = { version = "0.11", features = ["rustls-core", "rustls-ring", "rt", "tokio-net"] }
-rcgen = { version = "0.14", features = ["ring", "pem"] }
 rand = "0.10"
 clap = "4.5"
 num_cpus = "1.17"
-rustls-pemfile = "2.2"
 random_password_generator = "0.1"
-tokio-util = "0.7"
+http = "1.4"
+
+# TLS
+rcgen = { version = "0.14", features = ["ring", "pem"] }
+tls-listener = { version = "0.11", features = ["rustls-core", "rustls-ring", "rt", "tokio-net"] }
+rustls-pemfile = "2.2"
 tokio-stream = { version = "0.1", features = ["net"] }
 rustls-pki-types = "1.13"
-http = "1.4"
 hyper-rustls = { version = "0.27", features = ["http1", "http2", "native-tokio", "tls12", "logging"] }
 rustls = "0.23"
 rustls-native-certs = "0.8"
 webpki-roots = "1.0"
-dashmap = "6.1"
-crossbeam-channel = "0.5"
+rustls-acme = { version = "0.15", features = ["tokio", "aws-lc-rs", "webpki-roots"] }
+
+# Path normalization
 urlencoding = "2.1"
 unicode-normalization = "0.1"
 unicode-general-category = "1.1"
 email_address = "0.2"
 psl = "2.1"
-rustls-acme = { version = "0.15", features = ["tokio", "aws-lc-rs", "webpki-roots"] }
 httpdate = "1.0"
-arc-swap = "1.8"
+
 # Service implementation
 qsu = { version = "0.10", features = ["rt", "tokio", "installer", "clap", "systemd"] }
+
 # Telemetry
 opentelemetry = { version = "0.32", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.32", features = ["metrics", "rt-tokio"] }

@@ -62,7 +62,13 @@ impl PhpCgi {
         // Clean up executable path
         let normalized_executable = NormalizedPath::new(&self.executable, "", true);
         self.executable = match normalized_executable {
-            Ok(ne) => ne.get_full_path().to_string(),
+            Ok(ne) => {
+                if ne.is_empty() {
+                    "".to_string()
+                } else {
+                    ne.get_full_path().to_string()
+                }
+            }
             Err(_) => self.executable.trim().to_string(), // if normalization fails, we pick it up in validation
         };
 
@@ -88,21 +94,34 @@ impl PhpCgi {
             errors.push("PHP-CGI request timeout must be at least 1 second.".to_string());
         }
 
-        // Validate executable path
-        if self.executable.is_empty() {
-            errors.push("PHP-CGI executable path cannot be empty.".to_string());
-        }
-
         // Verify that it can be normalized
-        let normalized_executable = NormalizedPath::new(&self.executable, "", true);
-        match normalized_executable {
-            Ok(_) => {}
-            Err(e) => errors.push(format!("PHP-CGI executable path is invalid. Cause: {:?}", e)),
+        let normalized_executable_result = NormalizedPath::new(&self.executable, "", true);
+        let normalized_executable = match normalized_executable_result {
+            Ok(exec) => exec,
+            Err(e) => {
+                errors.push(format!("PHP-CGI executable path is invalid. Cause: {:?}", e));
+                return Err(errors);
+            }
         };
 
+        // Validate executable path
+        if normalized_executable.is_empty() {
+            errors.push("PHP-CGI executable path cannot be empty.".to_string());
+            return Err(errors);
+        }
+
+        let normalized_full_path = normalized_executable.get_full_path();
+
+        // Check that path ends with "php-cgi.exe" (case-insensitive)
+        if !normalized_full_path.to_lowercase().ends_with("php-cgi.exe") {
+            errors.push(format!("PHP-CGI executable path must end with 'php-cgi.exe'. Current path: {}", normalized_full_path));
+            return Err(errors);
+        }
+
         // Validate that executable exists
-        if !self.executable.is_empty() && !std::path::Path::new(&self.executable).exists() {
-            errors.push(format!("PHP-CGI executable not found at path: {}", self.executable));
+        if !normalized_full_path.is_empty() && !std::path::Path::new(&normalized_full_path).exists() {
+            errors.push(format!("PHP-CGI executable not found at path: {}", normalized_full_path));
+            return Err(errors);
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
