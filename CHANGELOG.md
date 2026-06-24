@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 1.1.0 - 24 June 2026
+
+### Added
+ - #29 - Add CSRF protection to the admin portal.
+ - #33 - Add a short-lived cache for frequently accessed files when the main file cache is disabled.
+ - #33 - Add short-lived cache configuration options and expose cache usage details in the admin dashboard.
+ - #5 - Add an option in the admin portal to disable admin authentication for local development and similarly safe environments.
+ - #5 - Add file-not-found cache visibility to the dashboard and group cache-related settings under a new `Caching` configuration section.
+
+### Changed
+ - #32 - Improve compression performance significantly by switching gzip compression to `zlib-rs`.
+ - #32 - Improve compression handling without the main file cache by introducing a hot-file short-lived compression cache.
+ - #36 - Replace the primary file cache implementation with Moka and simplify cache management.
+ - #36 - Simplify cache-related configuration by removing eviction-threshold and cache update interval settings.
+ - #36 - Simplify version handling by keeping a single version instead of separate configuration and database schema versions.
+ - #17 - Change the file reader cache so concurrent requests for the same file share a single file system read, preventing cache stampedes.
+ - #17 - Optimize cache-control and compressible mime-type handling by caching those lookups.
+ - #27 - Refresh the default HTML page and add a link to the administration portal for easier first-time setup.
+ - Improve monitoring and metrics exporter internals, and add a bit more tracing to monitoring.
+ - Bump the minimum Rust toolchain used in development to 1.96.
+ - Comment out benchmarks by default to avoid Docker build issues.
+
+### Fixed
+ - #37 - Add more validation for the `php-cgi` field in managed external systems.
+ - Apply dependency updates and related corrections, including a protobuf security-related update.
+ - Include a handful of smaller fixes and maintenance cleanups shipped alongside the larger changes.
+
+
 # Version 1.0.2 - 22 May 2026
 
 Bug fix release
