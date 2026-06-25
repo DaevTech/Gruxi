@@ -116,7 +116,12 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
 
 fn load_proxy_processors(connection: &Connection) -> Result<Vec<ProxyProcessor>, String> {
     let mut statement = connection
-        .prepare("SELECT * FROM proxy_processors")
+        .prepare(
+            "SELECT id, proxy_type, upstream_servers, load_balancing_strategy, timeout_seconds, \
+             health_check_path, health_check_interval_seconds, health_check_timeout_seconds, \
+             url_rewrites, preserve_host_header, forced_host_header, verify_tls_certificates \
+             FROM proxy_processors",
+        )
         .map_err(|e| format!("Failed to prepare Proxy processors query: {}", e))?;
 
     let mut processors = Vec::new();
@@ -162,7 +167,10 @@ fn load_proxy_processors(connection: &Connection) -> Result<Vec<ProxyProcessor>,
 
 fn load_php_processors(connection: &Connection) -> Result<Vec<php_processor::PHPProcessor>, String> {
     let mut statement = connection
-        .prepare("SELECT * FROM php_processors")
+        .prepare(
+            "SELECT id, served_by_type, php_cgi_handler_id, fastcgi_ip_and_port, request_timeout, \
+             local_web_root, fastcgi_web_root, server_software_spoof FROM php_processors",
+        )
         .map_err(|e| format!("Failed to prepare PHP processors query: {}", e))?;
 
     let mut processors = Vec::new();
@@ -195,7 +203,7 @@ fn load_php_processors(connection: &Connection) -> Result<Vec<php_processor::PHP
 
 fn load_php_cgi_handlers(connection: &Connection) -> Result<Vec<php_cgi::PhpCgi>, String> {
     let mut statement = connection
-        .prepare("SELECT * FROM php_cgi_handlers")
+        .prepare("SELECT id, name, request_timeout, concurrent_threads, executable FROM php_cgi_handlers")
         .map_err(|e| format!("Failed to prepare PHP-CGI handlers query: {}", e))?;
 
     let mut handlers = Vec::new();
@@ -333,7 +341,9 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
 }
 
 fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
-    let mut statement = connection.prepare("SELECT * FROM bindings").map_err(|e| format!("Failed to prepare bindings query: {}", e))?;
+    let mut statement = connection
+        .prepare("SELECT id, ip, port, is_admin, is_telemetry, is_tls FROM bindings")
+        .map_err(|e| format!("Failed to prepare bindings query: {}", e))?;
 
     let mut bindings = Vec::new();
     while let sqlite::State::Row = statement.next().map_err(|e| format!("Failed to execute bindings query: {}", e))? {
@@ -358,7 +368,13 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
 }
 
 fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
-    let mut statement = connection.prepare("SELECT * FROM sites").map_err(|e| format!("Failed to prepare sites query: {}", e))?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, is_default, is_enabled, hostnames, tls_cert_path, tls_cert_content, tls_key_path, \
+             tls_key_content, request_handlers, rewrite_functions, access_log_enabled, access_log_file, \
+             extra_headers, tls_automatic_enabled, force_tls, force_tls_port, canonical_host FROM sites",
+        )
+        .map_err(|e| format!("Failed to prepare sites query: {}", e))?;
 
     let mut sites = Vec::new();
     while let sqlite::State::Row = statement.next().map_err(|e| format!("Failed to execute sites query: {}", e))? {
@@ -474,7 +490,7 @@ fn load_request_handlers(connection: &Connection) -> Result<Vec<RequestHandler>,
 
 fn load_static_file_processors(connection: &Connection) -> Result<Vec<StaticFileProcessor>, String> {
     let mut statement = connection
-        .prepare("SELECT * FROM static_file_processors")
+        .prepare("SELECT id, web_root, web_root_index_file_list FROM static_file_processors")
         .map_err(|e| format!("Failed to prepare static file processors query: {}", e))?;
 
     let mut processors = Vec::new();
