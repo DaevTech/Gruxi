@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 1.1.1 - 25 June 2026
+
+### Fixed
+ - Fix issue with index file detection in subdirectories, where the index file was not found due to a missing slash in the path construction. This has been corrected to ensure proper path formatting when checking for index files.
+
 # Version 1.1.0 - 24 June 2026
 
 ### Added

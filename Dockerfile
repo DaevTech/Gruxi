@@ -3,7 +3,7 @@
 ############################
 # Rust builder
 ############################
-FROM --platform=$TARGETPLATFORM rust:alpine AS gruxi-builder
+FROM --platform=$TARGETPLATFORM rust:1.96.0-alpine3.24 AS gruxi-builder
 
 RUN apk add --no-cache \
     musl-dev \
@@ -36,7 +36,7 @@ RUN npm run build
 ############################
 # Runtime image
 ############################
-FROM alpine:latest
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates
 

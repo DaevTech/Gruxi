@@ -202,7 +202,7 @@ impl ProcessorTrait for StaticFileProcessor {
             let mut found_index = false;
             for file in &self.web_root_index_file_list {
                 // Get the file, if it exists
-                let file_index_to_check = format!("{}{}", normalized_path.get_path(), file);
+                let file_index_to_check = format!("{}/{}", normalized_path.get_path(), file);
                 let normalized_path_result = normalized_path.set_path(&file_index_to_check, true);
                 match normalized_path_result {
                     Ok(_) => {}
@@ -216,7 +216,7 @@ impl ProcessorTrait for StaticFileProcessor {
                 file_data = match file_data_result.meta.exists {
                     true => file_data_result,
                     false => {
-                        trace!("Index files in dir does not exist: {}", normalized_path.get_full_path());
+                        trace!("Index file does not exist: {}", normalized_path.get_full_path());
                         continue;
                     }
                 };
