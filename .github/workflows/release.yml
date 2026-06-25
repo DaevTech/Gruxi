@@ -63,12 +63,14 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v5
       with:
-        node-version: 'latest'
+        node-version: '24'
+        cache: 'npm'
+        cache-dependency-path: www-admin-src/package-lock.json
 
     - name: Build Admin Portal
       working-directory: www-admin-src
       run: |
-        npm install
+        npm ci
         npm run build
 
     - name: Build Gruxi (Release)

@@ -23,12 +23,12 @@ RUN cargo build --release && \
 ############################
 # Admin portal builder
 ############################
-FROM --platform=$BUILDPLATFORM node:latest AS admin-portal
+FROM --platform=$BUILDPLATFORM node:24-alpine3.22 AS admin-portal
 
 WORKDIR /app
 
-COPY www-admin-src/package.json ./
-RUN npm install
+COPY www-admin-src/package.json www-admin-src/package-lock.json ./
+RUN npm ci
 
 COPY www-admin-src/ ./
 RUN npm run build

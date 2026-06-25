@@ -4,6 +4,7 @@
 
 # Rust build artifacts
 target/
+www-admin-src/node_modules/
 
 # IDE files
 .vscode/

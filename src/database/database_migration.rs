@@ -68,7 +68,13 @@ pub fn migrate_database() -> i32 {
         }
         schema_version = 9;
     }
-
+    if schema_version == 9 {
+        let result = migrate_db_helper(&connection, 9, 10, migrate_db_9_to_10);
+        if let Err(e) = result {
+            panic!("Database migration from version 9 to 10 failed: {}", e);
+        }
+        schema_version = 10;
+    }
 
     schema_version
 }
@@ -157,6 +163,14 @@ fn migrate_db_8_to_9(connection: &Connection) -> Result<(), sqlite::Error> {
     // Remove two fields used in file cache config that are no longer used.
     connection.execute("DELETE from server_settings WHERE setting_key = 'file_cache_forced_eviction_threshold';")?;
     connection.execute("DELETE from server_settings WHERE setting_key = 'file_cache_update_thread_interval';")?;
+
+    Ok(())
+}
+
+fn migrate_db_9_to_10(connection: &Connection) -> Result<(), sqlite::Error> {
+    // Remote the is_telemtetry and is_admin fields from the bindings table, as we never set it from configuration
+    connection.execute("ALTER TABLE bindings DROP COLUMN is_telemetry;")?;
+    connection.execute("ALTER TABLE bindings DROP COLUMN is_admin;")?;
 
     Ok(())
 }

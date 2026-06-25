@@ -103,8 +103,6 @@ fn get_init_sql() -> Vec<String> {
         id TEXT NOT NULL PRIMARY KEY,
         ip TEXT NOT NULL,
         port INTEGER NOT NULL,
-        is_admin BOOLEAN NOT NULL DEFAULT 0,
-        is_telemetry BOOLEAN NOT NULL DEFAULT 0,
         is_tls BOOLEAN NOT NULL DEFAULT 0
     );"
         .to_string(),
@@ -132,8 +130,8 @@ fn get_init_sql() -> Vec<String> {
         // Junction table for many-to-many relationship between bindings and sites
         "CREATE TABLE IF NOT EXISTS binding_sites (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        binding_id INTEGER NOT NULL,
-        site_id INTEGER NOT NULL,
+        binding_id TEXT NOT NULL,
+        site_id TEXT NOT NULL,
         FOREIGN KEY (binding_id) REFERENCES bindings (id) ON DELETE CASCADE,
         FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE,
         UNIQUE(binding_id, site_id)

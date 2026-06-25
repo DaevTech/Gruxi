@@ -304,12 +304,10 @@ fn save_binding(connection: &Connection, binding: &Binding) -> Result<(), String
     // Insert binding with explicit ID (all bindings are re-inserted after DELETE FROM bindings)
     connection
         .execute(format!(
-            "INSERT INTO bindings (id, ip, port, is_admin, is_telemetry, is_tls) VALUES ('{}', '{}', {}, {}, {}, {})",
+            "INSERT INTO bindings (id, ip, port, is_tls) VALUES ('{}', '{}', {}, {})",
             binding.id,
             binding.ip.replace("'", "''"),
             binding.port,
-            if binding.is_admin { 1 } else { 0 },
-            if binding.is_telemetry { 1 } else { 0 },
             if binding.is_tls { 1 } else { 0 }
         ))
         .map_err(|e| format!("Failed to insert binding: {}", e))?;

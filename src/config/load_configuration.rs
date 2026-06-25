@@ -342,7 +342,7 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
 
 fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
     let mut statement = connection
-        .prepare("SELECT id, ip, port, is_admin, is_telemetry, is_tls FROM bindings")
+        .prepare("SELECT id, ip, port, is_tls FROM bindings")
         .map_err(|e| format!("Failed to prepare bindings query: {}", e))?;
 
     let mut bindings = Vec::new();
@@ -350,16 +350,14 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
         let binding_id: String = statement.read(0).map_err(|e| format!("Failed to read binding id: {}", e))?;
         let ip: String = statement.read(1).map_err(|e| format!("Failed to read ip: {}", e))?;
         let port: i64 = statement.read(2).map_err(|e| format!("Failed to read port: {}", e))?;
-        let is_admin: i64 = statement.read(3).map_err(|e| format!("Failed to read is_admin: {}", e))?;
-        let is_telemetry: i64 = statement.read(4).map_err(|e| format!("Failed to read is_telemetry: {}", e))?;
-        let is_tls: i64 = statement.read(5).map_err(|e| format!("Failed to read is_tls: {}", e))?;
+        let is_tls: i64 = statement.read(3).map_err(|e| format!("Failed to read is_tls: {}", e))?;
 
         bindings.push(Binding {
             id: binding_id,
             ip,
             port: port as u16,
-            is_admin: is_admin != 0,
-            is_telemetry: is_telemetry != 0,
+            is_admin: false,
+            is_telemetry: false,
             is_tls: is_tls != 0,
         });
     }
