@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 1.1.2 - 28 July 2026
+
+### Fixed
+ - #40 Fix issue with compression not being applied to certain files in some configuration cases.
+ - #26 Final fix for the issue with connection and request counter not incrementing correctly in some configuration cases.
+
 # Version 1.1.1 - 25 June 2026
 
 ### Fixed

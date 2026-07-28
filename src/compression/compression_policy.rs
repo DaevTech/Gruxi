@@ -1,4 +1,4 @@
-pub struct Compression {
+pub struct CompressionPolicy {
     compressible_content_types: Vec<String>,
     compressible_content_types_cache: DashMap<String, bool>,
 }
@@ -7,9 +7,9 @@ use dashmap::DashMap;
 
 use crate::trace;
 
-impl Compression {
+impl CompressionPolicy {
     pub fn new(compressible_content_types: Vec<String>) -> Self {
-        Compression {
+        CompressionPolicy {
             compressible_content_types,
             compressible_content_types_cache: DashMap::new(),
         }
@@ -54,7 +54,7 @@ mod tests {
     #[tokio::test]
     async fn test_should_compress() {
         let compressible_content_types = vec!["text/".to_string(), "application/json".to_string()];
-        let compression = Compression::new(compressible_content_types);
+        let compression = CompressionPolicy::new(compressible_content_types);
 
         assert!(compression.should_compress("text/html", 2048));
         assert!(compression.should_compress("application/json", 2048));
