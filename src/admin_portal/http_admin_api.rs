@@ -912,8 +912,8 @@ pub async fn admin_post_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _
     }
 
     // Clear the file reader cache
-    connection_context.running_state.get_file_reader_cache().clear_cache();
-    connection_context.running_state.get_compression_cache().clear();
+    connection_context.running_state.get_file_reader_cache().clear_cache().await;
+    connection_context.running_state.get_compression_cache().clear_cache().await;
 
     let return_message = "Caches cleared".to_string();
     let success_response = serde_json::json!({

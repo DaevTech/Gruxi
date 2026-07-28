@@ -15,7 +15,7 @@ impl Default for Gzip {
 impl Gzip {
     pub fn new() -> Self {
         Gzip {
-            is_enabled: false,
+            is_enabled: true,
             compressible_content_types: vec![
                 "text/".to_string(),
                 "application/javascript".to_string(),

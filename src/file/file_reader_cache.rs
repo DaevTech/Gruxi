@@ -4,13 +4,7 @@ use std::{
 };
 
 use crate::{
-    compression::response_compression::compress_content,
-    config::configuration::Configuration,
-    file::file_entry::{ContentCache, FileEntry, FileMeta},
-    http::caching::etag::etag_strong_from_metadata,
-    trace,
-    util::access_counters::ACCESS_COUNTERS,
-    warn,
+    compression::{compression::Compression, response_compression::compress_content}, config::configuration::Configuration, file::file_entry::{ContentCache, FileEntry, FileMeta}, http::caching::etag::etag_strong_from_metadata, trace, util::access_counters::ACCESS_COUNTERS, warn,
 };
 
 use dashmap::DashMap;
@@ -35,8 +29,7 @@ pub struct FileReaderCache {
 
     // Compression related
     gzip_enabled: bool,
-    compressible_content_types: Vec<String>,
-    compressible_content_types_cache: DashMap<String, bool>,
+    compression: Compression,
 
     // Caching related headers
     etag_enabled: bool,
@@ -55,10 +48,10 @@ impl FileReaderCache {
         let capacity = file_cache_config.cache_item_size;
         let max_item_lifetime = file_cache_config.max_item_lifetime;
 
-        // Gzip enabled
+        // Compression
         let gzip_config = &config.core.gzip;
-        let compressible_content_types = &gzip_config.compressible_content_types;
         let gzip_enabled = gzip_config.is_enabled;
+        let compression = Compression::new(gzip_config.compressible_content_types.clone());
 
         // Caching short lived cache
         let is_short_lived_caches_allowed = config.core.caching.is_short_lived_caches_allowed;
@@ -95,8 +88,7 @@ impl FileReaderCache {
             is_caching_enabled,
             max_file_size,
             gzip_enabled,
-            compressible_content_types: compressible_content_types.clone(),
-            compressible_content_types_cache: DashMap::new(),
+            compression,
             etag_enabled,
             last_modified_header_enabled,
             expires_header_enabled,
@@ -114,12 +106,23 @@ impl FileReaderCache {
         self.cache_404.entry_count()
     }
 
-    pub fn clear_cache(&self) {
+    pub async fn clear_cache(&self) {
+        // Clear primary cache and 404 cache
         self.cache.invalidate_all();
         self.cache_404.invalidate_all();
         if let Some(cache) = &self.cache_short_lived {
             cache.invalidate_all();
         }
+
+        // Await for the pending tasks to complete, to ensure that the cache is fully cleared before proceeding
+        self.cache.run_pending_tasks().await;
+        self.cache_404.run_pending_tasks().await;
+        if let Some(cache) = &self.cache_short_lived {
+            cache.run_pending_tasks().await;
+        }
+
+        // Clear compression cache, which caches whether a MIME type is compressible or not
+        self.compression.clear_cache();
 
         trace!("File reader cache cleared");
     }
@@ -298,23 +301,7 @@ impl FileReaderCache {
     // Check if a MIME type should be compressed
     pub fn should_compress(&self, mime_type: &str, content_length: u64) -> bool {
         if self.gzip_enabled {
-            // First, check cache
-            if let Some(cached_result) = self.compressible_content_types_cache.get(mime_type) {
-                trace!(
-                    "Should compress check (from cache) for MIME type {} and content_length: {} - Result: {}",
-                    mime_type, content_length, *cached_result
-                );
-                return *cached_result;
-            }
-
-            let check_should_compress =
-                (content_length == 0 || content_length > 1024) && content_length < 10 * 1024 * 1024 && self.compressible_content_types.iter().any(|ct| mime_type.starts_with(ct));
-            trace!(
-                "Should compress check for MIME type {} and content_length: {} - Result: {}",
-                mime_type, content_length, check_should_compress
-            );
-            self.compressible_content_types_cache.insert(mime_type.to_string(), check_should_compress);
-            return check_should_compress;
+            return self.compression.should_compress(mime_type, content_length);
         }
         false
     }

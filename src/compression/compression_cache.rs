@@ -34,8 +34,9 @@ impl CompressionCache {
         self.cache.insert(key, value).await;
     }
 
-    pub fn clear(&self) {
+    pub async fn clear_cache(&self) {
         self.cache.invalidate_all();
+        self.cache.run_pending_tasks().await;
     }
 }
 
