@@ -437,6 +437,7 @@ impl FastCgi {
         let path = gruxi_request.get_path().to_string();
         let query = gruxi_request.get_query().to_string();
         let uri = if query.is_empty() { path.clone() } else { format!("{}?{}", path, query) };
+        gruxi_request.merge_cookie_headers();
         let headers = gruxi_request.get_headers();
 
         // Add HTTP headers as CGI variables, prefixed with HTTP_ and uppercased
@@ -450,7 +451,11 @@ impl FastCgi {
             // Try converting the value to a &str
             if let Ok(value_str) = value.to_str() {
                 let key_str = format!("HTTP_{}", key_str.replace("-", "_").to_uppercase());
-                params.insert(key_str, value_str.to_string());
+                // Repeated headers are combined with ", " instead of overwriting each other (cookies were merged with "; " above)
+                params.entry(key_str).and_modify(|existing| {
+                    existing.push_str(", ");
+                    existing.push_str(value_str);
+                }).or_insert_with(|| value_str.to_string());
             }
         }
 

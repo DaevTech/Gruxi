@@ -305,6 +305,7 @@ impl ProcessorTrait for ProxyProcessor {
         // Clean any hop by hop headers from the request and add forwarded headers
         gruxi_request.clean_hop_by_hop_headers();
         gruxi_request.add_forwarded_headers();
+        gruxi_request.merge_cookie_headers();
 
         // Get the original request to extract headers and body
         let mut proxy_request = match gruxi_request.get_streaming_http_request() {

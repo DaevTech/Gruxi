@@ -324,6 +324,29 @@ impl GruxiRequest {
         }
     }
 
+    // HTTP/2 clients may send each cookie as a separate "cookie" header. When forwarding as HTTP/1.1 or CGI, they must be
+    // combined into a single header joined with "; " (RFC 9113 §8.2.3). Otherwise upstreams may join them with ", " or drop all but one.
+    pub fn merge_cookie_headers(&mut self) {
+        let headers = &self.parts.headers;
+        if headers.get_all(hyper::header::COOKIE).iter().count() < 2 {
+            return;
+        }
+        let mut merged: Vec<u8> = Vec::new();
+        for value in headers.get_all(hyper::header::COOKIE) {
+            let bytes = value.as_bytes();
+            if bytes.is_empty() {
+                continue;
+            }
+            if !merged.is_empty() {
+                merged.extend_from_slice(b"; ");
+            }
+            merged.extend_from_slice(bytes);
+        }
+        if let Ok(value) = HeaderValue::from_bytes(&merged) {
+            self.parts.headers.insert(hyper::header::COOKIE, value);
+        }
+    }
+
     pub fn add_forwarded_headers(&mut self) {
         // Add X-Forwarded-For header
         let remote_ip = self.get_remote_ip_string();
