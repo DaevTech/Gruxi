@@ -1,9 +1,8 @@
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::file::app_paths::get_app_paths;
-use crate::tls::shared_acme_manager::{get_shared_acme_domains, get_shared_acme_manager_async};
+use crate::tls::shared_acme_manager::{get_acme_resolver_for_host, is_acme_configured};
 use crate::{debug, error, warn};
 use rustls::crypto::aws_lc_rs;
-use rustls_acme::ResolvesServerCertAcme;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::BufReader;
 use std::path::Path;
@@ -88,28 +87,22 @@ pub async fn persist_generated_tls_for_site(site: &Site, cert_pem: &str, key_pem
     Ok((cert_path, key_path))
 }
 
-// Unified certificate resolver that combines ACME certificates with manual/fallback certificates.
-// This allows serving both ACME-acquired certificates and manually configured certificates
-// from the same TLS binding.
+// Unified certificate resolver that combines per-hostname ACME certificates with manual/fallback certificates.
+// ACME resolvers are looked up dynamically per SNI hostname, so hosts with a certificate keep being served
+// while other hosts are still pending, failing or being added.
 #[derive(Debug)]
 pub struct UnifiedCertResolver {
-    /// The ACME resolver handles TLS-ALPN-01 challenges and serves ACME-acquired certificates
-    acme_resolver: Option<std::sync::Arc<ResolvesServerCertAcme>>,
     /// SNI-based resolver for manually configured certificates
     sni_resolver: ResolvesServerCertUsingSni,
     /// Fallback certificate when no SNI match is found
     fallback_cert: Option<std::sync::Arc<RustlsCertifiedKey>>,
-    /// Domains that are managed by ACME (should not use manual certs)
-    acme_domains: std::collections::HashSet<String>,
 }
 
 impl UnifiedCertResolver {
-    pub fn new(acme_resolver: Option<std::sync::Arc<ResolvesServerCertAcme>>, acme_domains: std::collections::HashSet<String>) -> Self {
+    pub fn new() -> Self {
         Self {
-            acme_resolver,
             sni_resolver: ResolvesServerCertUsingSni::new(),
             fallback_cert: None,
-            acme_domains,
         }
     }
 
@@ -120,103 +113,44 @@ impl UnifiedCertResolver {
     pub fn set_fallback(&mut self, cert: std::sync::Arc<RustlsCertifiedKey>) {
         self.fallback_cert = Some(cert);
     }
-
-    /// Check if a domain is managed by ACME
-    fn is_acme_domain(&self, domain: &str) -> bool {
-        self.acme_domains.contains(&domain.to_lowercase())
-    }
 }
 
 impl ResolvesServerCert for UnifiedCertResolver {
     fn resolve(&self, client_hello: ClientHello) -> Option<std::sync::Arc<RustlsCertifiedKey>> {
-        // Check if this is an ACME TLS-ALPN-01 challenge
-        // This must be checked first and handled by the ACME resolver
         let is_acme_challenge = rustls_acme::is_tls_alpn_challenge(&client_hello);
+        let sni_name = client_hello.server_name().map(|s| s.to_lowercase());
+
+        if let Some(ref domain) = sni_name {
+            if let Some(acme_resolver) = get_acme_resolver_for_host(domain) {
+                // Challenges are answered by the host's own resolver; otherwise serve its certificate if it has one.
+                if let Some(cert) = acme_resolver.resolve(client_hello) {
+                    return Some(cert);
+                }
+                if is_acme_challenge {
+                    return None;
+                }
+                return self.fallback_cert.clone();
+            }
+        }
 
         if is_acme_challenge {
-            // For ACME challenges, delegate to the ACME resolver
-            if let Some(ref acme_resolver) = self.acme_resolver {
-                return acme_resolver.resolve(client_hello);
-            }
-            // No ACME resolver, but got an ACME challenge - this shouldn't happen in normal operation
             return None;
         }
 
-        // For regular TLS connections, get the SNI name first (before consuming client_hello)
-        let sni_name = client_hello.server_name().map(|s| s.to_lowercase());
-
-        // Check if this domain is managed by ACME
-        if let Some(ref domain) = sni_name {
-            if self.is_acme_domain(domain) {
-                // For ACME-managed domains, try the ACME resolver
-                if let Some(ref acme_resolver) = self.acme_resolver {
-                    // The ACME resolver will return the ACME-acquired certificate for non-challenge requests
-                    if let Some(cert) = acme_resolver.resolve(client_hello) {
-                        return Some(cert);
-                    }
-                }
-                // If ACME resolver returns None, fall through to fallback
-            } else {
-                // Not an ACME domain, try the manual SNI resolver
-                if let Some(cert) = self.sni_resolver.resolve(client_hello) {
-                    return Some(cert);
-                }
-            }
-        } else {
-            // No SNI provided, try the SNI resolver anyway (it might have a default)
-            if let Some(cert) = self.sni_resolver.resolve(client_hello) {
-                return Some(cert);
-            }
+        if let Some(cert) = self.sni_resolver.resolve(client_hello) {
+            return Some(cert);
         }
 
-        // If no match found, use the fallback certificate
         self.fallback_cert.clone()
     }
 }
 
-/// Helper function to get domains that are ACME-enabled for a binding
-pub async fn get_acme_domains_for_binding(binding: &Binding) -> std::collections::HashSet<String> {
-    let mut domains = std::collections::HashSet::new();
-
-    if !binding.is_tls {
-        return domains;
-    }
-
-    let running_state = get_running_state_manager().await.get_running_state();
-    let binding_site_cache = running_state.get_binding_site_cache();
-    let sites = binding_site_cache.get_sites_for_binding(&binding.id);
-
-    for site in sites.iter().filter(|s| s.is_enabled && s.tls_automatic_enabled) {
-        for hostname in &site.hostnames {
-            let h = hostname.trim().to_lowercase();
-            if h.is_empty() || h == "*" || h.contains('*') || h == "localhost" || !h.contains('.') {
-                continue;
-            }
-            domains.insert(h);
-        }
-    }
-
-    domains
-}
-
 /// Build a unified certificate resolver that handles both ACME and manual certificates.
-/// Uses the shared ACME manager if available.
-pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Option<std::sync::Arc<ResolvesServerCertAcme>>) -> Result<UnifiedCertResolver, Box<dyn std::error::Error + Send + Sync>> {
-    // Get ACME domains from the shared manager if available, otherwise use binding-specific lookup
-    let acme_domains = {
-        let shared_domains = get_shared_acme_domains().await;
-        if !shared_domains.is_empty() {
-            shared_domains
-        } else {
-            get_acme_domains_for_binding(binding).await
-        }
-    };
+pub async fn build_unified_cert_resolver(binding: &Binding) -> Result<UnifiedCertResolver, Box<dyn std::error::Error + Send + Sync>> {
+    debug!("Building unified cert resolver for {}:{}", binding.ip, binding.port);
 
-    debug!("Building unified cert resolver for {}:{} with {} ACME domains", binding.ip, binding.port, acme_domains.len());
-
-    let mut resolver = UnifiedCertResolver::new(acme_resolver, acme_domains.clone());
+    let mut resolver = UnifiedCertResolver::new();
     let mut fallback_certificate: Option<std::sync::Arc<RustlsCertifiedKey>> = None;
-    let mut cert_added = false;
 
     // Get sites for this binding
     let running_state = get_running_state_manager().await.get_running_state();
@@ -319,7 +253,6 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
             match resolver.add_manual_cert(name, certified_arc.as_ref().clone()) {
                 Ok(()) => {
                     debug!("Added manual cert for hostname '{}'", name);
-                    cert_added = true;
                 }
                 Err(e) => {
                     debug!("Failed to add SNI name '{}': {:?}", name, e);
@@ -333,14 +266,13 @@ pub async fn build_unified_cert_resolver(binding: &Binding, acme_resolver: Optio
                 if let Err(e) = resolver.add_manual_cert("localhost", certified_arc.as_ref().clone()) {
                     debug!("Failed to add localhost for wildcard site: {:?}", e);
                 } else {
-                    cert_added = true;
                 }
             }
     }
 
     // If no manual certs were added but we have ACME domains, that's fine
     // If no certs at all, generate a fallback
-    if !cert_added && acme_domains.is_empty() {
+    if fallback_certificate.is_none() {
         // Generate a fallback self-signed cert
         let rcgen::CertifiedKey { cert, signing_key } =
             rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).map_err(|e| format!("Failed to generate fallback self-signed cert: {}", e))?;
@@ -551,11 +483,10 @@ pub async fn build_unified_tls_acceptor(binding: &Binding) -> Result<TlsAcceptor
     let provider = rustls::crypto::aws_lc_rs::default_provider();
 
     // Get the shared ACME resolver if available (already initialized during server startup)
-    let acme_resolver = get_shared_acme_manager_async().await;
-    let has_acme = acme_resolver.is_some();
+    let has_acme = is_acme_configured();
 
     // Build the unified cert resolver with ACME and manual certs
-    let unified_resolver = build_unified_cert_resolver(binding, acme_resolver).await?;
+    let unified_resolver = build_unified_cert_resolver(binding).await?;
 
     // Build ServerConfig with our unified resolver
     let mut server_config = RustlsServerConfig::builder_with_provider(provider.into())
