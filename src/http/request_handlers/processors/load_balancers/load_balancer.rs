@@ -55,7 +55,7 @@ pub trait LoadBalancerImpl: Send + 'static {
 
 // Actor task that owns a single load balancer instance
 async fn load_balancer_task<T: LoadBalancerImpl>(mut lb: T, mut rx: mpsc::Receiver<LoadBalancerCommand>) {
-    let mut interval = time::interval(Duration::from_secs(lb.get_health_check_interval_secs()));
+    let mut interval = time::interval(Duration::from_secs(lb.get_health_check_interval_secs().max(1)));
 
     // Get a token for shutdown
     let triggers = get_trigger_handler();

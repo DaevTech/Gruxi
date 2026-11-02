@@ -59,6 +59,11 @@ impl LoadBalancerImpl for RoundRobin {
     }
 
     fn check_health(&mut self) {
+        // An empty health check path disables health checks; servers stay available
+        if self.health_url_path.trim().is_empty() {
+            return;
+        }
+
         for server in &self.servers {
             let server_uri = server.clone() + &self.health_url_path;
             let healthy_state_option = self.health_state.get(server);

@@ -299,6 +299,9 @@ impl ProcessorTrait for ProxyProcessor {
         // Get the client-side upgrade on the request side
         let client_upgrade = gruxi_request.take_upgrade();
 
+        // Capture the client's original host (HTTP/2 has no Host header, only :authority)
+        let original_host = gruxi_request.get_original_host();
+
         // Clean any hop by hop headers from the request and add forwarded headers
         gruxi_request.clean_hop_by_hop_headers();
         gruxi_request.add_forwarded_headers();
@@ -319,8 +322,13 @@ impl ProcessorTrait for ProxyProcessor {
 
         // Check if we should preserve the host header or remote it to let hyper set it
         if self.forced_host_header.is_empty() {
-            // Header is there already, so we only remove it if we are not preserving it
-            if !self.preserve_host_header {
+            if self.preserve_host_header {
+                // Explicitly set, as the header is absent for HTTP/2 clients and the client would otherwise use the upstream host
+                if let Ok(header_value) = HeaderValue::from_str(&original_host) {
+                    proxy_request.headers_mut().insert(hyper::header::HOST, header_value);
+                }
+            } else {
+                // Removed so the client derives it from the upstream URI
                 proxy_request.headers_mut().remove(hyper::header::HOST);
                 trace!("Not preserving original Host header for upstream request");
             }

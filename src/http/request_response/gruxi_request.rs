@@ -131,6 +131,20 @@ impl GruxiRequest {
         hostname
     }
 
+    // The host (including port, if any) as the client sent it: Host header (HTTP/1.x) or URI authority (HTTP/2 :authority)
+    pub fn get_original_host(&self) -> String {
+        if let Some(host) = self.parts.headers.get(HOST)
+            && let Ok(host) = host.to_str()
+            && !host.is_empty()
+        {
+            return host.to_string();
+        }
+        if let Some(authority) = self.parts.uri.authority() {
+            return authority.as_str().to_string();
+        }
+        self.data.hostname.clone()
+    }
+
     pub fn get_headers(&self) -> &HeaderMap {
         &self.parts.headers
     }
@@ -331,11 +345,7 @@ impl GruxiRequest {
             .insert("X-Forwarded-Proto", HeaderValue::from_str(scheme).unwrap_or(HeaderValue::from_static("http")));
 
         // X-Forwarded-Host header
-        let hostname_port = if let Some(port) = self.parts.uri.port_u16() {
-            format!("{}:{}", &self.data.hostname, port)
-        } else {
-            self.data.hostname.to_string()
-        };
+        let hostname_port = self.get_original_host();
         self.parts
             .headers
             .insert("X-Forwarded-Host", HeaderValue::from_str(&hostname_port).unwrap_or(HeaderValue::from_static("")));
