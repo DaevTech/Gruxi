@@ -177,13 +177,7 @@ impl ProcessorTrait for PHPProcessor {
         let file_reader_cache = connection_context.running_state.get_file_reader_cache();
 
         let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-        let mut file_data = match file_data_result.meta.exists {
-            true => file_data_result,
-            false => {
-                trace!("File does not exist: {}", normalized_path.get_full_path());
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::PHPProcessor(PHPProcessorError::FileNotFound)));
-            }
-        };
+        let mut file_data = file_data_result;
 
         // Make sure the trailing slash logic is correct
         let trailing_slash_result = trailing_slash_check(file_data.clone(), &path);
@@ -265,7 +259,7 @@ impl ProcessorTrait for PHPProcessor {
         };
 
         // Figure out if we have a connection semaphore to use
-        if !self.php_cgi_handler_id.trim().is_empty() {
+        if self.served_by_type == "win-php-cgi" {
             let external_system_handler = connection_context.running_state.get_external_system_handler();
 
             let semaphore_option = external_system_handler.get_connection_semaphore(&self.php_cgi_handler_id);

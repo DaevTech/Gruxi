@@ -279,10 +279,10 @@ impl ProcessorTrait for ProxyProcessor {
 
         // Rewrite the request URL to point to the upstream server
         let original_uri = gruxi_request.get_path_and_query();
-        let new_uri = format!("{}{}", server_to_handle_request, original_uri);
 
-        // Apply any URL rewrites
-        let rewritten_url = self.apply_url_rewrites(&new_uri);
+        // Apply any URL rewrites to the path and query only, so the upstream scheme/host cannot be altered
+        let rewritten_path = self.apply_url_rewrites(&original_uri);
+        let rewritten_url = format!("{}{}", server_to_handle_request, rewritten_path);
 
         // Parse the full upstream URL
         let upstream_uri: hyper::Uri = match rewritten_url.parse() {

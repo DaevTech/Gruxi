@@ -140,14 +140,7 @@ impl ProcessorTrait for StaticFileProcessor {
         let file_reader_cache = connection_context.running_state.get_file_reader_cache();
 
         let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
-        let mut file_data = match file_data_result.meta.exists {
-            true => file_data_result,
-            false => {
-                trace!("File does not exist: {}", normalized_path.get_full_path());
-                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileNotFound)));
-            }
-        };
-
+        let mut file_data = file_data_result;
 
         // Make sure the trailing slash logic is correct
         let trailing_slash_result = trailing_slash_check(file_data.clone(), &path);
