@@ -189,3 +189,48 @@ jobs:
         name: Gruxi v${{ steps.version.outputs.version }}
         draft: true
         files: release-files/*
+
+  docker:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Extract version from Cargo.toml
+      id: version
+      run: |
+        VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/' | tr -d '\r')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+
+    - uses: docker/setup-qemu-action@v3
+
+    - uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and push
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        pull: true
+        tags: |
+          ghcr.io/daevtech/gruxi:latest
+          ghcr.io/daevtech/gruxi:${{ steps.version.outputs.version }}
+        labels: |
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          org.opencontainers.image.version=${{ steps.version.outputs.version }}
+          org.opencontainers.image.revision=${{ github.sha }}
+        cache-from: type=gha,scope=docker
+        cache-to: type=gha,mode=max,scope=docker
