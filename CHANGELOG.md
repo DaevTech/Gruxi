@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Version 1.1.3 - 02 November 2026
+
+### Fixed
+ - #43 Make TLS handling more robust when some certificates failed
+ - #44 Fix TLS certificate availability when some certificates are in-progress
+ - #46 Make sure that TLS certificates are issue per hostname and not grouped into single certificates
+ - #42 Proxy processor now correctly disabled healthcheck if healthcheck url is empty
+ - #45 Fix proxy processor now handling the proxy host header correctly in certain states
+ - Fix issue with Docker build for multi-architecture
+
 # Version 1.1.2 - 28 July 2026
 
 ### Fixed
