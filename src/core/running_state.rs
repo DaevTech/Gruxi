@@ -14,7 +14,7 @@ use crate::{
 };
 
 pub struct RunningState {
-    access_log_buffer: AccessLogBuffer,
+    access_log_buffer: std::sync::Arc<AccessLogBuffer>,
     file_reader_cache: FileReaderCache,
     request_handler_manager: RequestHandlerManager,
     processor_manager: ProcessorManager,
@@ -32,7 +32,7 @@ impl RunningState {
         let config = cached_configuration.get_configuration();
 
         // Access log buffer
-        let access_log_buffer = AccessLogBuffer::new().await;
+        let access_log_buffer = std::sync::Arc::new(AccessLogBuffer::new().await);
         access_log_buffer.start_flushing_task();
         debug!("Access log buffers initialized");
 

@@ -6,7 +6,6 @@ use std::path::Path;
 use std::time::Instant;
 use tokio::select;
 
-use crate::core::running_state_manager::get_running_state_manager;
 use crate::logging::access_log_entry::AccessLogEntry;
 use crate::logging::buffered_log::BufferedLog;
 
@@ -82,9 +81,9 @@ impl AccessLogBuffer {
         access_log_buffer
     }
 
-    pub fn start_flushing_task(&self) {
-        tokio::spawn(Self::start_flushing_thread());
-        tokio::spawn(Self::start_formatting_thread());
+    pub fn start_flushing_task(self: &std::sync::Arc<Self>) {
+        tokio::spawn(Self::start_flushing_thread(self.clone()));
+        tokio::spawn(Self::start_formatting_thread(self.clone()));
     }
 
     pub fn add_log(&self, access_log_entry: AccessLogEntry) {
@@ -113,7 +112,7 @@ impl AccessLogBuffer {
         }
     }
 
-    pub async fn start_formatting_thread() {
+    pub async fn start_formatting_thread(access_log_buffer: std::sync::Arc<AccessLogBuffer>) {
         trace!("Starting access log formatting thread");
 
         let triggers = crate::core::triggers::get_trigger_handler();
@@ -136,9 +135,6 @@ impl AccessLogBuffer {
             }
         };
 
-        let running_state = get_running_state_manager().await.get_running_state();
-        let access_log_buffer = running_state.get_access_log_buffer();
-
         loop {
             select! {
                 _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
@@ -157,7 +153,7 @@ impl AccessLogBuffer {
         }
     }
 
-    pub async fn start_flushing_thread() {
+    pub async fn start_flushing_thread(access_log_buffer: std::sync::Arc<AccessLogBuffer>) {
         trace!("Starting access log write thread");
 
         let triggers = crate::core::triggers::get_trigger_handler();
@@ -179,9 +175,6 @@ impl AccessLogBuffer {
                 return;
             }
         };
-
-        let running_state = get_running_state_manager().await.get_running_state();
-        let access_log_buffer = running_state.get_access_log_buffer();
 
         loop {
             select! {
