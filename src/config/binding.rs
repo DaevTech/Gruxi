@@ -10,7 +10,15 @@ pub struct Binding {
     pub is_admin: bool,
     pub is_telemetry: bool,
     pub is_tls: bool,
+    pub protocol: Protocol,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Protocol {
+    Tcp,
+    Udp,
+}
+
 
 impl Default for Binding {
     fn default() -> Self {
@@ -27,6 +35,7 @@ impl Binding {
             is_admin: false,
             is_telemetry: false,
             is_tls: false,
+            protocol: Protocol::Tcp,
         }
     }
 

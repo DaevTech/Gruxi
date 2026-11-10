@@ -1,13 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    config::{request_handler::RequestHandler, site::Site},
-    error::gruxi_error::GruxiError,
-    http::{
-        http_server::ConnectionContext,
-        request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
-    },
-    trace,
+    config::{request_handler::RequestHandler, site::Site}, error::gruxi_error::GruxiError, http::request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse}, runtime::binding_manager::BindingRuntime, trace,
 };
 
 pub struct RequestHandlerManager {
@@ -40,7 +34,7 @@ impl RequestHandlerManager {
         }
     }
 
-    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError> {
+    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, binding_runtime: Arc<BindingRuntime>) -> Result<GruxiResponse, GruxiError> {
         let rh = self.request_handlers.get(&site.id);
         let lowercased_path = gruxi_request.get_path().to_lowercase();
         match rh {
@@ -54,7 +48,7 @@ impl RequestHandlerManager {
                     // Check that it matches
                     if handler.matches_url(&lowercased_path) {
                         // We call the handle request. If we get an error, we continue to the next one
-                        let response_result = handler.handle_request(gruxi_request, site, connection_context).await;
+                        let response_result = handler.handle_request(gruxi_request, site, &binding_runtime).await;
                         if response_result.is_err() {
                             // Some of the errors are not critical, so we just log and continue
                             continue;

@@ -10,6 +10,7 @@ pub enum GruxiErrorKind {
     TelemetryApi(TelemetryApiError),
     InitAdminPortal(InitAdminPortalError),
     GruxiRequest(GruxiRequestError),
+    Runtime(GruxiRuntimeError),
 }
 
 #[derive(Debug)]
@@ -70,4 +71,9 @@ pub enum InitAdminPortalError {
 #[derive(Debug)]
 pub enum GruxiRequestError {
     GetStreamingBodyError,
+}
+
+#[derive(Debug)]
+pub enum GruxiRuntimeError {
+    BindingError(String),
 }

@@ -1,21 +1,23 @@
 use crate::admin_portal::http_admin_api::*;
 use crate::compression::response_compression::maybe_compress_response;
+use crate::config::cached_configuration::get_cached_configuration;
+use crate::core::running_state_manager::get_running_state_manager;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind, TelemetryApiError};
-use crate::http::http_server::ConnectionContext;
 use crate::http::http_util::*;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::http::request_response::request_validation::validate_request;
 use crate::http::site_match::site_matcher::find_best_match_site;
 use crate::logging::access_log_entry::AccessLogEntry;
+use crate::runtime::binding_manager::BindingRuntime;
 use crate::telemetry::http_telemetry_api::handle_telemetry_routes;
 use crate::{debug, trace};
 use hyper::header::HeaderValue;
 use std::sync::Arc;
 
 // Entry point to handle request, as we need to do post-processing, like access logging etc
-pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context: Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
+pub async fn handle_request(mut gruxi_request: GruxiRequest, binding_runtime: Arc<BindingRuntime>) -> Result<GruxiResponse, GruxiError> {
     // Log the request details
     debug!(
         "Received request: hostname={}, method={}, path={}, query={}, body_size={}, headers={:?}",
@@ -27,12 +29,14 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
         gruxi_request.get_headers()
     );
 
+   // return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
+
     // Get the running state
-    let running_state = &connection_context.running_state;
+    let running_state = get_running_state_manager().await.get_running_state();
 
     // Get the sites for this binding
     let binding_site_cache = running_state.get_binding_site_cache();
-    let sites = binding_site_cache.get_sites_for_binding(&connection_context.binding.id);
+    let sites = binding_site_cache.get_sites_for_binding(&binding_runtime.binding.id);
 
     // Get the hostname and figure out which site matches
     let hostname = gruxi_request.get_hostname();
@@ -40,10 +44,10 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
         Some(site) => site,
         None => {
             if hostname.is_empty() {
-                trace!("No hostname provided in request on binding ID: '{}'", &connection_context.binding.id);
+                trace!("No hostname provided in request on binding ID: '{}'", &binding_runtime.binding.id);
                 return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_REQUEST.as_u16()));
             } else {
-                trace!("No matching site found for hostname: '{}' on binding ID: '{}'", &hostname, &connection_context.binding.id);
+                trace!("No matching site found for hostname: '{}' on binding ID: '{}'", &hostname, &binding_runtime.binding.id);
                 return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
             }
         }
@@ -51,7 +55,7 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     trace!("Matched site with request: {:?}", &site);
 
     // Validate the request
-    if let Err(gruxi_response) = validate_request(&mut gruxi_request, &connection_context.binding, site, &connection_context.configuration).await {
+    if let Err(gruxi_response) = validate_request(&mut gruxi_request, &binding_runtime.binding, site).await {
         return Ok(gruxi_response);
     }
 
@@ -74,8 +78,8 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     }
 
     // Check if the request is for the telemetry endpoint - handle these first
-    let telemetry_response = if connection_context.binding.is_telemetry {
-        match handle_telemetry_routes(&mut gruxi_request, site, &connection_context).await {
+    let telemetry_response = if binding_runtime.binding.is_telemetry {
+        match handle_telemetry_routes(&mut gruxi_request, site, &binding_runtime).await {
             Ok(response) => Some(response),
             Err(e) => {
                 if let GruxiErrorKind::TelemetryApi(TelemetryApiError::NoRouteMatched) = e.kind {
@@ -89,8 +93,8 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     };
 
     // Check if the request is for the admin portal - handle these first
-    let admin_response = if connection_context.binding.is_admin {
-        match handle_api_routes(&mut gruxi_request, site, &connection_context).await {
+    let admin_response = if binding_runtime.binding.is_admin {
+        match handle_api_routes(&mut gruxi_request, site, &binding_runtime).await {
             Ok(response) => Some(response),
             Err(e) => {
                 // If the error is NoRouteMatched, we continue to normal processing
@@ -121,7 +125,7 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
 
         // Now we let the request handler manager process the request in the order defined by the site's request_handlers list.
         let request_handler_manager = running_state.get_request_handler_manager();
-        let response_result = request_handler_manager.handle_request(&mut gruxi_request, site, &connection_context).await;
+        let response_result = request_handler_manager.handle_request(&mut gruxi_request, site, binding_runtime).await;
         if response_result.is_err() {
             trace!("No request handler matched for URL path: {}", &gruxi_request.get_path_and_query());
             return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
@@ -137,8 +141,9 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, connection_context:
     };
 
     // Consider gzipping content if not already gzipped
-    if connection_context.configuration.core.gzip.is_enabled {
-        maybe_compress_response(&gruxi_request, &mut response, running_state, connection_context.configuration.core.caching.is_short_lived_caches_allowed).await;
+    let configuration = get_cached_configuration().get_configuration();
+    if configuration.core.gzip.is_enabled {
+        maybe_compress_response(&gruxi_request, &mut response, &running_state, configuration.core.caching.is_short_lived_caches_allowed).await;
     }
 
     // Vector for additional headers to set

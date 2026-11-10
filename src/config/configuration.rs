@@ -1,4 +1,5 @@
 use crate::config::admin_portal::AdminPortal;
+use crate::config::binding::Protocol;
 use crate::config::caching::Caching;
 use crate::config::core::Core;
 use crate::config::file_cache::FileCache;
@@ -263,6 +264,7 @@ impl Configuration {
             is_admin: false,
             is_telemetry: false,
             is_tls: false,
+            protocol: Protocol::Tcp,
         };
 
         let default_binding_tls = Binding {
@@ -272,6 +274,7 @@ impl Configuration {
             is_admin: false,
             is_telemetry: false,
             is_tls: true,
+            protocol: Protocol::Tcp,
         };
 
         // Static file processor for first site

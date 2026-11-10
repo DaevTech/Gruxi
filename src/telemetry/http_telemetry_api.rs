@@ -2,24 +2,19 @@ use crate::config::site::Site;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{GruxiErrorKind, TelemetryApiError};
 use crate::file::normalized_path::NormalizedPath;
-use crate::http::http_server::ConnectionContext;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
+use crate::runtime::binding_manager::BindingRuntime;
 use crate::telemetry::metrics_exporter;
 use http::HeaderValue;
 use std::sync::Arc;
 use tokio_util::bytes;
 
-const TEXT_PLAIN_PROM_HEADER_VALUE: HeaderValue =
-    HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8");
+const TEXT_PLAIN_PROM_HEADER_VALUE: HeaderValue = HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8");
 const TEXT_PLAIN_HEADER_VALUE: HeaderValue = HeaderValue::from_static("text/plain");
 const JSON_HEADER_VALUE: HeaderValue = HeaderValue::from_static("application/json");
 
-pub async fn handle_telemetry_routes(
-    gruxi_request: &mut GruxiRequest,
-    _site: &Site,
-    _connection_context: &Arc<ConnectionContext>,
-) -> Result<GruxiResponse, GruxiError> {
+pub async fn handle_telemetry_routes(gruxi_request: &mut GruxiRequest, _site: &Site, _binding_runtime: &Arc<BindingRuntime>) -> Result<GruxiResponse, GruxiError> {
     let path = gruxi_request.get_path();
     let method = gruxi_request.get_http_method();
 
@@ -27,9 +22,7 @@ pub async fn handle_telemetry_routes(
     let normalized_path = match normalized_path_result {
         Ok(np) => np,
         Err(_) => {
-            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::TelemetryApi(
-                TelemetryApiError::NoRouteMatched,
-            )));
+            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::TelemetryApi(TelemetryApiError::NoRouteMatched)));
         }
     };
     let path_cleaned = normalized_path.get_path();
@@ -39,15 +32,11 @@ pub async fn handle_telemetry_routes(
     } else if path_cleaned == "/healthcheck" && method == "GET" {
         handle_healthcheck_endpoint().await
     } else {
-        Err(GruxiError::new_with_kind_only(GruxiErrorKind::TelemetryApi(
-            TelemetryApiError::NoRouteMatched,
-        )))
+        Err(GruxiError::new_with_kind_only(GruxiErrorKind::TelemetryApi(TelemetryApiError::NoRouteMatched)))
     }
 }
 
-async fn handle_metrics_endpoint(
-    gruxi_request: &GruxiRequest,
-) -> Result<GruxiResponse, GruxiError> {
+async fn handle_metrics_endpoint(gruxi_request: &GruxiRequest) -> Result<GruxiResponse, GruxiError> {
     // Get the configured bearer token
     let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
     let configuration = cached_configuration.get_configuration();
@@ -57,13 +46,8 @@ async fn handle_metrics_endpoint(
         Some(token) if !token.is_empty() => token,
         _ => {
             // No token configured — metrics endpoint not available
-            let mut response = GruxiResponse::new_with_bytes(
-                hyper::StatusCode::SERVICE_UNAVAILABLE.as_u16(),
-                bytes::Bytes::from(r#"{"error": "Metrics endpoint not configured"}"#),
-            );
-            response
-                .headers_mut()
-                .insert("Content-Type", JSON_HEADER_VALUE);
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::SERVICE_UNAVAILABLE.as_u16(), bytes::Bytes::from(r#"{"error": "Metrics endpoint not configured"}"#));
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     };
@@ -75,37 +59,22 @@ async fn handle_metrics_endpoint(
             // Token valid — render metrics
         }
         _ => {
-            let mut response = GruxiResponse::new_with_bytes(
-                hyper::StatusCode::UNAUTHORIZED.as_u16(),
-                bytes::Bytes::from(r#"{"error": "Unauthorized"}"#),
-            );
-            response
-                .headers_mut()
-                .insert("Content-Type", JSON_HEADER_VALUE);
+            let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::UNAUTHORIZED.as_u16(), bytes::Bytes::from(r#"{"error": "Unauthorized"}"#));
+            response.headers_mut().insert("Content-Type", JSON_HEADER_VALUE);
             return Ok(response);
         }
     }
 
     let metrics_text = metrics_exporter::render_metrics();
 
-    let mut response = GruxiResponse::new_with_bytes(
-        hyper::StatusCode::OK.as_u16(),
-        bytes::Bytes::from(metrics_text),
-    );
-    response
-        .headers_mut()
-        .insert("Content-Type", TEXT_PLAIN_PROM_HEADER_VALUE);
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from(metrics_text));
+    response.headers_mut().insert("Content-Type", TEXT_PLAIN_PROM_HEADER_VALUE);
     Ok(response)
 }
 
 async fn handle_healthcheck_endpoint() -> Result<GruxiResponse, GruxiError> {
-    let mut response = GruxiResponse::new_with_bytes(
-        hyper::StatusCode::OK.as_u16(),
-        bytes::Bytes::from("The server is healthy"),
-    );
-    response
-        .headers_mut()
-        .insert("Content-Type", TEXT_PLAIN_HEADER_VALUE);
+    let mut response = GruxiResponse::new_with_bytes(hyper::StatusCode::OK.as_u16(), bytes::Bytes::from("The server is healthy"));
+    response.headers_mut().insert("Content-Type", TEXT_PLAIN_HEADER_VALUE);
     Ok(response)
 }
 

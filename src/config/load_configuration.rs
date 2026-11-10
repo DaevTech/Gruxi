@@ -1,4 +1,5 @@
 use crate::admin_portal::init::add_admin_portal_to_configuration;
+use crate::config::binding::Protocol;
 use crate::config::binding_site_relation::BindingSiteRelationship;
 use crate::config::configuration::CURRENT_CONFIGURATION_VERSION;
 use crate::database::database_migration::migrate_database;
@@ -359,6 +360,7 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
             is_admin: false,
             is_telemetry: false,
             is_tls: is_tls != 0,
+            protocol: Protocol::Tcp,
         });
     }
 

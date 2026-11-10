@@ -1,6 +1,9 @@
+use crate::config::cached_configuration::get_cached_configuration;
 use crate::error;
 use crate::file::file_entry::ContentResult;
+use crate::core::running_state_manager::get_running_state_manager;
 use crate::http::http_util::trailing_slash_check;
+use crate::runtime::binding_manager::BindingRuntime;
 use crate::{
     config::site::Site,
     error::{
@@ -13,7 +16,6 @@ use crate::{
             etag::handle_conditional_headers,
             range::{accept_ranges_bytes, format_content_range_unsatisfiable},
         },
-        http_server::ConnectionContext,
         request_handlers::processor_trait::ProcessorTrait,
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
@@ -104,7 +106,7 @@ impl ProcessorTrait for StaticFileProcessor {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError> {
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, _binding_runtime: &BindingRuntime) -> Result<GruxiResponse, GruxiError> {
         // Check and normalize web root if not already done
         if self.normalized_web_root.is_none() {
             error!("StaticFileProcessor web root is not initialized as expected for id: '{}'", self.id);
@@ -137,7 +139,8 @@ impl ProcessorTrait for StaticFileProcessor {
             }
         };
 
-        let file_reader_cache = connection_context.running_state.get_file_reader_cache();
+        let running_state = get_running_state_manager().await.get_running_state();
+        let file_reader_cache = running_state.get_file_reader_cache();
 
         let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
         let mut file_data = file_data_result;
@@ -226,7 +229,8 @@ impl ProcessorTrait for StaticFileProcessor {
         }
 
         // Do a safety check of the path, make sure it's still under the web root and not blocked file extension
-        if !check_path_secure(web_root, &normalized_path, &connection_context.configuration.core.server_settings.blocked_file_patterns).await {
+        let configuration = get_cached_configuration().get_configuration();
+        if !check_path_secure(web_root, &normalized_path, &configuration.core.server_settings.blocked_file_patterns).await {
             trace!("File path is not secure: {}", normalized_path.get_full_path());
             // We should probably not reveal that the file is blocked, so we return a 404
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::FileBlockedDueToSecurity(

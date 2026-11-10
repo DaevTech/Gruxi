@@ -1,6 +1,5 @@
 use crate::{
-    config::site::Site,
-    error::gruxi_error::GruxiError, http::{http_server::ConnectionContext, request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse}},
+    config::site::Site, error::gruxi_error::GruxiError, http::request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse}, runtime::binding_manager::BindingRuntime,
 };
 
 // Trait that processors must implement
@@ -22,5 +21,5 @@ pub trait ProcessorTrait {
     fn get_default_pretty_name(&self) -> String;
 
     // Handle an incoming request (details would depend on the actual implementation)
-    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError>;
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, binding_runtime: &BindingRuntime) -> Result<GruxiResponse, GruxiError>;
 }

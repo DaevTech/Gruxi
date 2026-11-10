@@ -1,4 +1,5 @@
 use uuid::Uuid;
+use crate::config::binding::Protocol;
 use crate::error;
 use crate::{config::{binding::Binding, binding_site_relation::BindingSiteRelationship, configuration::Configuration, request_handler::RequestHandler, site::{HeaderKV, Site}}, core::admin_user::create_default_admin_user, error::{gruxi_error::GruxiError, gruxi_error_enums::{GruxiErrorKind, InitAdminPortalError}}, file::app_paths::get_app_paths, http::request_handlers::processors::static_files_processor::StaticFileProcessor};
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
@@ -34,6 +35,7 @@ pub fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
         is_admin: true,
         is_telemetry: false,
         is_tls: true,
+        protocol: Protocol::Tcp,
     };
 
     // Static file processor for admin site

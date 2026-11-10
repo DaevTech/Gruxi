@@ -1,14 +1,15 @@
 use std::time::Duration;
 
+use crate::core::running_state_manager::get_running_state_manager;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{GruxiErrorKind, PHPProcessorError};
 use crate::external_connections::external_system_handler::ExternalSystemHandler;
 use crate::external_connections::fastcgi::FastCgi;
 use crate::file::normalized_path::NormalizedPath;
-use crate::http::http_server::ConnectionContext;
 use crate::http::http_util::trailing_slash_check;
 use crate::http::request_response::gruxi_request_processor_data::{GruxiRequestProcessorData, PhpProcessorFastCgiData};
 use crate::http::request_response::gruxi_response::GruxiResponse;
+use crate::runtime::binding_manager::BindingRuntime;
 use crate::{
     config::site::Site,
     http::{request_handlers::processor_trait::ProcessorTrait, request_response::gruxi_request::GruxiRequest},
@@ -153,7 +154,7 @@ impl ProcessorTrait for PHPProcessor {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError> {
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, _binding_runtime: &BindingRuntime) -> Result<GruxiResponse, GruxiError> {
         // Get our web roots, based on normalized paths, so we know they are safe
         let local_web_root_option = self.normalized_local_web_root.as_ref();
         let local_web_root = match local_web_root_option {
@@ -174,7 +175,8 @@ impl ProcessorTrait for PHPProcessor {
             }
         };
 
-        let file_reader_cache = connection_context.running_state.get_file_reader_cache();
+        let running_state = get_running_state_manager().await.get_running_state();
+        let file_reader_cache = running_state.get_file_reader_cache();
 
         let file_data_result = file_reader_cache.get_file(normalized_path.get_full_path()).await;
         let mut file_data = file_data_result;
@@ -248,7 +250,7 @@ impl ProcessorTrait for PHPProcessor {
         drop(file_data);
 
         // Now get the IP and port to connect to
-        let connect_ip_and_port_result = self.get_ip_and_port(connection_context.running_state.get_external_system_handler()).await;
+        let connect_ip_and_port_result = self.get_ip_and_port(running_state.get_external_system_handler()).await;
         let connect_ip_and_port = match connect_ip_and_port_result {
             Ok(ip_and_port) => ip_and_port,
             Err(_) => {
@@ -260,7 +262,7 @@ impl ProcessorTrait for PHPProcessor {
 
         // Figure out if we have a connection semaphore to use
         if self.served_by_type == "win-php-cgi" {
-            let external_system_handler = connection_context.running_state.get_external_system_handler();
+            let external_system_handler = running_state.get_external_system_handler();
 
             let semaphore_option = external_system_handler.get_connection_semaphore(&self.php_cgi_handler_id);
             let connection_semaphore = match semaphore_option {

@@ -6,14 +6,15 @@ use crate::config::site::Site;
 use crate::core::admin_user::{LoginRequest, Session, authenticate_user, change_user_password, create_session, create_unauthenticated_admin_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
+use crate::core::running_state_manager::get_running_state_manager;
 use crate::core::triggers::get_trigger_handler;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{AdminApiError, GruxiErrorKind};
 use crate::file::app_paths::get_app_paths;
 use crate::file::normalized_path::NormalizedPath;
-use crate::http::http_server::ConnectionContext;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
+use crate::runtime::binding_manager::BindingRuntime;
 use crate::{debug, error, info, trace};
 use chrono::Utc;
 use http::HeaderValue;
@@ -36,7 +37,7 @@ const ADMIN_CSRF_COOKIE_NAME: &str = "__Host-gruxi_admin_csrf";
 const ADMIN_CSRF_HEADER_NAME: &str = "X-CSRF-Token";
 const ADMIN_COOKIE_MAX_AGE_SECONDS: i64 = 24 * 60 * 60;
 
-pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, connection_context: &Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
+pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, _binding_runtime: &Arc<BindingRuntime>) -> Result<GruxiResponse, GruxiError> {
     let path = gruxi_request.get_path();
     let method = gruxi_request.get_http_method();
 
@@ -50,11 +51,14 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, co
     };
 
     let path_cleaned = normalized_path.get_path();
-
     trace!("Handling request for admin portal with path: {}", path_cleaned);
 
-    // We only want to handle a few paths in the admin portal
+    // Expose API routes
+    if path_cleaned.starts_with("/api") {
+        return crate::api::api_controller::handle_routes(gruxi_request, &path_cleaned).await;
+    }
 
+    // We only want to handle a few paths in the admin portal
     if path_cleaned == "/login" && method == "POST" {
         handle_login_request(gruxi_request, site).await
     } else if path_cleaned == "/logout" && method == "POST" {
@@ -78,7 +82,7 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, co
     } else if path_cleaned == "/operation-mode" && method == "POST" {
         admin_post_operation_mode_endpoint(gruxi_request, site).await
     } else if path_cleaned == "/cache/clear" && method == "POST" {
-        admin_post_cache_clear_endpoint(gruxi_request, site, connection_context).await
+        admin_post_cache_clear_endpoint(gruxi_request, site).await
     } else if path_cleaned == "/user/password" && method == "POST" {
         handle_password_change(gruxi_request, site).await
     } else {
@@ -895,7 +899,7 @@ pub async fn admin_post_operation_mode_endpoint(gruxi_request: &mut GruxiRequest
 }
 
 // Admin cache clear POST endpoint - clears the caches
-pub async fn admin_post_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site, connection_context: &Arc<ConnectionContext>) -> Result<GruxiResponse, GruxiError> {
+pub async fn admin_post_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _admin_site: &Site) -> Result<GruxiResponse, GruxiError> {
     // Check authentication first
     match require_authenticated_action(gruxi_request).await {
         Ok(Some(_session)) => {
@@ -912,8 +916,9 @@ pub async fn admin_post_cache_clear_endpoint(gruxi_request: &mut GruxiRequest, _
     }
 
     // Clear the file reader cache
-    connection_context.running_state.get_file_reader_cache().clear_cache().await;
-    connection_context.running_state.get_compression_cache().clear_cache().await;
+    let running_state = get_running_state_manager().await.get_running_state();
+    running_state.get_file_reader_cache().clear_cache().await;
+    running_state.get_compression_cache().clear_cache().await;
 
     let return_message = "Caches cleared".to_string();
     let success_response = serde_json::json!({

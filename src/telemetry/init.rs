@@ -1,5 +1,5 @@
 use uuid::Uuid;
-
+use crate::config::binding::Protocol;
 use crate::config::{
     binding::Binding,
     binding_site_relation::BindingSiteRelationship,
@@ -15,6 +15,7 @@ pub fn add_telemetry_to_configuration(configuration: &mut Configuration) {
         is_admin: false,
         is_telemetry: true,
         is_tls: true,
+        protocol: Protocol::Tcp,
     };
 
     // Reuse TLS config from admin portal

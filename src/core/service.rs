@@ -1,6 +1,5 @@
-use crate::{error, file::app_paths::get_app_paths};
+use crate::{error, file::app_paths::get_app_paths, runtime::runtime_manager::get_runtime_manager};
 use qsu::rt::{InitCtx, RunEnv, SvcEvt, TermCtx, TokioServiceHandler};
-use tokio::select;
 
 use crate::{
     admin_portal::init::initialize_admin_site,
@@ -8,7 +7,6 @@ use crate::{
     core::{background_tasks::start_background_tasks, operation_mode::get_operation_mode, running_state_manager::get_running_state_manager, triggers::get_trigger_handler},
     database::database_schema::initialize_database,
     error::gruxi_error_enums::{GruxiErrorKind, InitAdminPortalError},
-    http::http_server::initialize_server,
     info,
 };
 
@@ -27,14 +25,13 @@ impl TokioServiceHandler for GruxiService {
         // Start tasks that run in the background
         start_background_tasks().await;
 
-        // Start the running state, which are all the configuration dependent parts
-        let running_state_manager = get_running_state_manager().await;
+        // Start the runtime manager
+        let _runtime_manager = get_runtime_manager();
 
-        // Start the main http server
-        initialize_server().await;
+        // Start the running state, which are all the configuration dependent parts
+        let _running_state_manager = get_running_state_manager().await;
 
         let triggers = get_trigger_handler();
-
         let shutdown_token_trigger_option = triggers.get_trigger("shutdown");
         let shutdown_token_trigger = match shutdown_token_trigger_option {
             Some(trigger) => trigger,
@@ -43,34 +40,11 @@ impl TokioServiceHandler for GruxiService {
                 return Err("Failed to get shutdown trigger".into());
             }
         };
+
+        // Wait for the shutdown trigger to be triggered
         let shutdown_token = shutdown_token_trigger.read().await.clone();
+        shutdown_token.cancelled().await;
 
-        loop {
-            let configuration_trigger_option = triggers.get_trigger("reload_configuration");
-            let configuration_trigger = match configuration_trigger_option {
-                Some(trigger) => trigger,
-                None => {
-                    error!("Failed to get reload_configuration trigger - If this happens, please report a bug");
-                    return Err("Failed to get reload_configuration trigger".into());
-                }
-            };
-            let configuration_token = configuration_trigger.read().await.clone();
-
-            select! {
-                _ = configuration_token.cancelled() => {
-                    info!("Reloading running state due to configuration change");
-                    running_state_manager.set_new_running_state().await;
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    initialize_server().await;
-                }
-                _ = shutdown_token.cancelled() => {
-                    break;
-                }
-            }
-        }
-
-        // Waiting a little while to allow graceful shutdown
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         Ok(())
     }
 

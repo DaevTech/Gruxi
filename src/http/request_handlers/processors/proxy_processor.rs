@@ -1,6 +1,7 @@
 use std::time::Duration;
-
+use crate::core::running_state_manager::get_running_state_manager;
 use crate::error;
+use crate::runtime::binding_manager::BindingRuntime;
 use crate::{
     config::site::Site,
     debug,
@@ -9,7 +10,6 @@ use crate::{
         gruxi_error_enums::{GruxiErrorKind, ProxyProcessorError},
     },
     http::{
-        http_server::ConnectionContext,
         request_handlers::{
             processor_trait::ProcessorTrait,
             processors::load_balancers::{load_balancer::LoadBalancerImpl, round_robin::RoundRobin},
@@ -262,11 +262,12 @@ impl ProcessorTrait for ProxyProcessor {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, _site: &Site, connection_context: &ConnectionContext) -> Result<GruxiResponse, GruxiError> {
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, _site: &Site, _binding_runtime: &BindingRuntime) -> Result<GruxiResponse, GruxiError> {
         trace!("ProxyProcessor handling request - {:?}", &self);
 
         // We determine which upstream server to use based on the load balancing strategy.
-        let processor_manager = connection_context.running_state.get_processor_manager();
+        let running_state = get_running_state_manager().await.get_running_state();
+        let processor_manager = running_state.get_processor_manager();
 
         let server_to_handle_request_option = processor_manager.load_balancer_registry.get_next_server(self.id.as_str()).await;
         let server_to_handle_request = match server_to_handle_request_option {
@@ -294,7 +295,7 @@ impl ProcessorTrait for ProxyProcessor {
         };
 
         // Get the client appropriate for TLS verification settings
-        let client = connection_context.running_state.get_http_client().get_client(self.verify_tls_certificates);
+        let client = running_state.get_http_client().get_client(self.verify_tls_certificates);
 
         // Get the client-side upgrade on the request side
         let client_upgrade = gruxi_request.take_upgrade();

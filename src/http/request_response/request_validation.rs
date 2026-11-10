@@ -1,12 +1,15 @@
 use http::HeaderValue;
 
 use crate::{
-    config::{binding::Binding, configuration::Configuration, site::Site},
+    config::{binding::Binding,site::Site},
+    config::cached_configuration::get_cached_configuration,
     debug,
     http::request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
 };
 
-pub async fn validate_request(gruxi_request: &mut GruxiRequest, binding: &Binding, site: &Site, configuration: &Configuration) -> Result<(), GruxiResponse> {
+pub async fn validate_request(gruxi_request: &mut GruxiRequest, binding: &Binding, site: &Site) -> Result<(), GruxiResponse> {
+    let configuration = get_cached_configuration().get_configuration();
+
     // Validation for HTTP/1.1 only
     if gruxi_request.get_http_version() == "HTTP/1.1" {
         // [HTTP1.1] Requires a Host header
@@ -110,10 +113,7 @@ mod tests {
         binding.is_tls = false;
         binding.port = 80;
 
-        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
-
-        let result = validate_request(&mut request, &binding, &site, &config).await;
+        let result = validate_request(&mut request, &binding, &site).await;
         assert!(result.is_err());
         let response = result.err().unwrap();
         assert_eq!(response.get_status(), hyper::StatusCode::PERMANENT_REDIRECT.as_u16());
@@ -137,10 +137,7 @@ mod tests {
         binding.is_tls = true;
         binding.port = 443;
 
-        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
-
-        let result = validate_request(&mut request, &binding, &site, &config).await;
+        let result = validate_request(&mut request, &binding, &site).await;
         assert!(result.is_ok());
     }
 
@@ -161,10 +158,7 @@ mod tests {
         binding.is_tls = true;
         binding.port = 8443;
 
-        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
-
-        let result = validate_request(&mut request, &binding, &site, &config).await;
+        let result = validate_request(&mut request, &binding, &site).await;
         assert!(result.is_ok());
     }
 
@@ -182,10 +176,7 @@ mod tests {
         let mut request = GruxiRequest::new(raw_request);
         let binding = Binding::new();
 
-        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
-
-        let result = validate_request(&mut request, &binding, &site, &config).await;
+        let result = validate_request(&mut request, &binding, &site).await;
         assert!(result.is_ok());
     }
 
@@ -203,10 +194,7 @@ mod tests {
         let mut request = GruxiRequest::new(raw_request);
         let binding = Binding::new();
 
-        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
-
-        let result = validate_request(&mut request, &binding, &site, &config).await;
+        let result = validate_request(&mut request, &binding, &site).await;
         assert!(result.is_err());
         let response = result.err().unwrap();
         assert_eq!(response.get_status(), hyper::StatusCode::PERMANENT_REDIRECT.as_u16());
@@ -224,10 +212,7 @@ mod tests {
         binding.is_tls = true;
         binding.port = 443;
 
-        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
-
-        let result = validate_request(&mut request, &binding, &site, &config).await;
+        let result = validate_request(&mut request, &binding, &site).await;
         assert!(result.is_err());
         let response = result.err().unwrap();
         assert_eq!(response.get_status(), hyper::StatusCode::PERMANENT_REDIRECT.as_u16());
@@ -250,10 +235,7 @@ mod tests {
         binding.is_tls = true;
         binding.port = 8443;
 
-        let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-        let config = cached_configuration.get_configuration();
-
-        let result = validate_request(&mut request, &binding, &site, &config).await;
+        let result = validate_request(&mut request, &binding, &site).await;
         assert!(result.is_err());
         let response = result.err().unwrap();
         assert_eq!(response.get_status(), hyper::StatusCode::PERMANENT_REDIRECT.as_u16());
