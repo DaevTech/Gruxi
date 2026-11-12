@@ -103,7 +103,8 @@ fn get_init_sql() -> Vec<String> {
         id TEXT NOT NULL PRIMARY KEY,
         ip TEXT NOT NULL,
         port INTEGER NOT NULL,
-        is_tls BOOLEAN NOT NULL DEFAULT 0
+        is_tls BOOLEAN NOT NULL DEFAULT 0,
+        protocol TEXT NOT NULL DEFAULT 'tcp'
     );"
         .to_string(),
         // Sites table

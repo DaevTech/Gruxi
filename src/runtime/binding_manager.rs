@@ -1,24 +1,45 @@
 use crate::config::binding::Protocol;
+use crate::config::cached_configuration::get_cached_configuration;
+use crate::core::database_connection::get_database_connection;
 use crate::error;
-use crate::error::gruxi_error_enums::{GruxiErrorKind, GruxiRuntimeError};
+use crate::error::gruxi_error_enums::{DatabaseError, GruxiErrorKind, GruxiRuntimeError};
 use crate::http::tcp_listener::{create_tcp_listener_with_retry, tcp_connection_handler};
 use crate::{config::binding::Binding, error::gruxi_error::GruxiError, info};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{net::SocketAddr, sync::OnceLock};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_util::sync::CancellationToken;
 
 pub struct BindingManager {
-    bindings: Vec<Arc<BindingRuntime>>,
+    binding_runtimes: Vec<Arc<BindingRuntime>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BindingRuntimeConfiguration {
     pub hard_connection_timeout: Duration,
 }
+
+impl Default for BindingRuntimeConfiguration {
+    fn default() -> Self {
+        // Fetch our current configuration for init
+        let configuration = get_cached_configuration().get_configuration();
+
+        let runtime_binding_configuration = Self {
+            hard_connection_timeout: Duration::from_secs(configuration.core.server_settings.max_connection_duration_seconds),
+        };
+        runtime_binding_configuration
+    }
+}
+
+impl BindingRuntimeConfiguration {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Debug)]
 pub struct BindingRuntime {
     pub binding: Binding,
@@ -31,18 +52,19 @@ pub struct BindingRuntime {
 
 impl BindingManager {
     pub fn new() -> Self {
-        Self { bindings: Vec::new() }
+        Self { binding_runtimes: Vec::new() }
+    }
+
+    pub fn remove_binding(&mut self, binding_id: &str) {
+        if let Some(b_index) = self.binding_runtimes.iter().position(|b| b.binding.id == binding_id) {
+            let binding_to_be_removed = &self.binding_runtimes.remove(b_index);
+            binding_to_be_removed.stop_binding_token.cancel();
+        }
     }
 
     pub fn add_binding(&mut self, binding: Binding, config: BindingRuntimeConfiguration) -> Result<(), GruxiError> {
-        // Check if an existing binding with the same IP and port already exists
-        if self.bindings.iter().any(|b| b.binding.ip == binding.ip && b.binding.port == binding.port) {
-            error!("Binding with IP {} and port {} already exists", binding.ip, binding.port);
-            return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Runtime(GruxiRuntimeError::BindingError(format!(
-                "Binding with IP {} and port {} already exists",
-                binding.ip, binding.port
-            )))));
-        }
+        // Check if an existing binding with that id exist, if so, we stop the current one and start the new like a fresh one
+        let _removed = &self.remove_binding(&binding.id);
 
         let mut binding_runtime = BindingRuntime {
             binding: binding,
@@ -67,11 +89,11 @@ impl BindingManager {
         // Start connection handler for the binding if it's TCP
         if let Protocol::Tcp = arc_binding_runtime.binding.protocol {
             if let Some(_) = &arc_binding_runtime.tcp_listener {
-                let _join_handle = tokio::spawn(tcp_connection_handler(arc_binding_runtime.clone()));
+                tokio::spawn(tcp_connection_handler(arc_binding_runtime.clone()));
             }
         }
 
-        self.bindings.push(arc_binding_runtime);
+        self.binding_runtimes.push(arc_binding_runtime);
         Ok(())
     }
 
@@ -107,6 +129,57 @@ impl BindingManager {
             }
         };
     }
+
+    pub fn get_binding_runtimes(&self) -> &Vec<Arc<BindingRuntime>> {
+        &self.binding_runtimes
+    }
+
+    pub fn get_configuration_bindings(&self) -> Result<Vec<Binding>, GruxiError> {
+        // Load all bindings from the db
+        let connection = match get_database_connection() {
+            Ok(conn) => conn,
+            Err(_) => {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Database(DatabaseError::ConnectionFailed)));
+            }
+        };
+
+        let bindings = match self.load_bindings_from_db(&connection) {
+            Ok(bindings) => bindings,
+            Err(e) => {
+                return Err(GruxiError::new(GruxiErrorKind::Database(DatabaseError::QueryFailed), format!("Failed to load bindings from database: {}", e)));
+            }
+        };
+
+        Ok(bindings)
+    }
+
+    fn load_bindings_from_db(&self, connection: &sqlite::Connection) -> Result<Vec<Binding>, sqlite::Error> {
+        let mut statement = connection.prepare("SELECT id, ip, port, is_tls, protocol FROM bindings")?;
+
+        let mut bindings = Vec::new();
+        while let sqlite::State::Row = statement.next()? {
+            let binding_id: String = statement.read(0)?;
+            let ip: String = statement.read(1)?;
+            let port: i64 = statement.read(2)?;
+            let is_tls: i64 = statement.read(3)?;
+            let protocol: String = statement.read(4)?;
+
+            bindings.push(Binding {
+                id: binding_id,
+                ip,
+                port: port as u16,
+                is_admin: false,
+                is_telemetry: false,
+                is_tls: is_tls != 0,
+                protocol: match protocol.as_str() {
+                    "tcp" => Protocol::Tcp,
+                    "udp" => Protocol::Udp,
+                    _ => Protocol::Tcp,
+                },
+            });
+        }
+        Ok(bindings)
+    }
 }
 
 impl Default for BindingManager {
@@ -115,8 +188,8 @@ impl Default for BindingManager {
     }
 }
 
-static BINDING_MANAGER_SINGLETON: OnceLock<BindingManager> = OnceLock::new();
+static BINDING_MANAGER_SINGLETON: OnceLock<Mutex<BindingManager>> = OnceLock::new();
 
-pub fn get_binding_manager() -> &'static BindingManager {
-    BINDING_MANAGER_SINGLETON.get_or_init(|| BindingManager::new())
+pub fn get_binding_manager() -> &'static Mutex<BindingManager> {
+    BINDING_MANAGER_SINGLETON.get_or_init(|| Mutex::new(BindingManager::new()))
 }

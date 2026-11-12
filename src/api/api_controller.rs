@@ -20,12 +20,11 @@ pub async fn handle_routes(gruxi_request: &mut GruxiRequest, path: &str) -> Resu
         Err(response) => return Ok(response),
     }
 
-    if path.starts_with("/api/bindings") {
+    if path == "/api/bindings" || path.starts_with("/api/bindings/") {
         return match method {
             "GET" => get_bindings::handle(gruxi_request).await,
             "POST" => create_binding::handle(gruxi_request).await,
-            "PATCH" => update_binding::patch(gruxi_request).await,
-            "PUT" => update_binding::replace(gruxi_request).await,
+            "PUT" => update_binding::handle(gruxi_request).await,
             "DELETE" => delete_binding::handle(gruxi_request).await,
             _ => Err(no_route_matched()),
         };

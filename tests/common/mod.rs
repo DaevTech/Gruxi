@@ -5,6 +5,9 @@
 
 #![allow(dead_code)]
 
+pub mod api_client;
+pub mod api_fixtures;
+
 use hyper::HeaderMap;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

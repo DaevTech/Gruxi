@@ -1,4 +1,4 @@
-use crate::{core::monitoring::get_monitoring_state, runtime::binding_manager::BindingRuntime, tls::http_tls::build_unified_tls_acceptor};
+use crate::{core::monitoring::get_monitoring_state, info, runtime::binding_manager::BindingRuntime, tls::http_tls::build_unified_tls_acceptor};
 use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -76,6 +76,7 @@ pub async fn tcp_connection_handler(binding_runtime: Arc<BindingRuntime>) {
             select! {
                 _ = local_binding_runtime.stop_binding_token.cancelled() => {
                     trace!("Binding stop signal received, stopping server on {}:{}", binding_runtime.binding.ip, binding_runtime.binding.port);
+                    info!("Server stopped on {}:{}", binding_runtime.binding.ip, binding_runtime.binding.port);
                     break;
                 },
                 result = binding_runtime.tcp_listener.as_ref().unwrap().accept() => {
@@ -124,6 +125,7 @@ pub async fn tcp_connection_handler(binding_runtime: Arc<BindingRuntime>) {
             select! {
                 _ = local_binding_runtime.stop_binding_token.cancelled() => {
                     trace!("Binding stop signal received, stopping server on {}:{}", binding_runtime.binding.ip, binding_runtime.binding.port);
+                    info!("Server stopped on {}:{}", binding_runtime.binding.ip, binding_runtime.binding.port);
                     break;
                 },
                 result = binding_runtime.tcp_listener.as_ref().unwrap().accept() => {

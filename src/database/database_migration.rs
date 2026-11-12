@@ -75,6 +75,13 @@ pub fn migrate_database() -> i32 {
         }
         schema_version = 10;
     }
+    if schema_version == 10 {
+        let result = migrate_db_helper(&connection, 10, 11, migrate_db_10_to_11);
+        if let Err(e) = result {
+            panic!("Database migration from version 10 to 11 failed: {}", e);
+        }
+        schema_version = 11;
+    }
 
     schema_version
 }
@@ -172,5 +179,11 @@ fn migrate_db_9_to_10(connection: &Connection) -> Result<(), sqlite::Error> {
     connection.execute("ALTER TABLE bindings DROP COLUMN is_telemetry;")?;
     connection.execute("ALTER TABLE bindings DROP COLUMN is_admin;")?;
 
+    Ok(())
+}
+
+fn migrate_db_10_to_11(connection: &Connection) -> Result<(), sqlite::Error> {
+    // Add "protocol" to "bindings" table
+    connection.execute("ALTER TABLE bindings ADD COLUMN protocol TEXT NOT NULL DEFAULT 'tcp';")?;
     Ok(())
 }

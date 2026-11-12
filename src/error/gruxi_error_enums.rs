@@ -11,6 +11,13 @@ pub enum GruxiErrorKind {
     InitAdminPortal(InitAdminPortalError),
     GruxiRequest(GruxiRequestError),
     Runtime(GruxiRuntimeError),
+    Database(DatabaseError),
+}
+
+#[derive(Debug)]
+pub enum DatabaseError {
+    ConnectionFailed,
+    QueryFailed
 }
 
 #[derive(Debug)]
