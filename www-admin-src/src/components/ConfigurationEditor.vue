@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { apiFetch } from '../api';
+import { createResourceApi, saveResourceChanges } from '../resourceApi';
 import TagInput from './TagInput.vue';
 
 // Define props
@@ -34,6 +35,10 @@ const saveErrors = ref([]);
 const successMessage = ref('');
 const originalConfig = ref(null);
 const config = ref(null);
+const bindingApi = createResourceApi('/api/bindings');
+const bindings = ref([]);
+const originalBindings = ref([]);
+const copy = (value) => JSON.parse(JSON.stringify(value));
 const suggestedTelemetryToken = ref(Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, '0')).join(''));
 
 // Track which sections are expanded (all collapsed by default)
@@ -62,7 +67,7 @@ const expandedItems = reactive({
 // Check if config has unsaved changes
 const hasUnsavedChanges = computed(() => {
     if (!originalConfig.value || !config.value) return false;
-    return JSON.stringify(originalConfig.value) !== JSON.stringify(config.value);
+    return JSON.stringify(originalConfig.value) !== JSON.stringify(config.value) || JSON.stringify(originalBindings.value) !== JSON.stringify(bindings.value);
 });
 
 // Load configuration
@@ -71,20 +76,22 @@ const loadConfiguration = async () => {
     error.value = '';
 
     try {
-        const response = await apiFetch('/config', {
-            method: 'GET',
-        });
+        const [response, loadedBindings] = await Promise.all([apiFetch('/config', { method: 'GET' }), bindingApi.list()]);
 
         if (response.ok) {
             const data = await response.json();
-            originalConfig.value = JSON.parse(JSON.stringify(data)); // Deep copy
+            if (!Array.isArray(loadedBindings)) throw new Error('Invalid bindings response');
+            delete data.bindings;
+            originalConfig.value = copy(data);
             config.value = data;
+            bindings.value = loadedBindings;
+            originalBindings.value = copy(loadedBindings);
         } else {
             error.value = 'Failed to load configuration';
         }
     } catch (err) {
         console.error('Config loading error:', err);
-        error.value = 'Network error while loading configuration';
+        error.value = `Failed to load configuration: ${err.message}`;
     } finally {
         isLoading.value = false;
     }
@@ -149,22 +156,45 @@ const saveConfiguration = async () => {
     successMessage.value = '';
 
     try {
-        const response = await apiFetch('/config', {
+        const addresses = new Set();
+        for (const binding of bindings.value) {
+            binding.ip = binding.ip.trim();
+            const address = `${binding.ip}:${binding.port}`;
+            if (addresses.has(address)) throw new Error(`Duplicate binding for IP/Port combination: ${address}`);
+            addresses.add(address);
+        }
+        await saveResourceChanges(bindingApi, originalBindings.value, bindings.value, (operation, binding) => {
+            if (operation === 'remove') {
+                originalBindings.value = originalBindings.value.filter((item) => item.id !== binding.id);
+                originalConfig.value.binding_sites = originalConfig.value.binding_sites.filter((relation) => relation.binding_id !== binding.id);
+            } else {
+                const originalIndex = originalBindings.value.findIndex((item) => item.id === binding.id);
+                if (originalIndex === -1) originalBindings.value.push(copy(binding));
+                else originalBindings.value[originalIndex] = copy(binding);
+                const index = bindings.value.findIndex((item) => item.id === binding.id);
+                bindings.value[index] = copy(binding);
+            }
+        });
+
+        if (JSON.stringify(originalConfig.value) === JSON.stringify(config.value)) {
+            successMessage.value = 'Configuration saved. Reload the configuration if needed to apply site associations.';
+            setTimeout(() => { successMessage.value = ''; }, 10000);
+            return;
+        }
+
+        const response = await apiFetch('/config/editor', {
             method: 'POST',
-            body: JSON.stringify(config.value),
+            body: JSON.stringify({ ...config.value, bindings: [] }),
         });
 
         const responseData = await response.json().catch(() => ({}));
 
         if (response.ok) {
             // Apply the sanitized configuration returned from the server
-            if (responseData.configuration) {
-                config.value = responseData.configuration;
-                originalConfig.value = JSON.parse(JSON.stringify(responseData.configuration));
-            } else {
-                // Fallback: if no configuration returned, keep current as original
-                originalConfig.value = JSON.parse(JSON.stringify(config.value));
-            }
+            if (!responseData.configuration) throw new Error('Server did not return the saved configuration');
+            delete responseData.configuration.bindings;
+            config.value = responseData.configuration;
+            originalConfig.value = copy(responseData.configuration);
             successMessage.value = responseData.message || 'Configuration saved successfully!';
             saveErrorMessage.value = ''; // Clear any previous save errors
             saveErrors.value = [];
@@ -192,11 +222,7 @@ const saveConfiguration = async () => {
     } catch (err) {
         console.error('Config saving error:', err);
         successMessage.value = ''; // Clear success message if there's an error
-        if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
-            saveErrorMessage.value = 'Network error: Unable to connect to server';
-        } else {
-            saveErrorMessage.value = 'Network error while saving configuration';
-        }
+        saveErrorMessage.value = `Save failed: ${err.message}. Some changes may already have been saved; review the saved changes before retrying.`;
     } finally {
         isSaving.value = false;
     }
@@ -206,6 +232,7 @@ const saveConfiguration = async () => {
 const resetChanges = () => {
     if (originalConfig.value) {
         config.value = JSON.parse(JSON.stringify(originalConfig.value));
+        bindings.value = copy(originalBindings.value);
     }
 };
 
@@ -377,25 +404,23 @@ const getSiteProcessorModels = (siteIndex) => {
 
 // Add new binding
 const addBinding = () => {
-    if (!config.value.bindings) {
-        config.value.bindings = [];
-    }
     const newId = crypto.randomUUID();
-    config.value.bindings.push({
+    bindings.value.push({
         id: newId,
         ip: '0.0.0.0',
         port: 80,
         is_admin: false,
         is_telemetry: false,
         is_tls: false,
+        protocol: 'Tcp',
     });
 };
 
 // Remove binding
 const removeBinding = (index) => {
-    if (config.value.bindings && config.value.bindings.length > index) {
-        const bindingId = config.value.bindings[index].id;
-        config.value.bindings.splice(index, 1);
+    if (bindings.value.length > index) {
+        const bindingId = bindings.value[index].id;
+        bindings.value.splice(index, 1);
         // Remove associated binding_sites relationships
         if (!config.value.binding_sites) {
             config.value.binding_sites = [];
@@ -530,10 +555,10 @@ const removeRewriteFunction = (siteIndex, functionIndex) => {
 // Get available bindings for site association
 const getAvailableBindings = () => {
     return (
-        config.value.bindings?.map((b) => ({
+        bindings.value.map((b) => ({
             id: b.id,
             label: `${b.ip}:${b.port}${b.is_admin ? ' (Admin)' : ''}${b.is_tls ? ' (TLS)' : ''}`,
-        })) || []
+        }))
     );
 };
 
@@ -767,7 +792,7 @@ onMounted(() => {
         <div v-if="!inline" class="config-header">
             <h2>Configuration Editor</h2>
             <div class="config-actions">
-                <button @click="saveConfiguration" class="save-button" :disabled="isSaving">
+                <button @click="saveConfiguration" class="save-button" :disabled="isSaving || isLoading || !config">
                     <span v-if="isSaving">Saving...</span>
                     <span v-else>Save Configuration</span>
                 </button>
@@ -807,7 +832,8 @@ onMounted(() => {
                 <ul v-if="saveErrors && saveErrors.length > 0" class="save-error-list">
                     <li v-for="(err, idx) in saveErrors" :key="idx">{{ err }}</li>
                 </ul>
-                <p class="error-help">Please fix the errors above and try saving again.</p>
+                <p v-if="saveErrorMessage">{{ saveErrorMessage }}</p>
+                <p class="error-help">Some binding changes may already have been saved. Review the errors before retrying.</p>
             </div>
 
             <!-- Success message -->
@@ -839,6 +865,7 @@ onMounted(() => {
                 </div>
             </div>
 
+            <div :inert="isSaving">
             <!-- Network Bindings Section -->
             <div class="config-section">
                 <div class="section-header" @click="toggleSection('bindings')">
@@ -849,14 +876,14 @@ onMounted(() => {
                 </div>
 
                 <div v-if="expandedSections.bindings" class="section-content">
-                    <div v-if="!config.bindings || config.bindings.length === 0" class="empty-state-section">
+                    <div v-if="bindings.length === 0" class="empty-state-section">
                         <div class="empty-icon">�</div>
                         <p>No network bindings configured</p>
                         <button @click="addBinding" class="add-button">+ Add First Binding</button>
                     </div>
 
                     <!-- Bindings List -->
-                    <div v-for="(binding, bindingIndex) in config.bindings" :key="binding.id" class="server-item">
+                    <div v-for="(binding, bindingIndex) in bindings" :key="binding.id" class="server-item">
                         <div class="item-header compact" @click="toggleBinding(bindingIndex)">
                             <div class="header-left">
                                 <span class="section-icon" :class="{ expanded: isBindingExpanded(bindingIndex) }">▶</span>
@@ -865,7 +892,7 @@ onMounted(() => {
                                 <span v-if="binding.is_admin" class="admin-badge">ADMIN</span>
                                 <span v-if="binding.is_tls" class="tls-badge">TLS</span>
                             </div>
-                            <button @click.stop="removeBinding(bindingIndex)" class="remove-button compact" :disabled="config.bindings.length === 1">Remove</button>
+                            <button @click.stop="removeBinding(bindingIndex)" class="remove-button compact" :disabled="bindings.length === 1">Remove</button>
                         </div>
 
                         <!-- Binding Content -->
@@ -1786,6 +1813,7 @@ onMounted(() => {
                         </div>
                     </div>
                 </div>
+            </div>
             </div>
         </div>
 

@@ -18,6 +18,19 @@ use sqlite::State;
 /// Save a new configuration to the database
 /// Returns Ok(true) if changes were saved, Ok(false) if no changes were needed
 pub fn save_configuration(config: &mut Configuration, force: bool) -> Result<bool, Vec<String>> {
+    save_configuration_inner(config, force, false)
+}
+
+pub fn save_configuration_preserving_bindings(config: &mut Configuration) -> Result<bool, Vec<String>> {
+    // Serialize editor saves with the binding API while reading and saving its state.
+    let manager = crate::runtime::binding_manager::get_binding_manager()
+        .lock()
+        .map_err(|_| vec!["Binding manager lock poisoned".to_string()])?;
+    config.bindings = manager.get_configuration_bindings().map_err(|e| vec![format!("Failed to load bindings: {:?}", e)])?;
+    save_configuration_inner(config, false, true)
+}
+
+fn save_configuration_inner(config: &mut Configuration, force: bool, preserve_bindings: bool) -> Result<bool, Vec<String>> {
     // First, we sanitize the configuration
     config.sanitize();
 
@@ -58,10 +71,12 @@ pub fn save_configuration(config: &mut Configuration, force: bool) -> Result<boo
     save_core_config(&connection, &config.core).map_err(|e| vec![format!("Failed to save core configuration: {}", e)])?;
 
     // Clear and re-insert all bindings (simpler than update/delete logic)
-    connection.execute("DELETE FROM bindings").map_err(|e| vec![format!("Failed to clear existing bindings: {}", e)])?;
+    if !preserve_bindings {
+        connection.execute("DELETE FROM bindings").map_err(|e| vec![format!("Failed to clear existing bindings: {}", e)])?;
 
-    for binding in &config.bindings {
-        save_binding(&connection, binding).map_err(|e| vec![format!("Failed to save binding: {}", e)])?;
+        for binding in &config.bindings {
+            save_binding(&connection, binding).map_err(|e| vec![format!("Failed to save binding: {}", e)])?;
+        }
     }
 
     // Clear and re-insert all sites (simpler than update/delete logic)
@@ -304,11 +319,12 @@ fn save_binding(connection: &Connection, binding: &Binding) -> Result<(), String
     // Insert binding with explicit ID (all bindings are re-inserted after DELETE FROM bindings)
     connection
         .execute(format!(
-            "INSERT INTO bindings (id, ip, port, is_tls) VALUES ('{}', '{}', {}, {})",
+            "INSERT INTO bindings (id, ip, port, is_tls, protocol) VALUES ('{}', '{}', {}, {}, '{}')",
             binding.id,
             binding.ip.replace("'", "''"),
             binding.port,
-            if binding.is_tls { 1 } else { 0 }
+            if binding.is_tls { 1 } else { 0 },
+            if binding.protocol == crate::config::binding::Protocol::Tcp { "tcp" } else { "udp" }
         ))
         .map_err(|e| format!("Failed to insert binding: {}", e))?;
 

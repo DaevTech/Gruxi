@@ -343,7 +343,7 @@ fn load_core_config(connection: &Connection) -> Result<Core, String> {
 
 fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
     let mut statement = connection
-        .prepare("SELECT id, ip, port, is_tls FROM bindings")
+        .prepare("SELECT id, ip, port, is_tls, protocol FROM bindings")
         .map_err(|e| format!("Failed to prepare bindings query: {}", e))?;
 
     let mut bindings = Vec::new();
@@ -352,6 +352,7 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
         let ip: String = statement.read(1).map_err(|e| format!("Failed to read ip: {}", e))?;
         let port: i64 = statement.read(2).map_err(|e| format!("Failed to read port: {}", e))?;
         let is_tls: i64 = statement.read(3).map_err(|e| format!("Failed to read is_tls: {}", e))?;
+        let protocol: String = statement.read(4).map_err(|e| format!("Failed to read protocol: {}", e))?;
 
         bindings.push(Binding {
             id: binding_id,
@@ -360,7 +361,11 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
             is_admin: false,
             is_telemetry: false,
             is_tls: is_tls != 0,
-            protocol: Protocol::Tcp,
+            protocol: match protocol.as_str() {
+                "tcp" => Protocol::Tcp,
+                "udp" => Protocol::Udp,
+                _ => return Err(format!("Unknown binding protocol: {}", protocol)),
+            },
         });
     }
 

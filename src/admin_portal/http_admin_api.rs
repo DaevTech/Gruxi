@@ -1,7 +1,7 @@
 use crate::admin_portal::login_rate_limiter::get_login_rate_limiter;
 use crate::config::cached_configuration::get_cached_configuration;
 use crate::config::configuration::Configuration;
-use crate::config::save_configuration::save_configuration;
+use crate::config::save_configuration::{save_configuration, save_configuration_preserving_bindings};
 use crate::config::site::Site;
 use crate::core::admin_user::{LoginRequest, Session, authenticate_user, change_user_password, create_session, create_unauthenticated_admin_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
@@ -68,6 +68,8 @@ pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, _b
     } else if path_cleaned == "/config" && method == "GET" {
         admin_get_configuration_endpoint(gruxi_request, site).await
     } else if path_cleaned == "/config" && method == "POST" {
+        admin_post_configuration_endpoint(gruxi_request, site).await
+    } else if path_cleaned == "/config/editor" && method == "POST" {
         admin_post_configuration_endpoint(gruxi_request, site).await
     } else if path_cleaned == "/monitoring" && method == "GET" {
         admin_monitoring_endpoint(gruxi_request, site).await
@@ -369,7 +371,12 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
     };
 
     // Save the configuration
-    match save_configuration(&mut configuration, false) {
+    let result = if gruxi_request.get_path() == "/config/editor" {
+        save_configuration_preserving_bindings(&mut configuration)
+    } else {
+        save_configuration(&mut configuration, false)
+    };
+    match result {
         Ok(true) => {
             info!("Configuration updated successfully");
 
