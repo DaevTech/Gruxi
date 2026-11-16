@@ -42,8 +42,12 @@ pub fn create_unauthenticated_admin_session() -> Option<Session> {
     let user_result = authenticate_user("admin", "", false);
     let user = match user_result {
         Ok(Some(u)) => u,
-        _ => {
-            error!("Failed to fetch admin user for unauthenticated session");
+        Ok(None) => {
+            error!("Failed to fetch admin user for unauthenticated session: active admin user not found");
+            return None;
+        }
+        Err(e) => {
+            error!("Failed to fetch admin user for unauthenticated session: {}", e);
             return None;
         }
     };
@@ -52,8 +56,8 @@ pub fn create_unauthenticated_admin_session() -> Option<Session> {
     let session_result = create_session(&user);
     match session_result {
         Ok(session) => Some(session),
-        Err(_) => {
-            error!("Failed to create session for admin user");
+        Err(e) => {
+            error!("Failed to create session for admin user: {}", e);
             None
         }
     }

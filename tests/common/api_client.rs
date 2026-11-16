@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::OnceCell;
 use tokio::time::{Duration, timeout};
 use tokio_rustls::TlsConnector;
 
@@ -16,6 +17,7 @@ const SESSION_COOKIE: &str = "__Host-gruxi_admin_session";
 const CSRF_COOKIE: &str = "__Host-gruxi_admin_csrf";
 const CSRF_HEADER: &str = "X-CSRF-Token";
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
+static ADMIN_SESSION_TOKEN: OnceCell<String> = OnceCell::const_new();
 
 #[derive(Debug)]
 struct AcceptAllVerifier;
@@ -91,18 +93,23 @@ impl ApiClient {
 
     /// Get an authenticated client without any credentials or server settings.
     ///
-    /// The session is created directly in the database through the library's
+    /// One session is shared by the test process and created directly in the database through the library's
     /// `create_unauthenticated_admin_session()` (the running server validates sessions against the
     /// same database; run the tests from the repository root so the same `db/` is used).
     /// The CSRF check is a double-submit (cookie must equal header), so we generate our own token.
     pub async fn login() -> Self {
-        let session = tokio::task::spawn_blocking(gruxi::core::admin_user::create_unauthenticated_admin_session)
-            .await
-            .expect("Session creation task panicked")
-            .expect("Could not create an admin session in the database. Run from the repository root with an initialized db/gruxi.db");
+        let session_token = ADMIN_SESSION_TOKEN
+            .get_or_init(|| async {
+                tokio::task::spawn_blocking(gruxi::core::admin_user::create_unauthenticated_admin_session)
+                    .await
+                    .expect("Session creation task panicked")
+                    .expect("Could not create an admin session in the database. Check the preceding error and ensure the running server uses the same initialized database")
+                    .token
+            })
+            .await;
 
         let mut client = Self::unauthenticated();
-        client.session_token = Some(session.token);
+        client.session_token = Some(session_token.clone());
         client.csrf_token = Some(format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple()));
         client
     }

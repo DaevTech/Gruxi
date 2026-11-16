@@ -1,4 +1,6 @@
+use sqlite::Connection;
 use crate::admin_portal::init::add_admin_portal_to_configuration;
+use crate::util::string_manipulation::{parse_comma_separated_list, parse_key_value_pairs};
 use crate::config::binding::Protocol;
 use crate::config::binding_site_relation::BindingSiteRelationship;
 use crate::config::configuration::CURRENT_CONFIGURATION_VERSION;
@@ -15,7 +17,6 @@ use crate::{
     core::database_connection::get_database_connection,
 };
 use crate::{info, trace};
-use sqlite::Connection;
 
 // Load the configuration from the database or create a default one if it doesn't exist
 pub fn init() -> Configuration {
@@ -514,34 +515,4 @@ fn load_static_file_processors(connection: &Connection) -> Result<Vec<StaticFile
     }
 
     Ok(processors)
-}
-
-fn parse_comma_separated_list(input: &str, to_lowercase: bool) -> Vec<String> {
-    if input.is_empty() {
-        Vec::new()
-    } else {
-        if to_lowercase {
-            input.split(',').map(|s| s.trim().to_lowercase().to_string()).collect()
-        } else {
-            input.split(',').map(|s| s.trim().to_string()).collect()
-        }
-    }
-}
-
-fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
-    if input.is_empty() {
-        Vec::new()
-    } else {
-        input
-            .split(',')
-            .filter_map(|pair| {
-                let parts: Vec<&str> = pair.splitn(2, '=').collect();
-                if parts.len() == 2 {
-                    Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
 }

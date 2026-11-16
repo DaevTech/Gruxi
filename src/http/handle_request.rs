@@ -8,9 +8,9 @@ use crate::http::http_util::*;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::http::request_response::request_validation::validate_request;
-use crate::http::site_match::site_matcher::find_best_match_site;
 use crate::logging::access_log_entry::AccessLogEntry;
 use crate::runtime::binding_manager::BindingRuntime;
+use crate::runtime::site_manager::get_site_manager;
 use crate::telemetry::http_telemetry_api::handle_telemetry_routes;
 use crate::{debug, trace};
 use hyper::header::HeaderValue;
@@ -29,20 +29,13 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding_runtime: Ar
         gruxi_request.get_headers()
     );
 
-   // return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));
-
-    // Get the running state
-    let running_state = get_running_state_manager().await.get_running_state();
-
-    // Get the sites for this binding
-    let binding_site_cache = running_state.get_binding_site_cache();
-    let sites = binding_site_cache.get_sites_for_binding(&binding_runtime.binding.id);
-
-    // Get the hostname and figure out which site matches
+    // Get site manager
+    let site_manager = get_site_manager();
     let hostname = gruxi_request.get_hostname();
-    let site = match find_best_match_site(&sites, hostname) {
-        Some(site) => site,
-        None => {
+
+    let site_runtime = match site_manager.get_site_for_request(&binding_runtime.binding.id, hostname) {
+        Ok(site_runtime) => site_runtime,
+        Err(_) => {
             if hostname.is_empty() {
                 trace!("No hostname provided in request on binding ID: '{}'", &binding_runtime.binding.id);
                 return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::BAD_REQUEST.as_u16()));
@@ -52,7 +45,12 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding_runtime: Ar
             }
         }
     };
+    let site = &site_runtime.site;
+
     trace!("Matched site with request: {:?}", &site);
+
+    // Get the running state
+    let running_state = get_running_state_manager().await.get_running_state();
 
     // Validate the request
     if let Err(gruxi_response) = validate_request(&mut gruxi_request, &binding_runtime.binding, site).await {

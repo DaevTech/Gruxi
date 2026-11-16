@@ -26,9 +26,6 @@ pub async fn handle(gruxi_request: &mut GruxiRequest) -> Result<GruxiResponse, G
         }
     };
 
-    println!("Binding ID to delete: {}", binding_id);
-    println!("Loaded bindings from database: {:?}", current_bindings);
-
     // Make sure it exist and fetch it to be deleted
     if !current_bindings.iter().any(|b| b.id == binding_id) {
         return Ok(json_error(StatusCode::NOT_FOUND, "Binding not found"));

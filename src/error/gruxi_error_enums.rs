@@ -83,4 +83,5 @@ pub enum GruxiRequestError {
 #[derive(Debug)]
 pub enum GruxiRuntimeError {
     BindingError(String),
+    RequestHandling
 }

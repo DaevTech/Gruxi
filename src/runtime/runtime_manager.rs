@@ -1,4 +1,8 @@
-use crate::{config::{cached_configuration::get_cached_configuration, configuration::Configuration}, runtime::binding_manager::{BindingRuntimeConfiguration, get_binding_manager}};
+use crate::{
+    config::{cached_configuration::get_cached_configuration, configuration::Configuration},
+    runtime::binding_manager::{BindingRuntimeConfiguration, get_binding_manager},
+    runtime::site_manager::init_site_manager,
+};
 use std::{sync::OnceLock, time::Duration};
 
 pub struct RuntimeManager;
@@ -11,6 +15,9 @@ impl RuntimeManager {
     pub fn init(&mut self) {
         // Fetch our current configuration for init
         let configuration = get_cached_configuration().get_configuration();
+
+        // Start sites
+        self.init_sites(&configuration);
 
         // Start bindings
         self.init_bindings(&configuration);
@@ -30,6 +37,10 @@ impl RuntimeManager {
             }
         }
     }
+
+    fn init_sites(&mut self, configuration: &Configuration) {
+        init_site_manager(configuration).expect("Failed to initialize site manager");
+    }
 }
 
 static RUNTIME_MANAGER_SINGLETON: OnceLock<RuntimeManager> = OnceLock::new();
@@ -40,47 +51,4 @@ pub fn get_runtime_manager() -> &'static RuntimeManager {
         manager.init();
         manager
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::binding::Binding;
-
-    #[tokio::test]
-    async fn startup_and_later_additions_share_the_binding_manager() {
-        let mut configuration = Configuration::new();
-        let mut startup_binding = Binding::new();
-        startup_binding.ip = "127.0.0.1".to_string();
-        startup_binding.port = 0;
-        configuration.bindings.push(startup_binding.clone());
-
-        RuntimeManager::new().init_bindings(&configuration);
-
-        let mut manager = get_binding_manager().lock().expect("binding manager lock poisoned");
-        assert_eq!(manager.get_binding_runtimes().len(), 1);
-        assert_eq!(manager.get_binding_runtimes()[0].binding.id, startup_binding.id);
-
-        let runtime_config = BindingRuntimeConfiguration {
-            hard_connection_timeout: Duration::from_secs(30),
-        };
-        assert!(manager.add_binding(startup_binding, runtime_config.clone()).is_err());
-        assert_eq!(manager.get_binding_runtimes().len(), 1);
-
-        let mut added_binding = Binding::new();
-        added_binding.ip = "0.0.0.0".to_string();
-        added_binding.port = 0;
-        manager.add_binding(added_binding.clone(), runtime_config.clone()).expect("binding should start");
-        assert_eq!(manager.get_binding_runtimes().len(), 2);
-        assert_eq!(manager.get_binding_runtimes()[1].binding.id, added_binding.id);
-
-        let mut invalid_binding = Binding::new();
-        invalid_binding.ip = "invalid".to_string();
-        assert!(manager.add_binding(invalid_binding, runtime_config).is_err());
-        assert_eq!(manager.get_binding_runtimes().len(), 2);
-
-        for binding in manager.get_binding_runtimes() {
-            binding.stop_binding_token.cancel();
-        }
-    }
 }

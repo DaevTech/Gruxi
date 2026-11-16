@@ -1,6 +1,6 @@
 use crate::core::running_state_manager::get_running_state_manager;
+use crate::debug;
 use crate::file::file_reader_cache::CACHE_404_MAX_SIZE;
-use crate::{debug, trace};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::time::Instant;
@@ -34,7 +34,7 @@ impl MonitoringState {
             requests_served_last: AtomicUsize::new(0),    // Updated from monitoring thread
             requests_served_per_sec: AtomicUsize::new(0), // Calculated in monitoring thread
             active_connections: AtomicUsize::new(0),      // Updated from http server
-            server_start_time: Instant::now(), // Server start time is set when the monitoring state is initialized
+            server_start_time: Instant::now(),            // Server start time is set when the monitoring state is initialized
             file_cache: FileCacheStats {
                 enabled: AtomicBool::new(configuration.core.file_cache.is_enabled),
                 current_items: AtomicUsize::new(0),
@@ -98,8 +98,6 @@ impl MonitoringState {
                 monitoring_state.file_cache.enabled.store(file_cache_enabled, Ordering::Relaxed);
                 monitoring_state.file_cache.max_items.store(file_cache_max_items, Ordering::Relaxed);
             }
-
-            trace!("Monitoring data updated with data: {:?}", monitoring_state);
 
             tokio::time::sleep(update_interval).await;
         }

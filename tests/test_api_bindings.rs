@@ -6,6 +6,17 @@ use serde_json::json;
 
 const BINDINGS: &str = "/api/bindings";
 
+#[tokio::test]
+async fn concurrent_client_logins_succeed() {
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..32 {
+        tasks.spawn(ApiClient::login());
+    }
+    while let Some(result) = tasks.join_next().await {
+        result.expect("concurrent login failed");
+    }
+}
+
 async fn create_binding(client: &ApiClient) -> CreatedResource {
     let (guard, response) = CreatedResource::create(client, BINDINGS, binding_payload()).await;
     assert_eq!(response.status, 201, "create failed: {}", response.body);
