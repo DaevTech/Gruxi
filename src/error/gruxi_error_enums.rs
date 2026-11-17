@@ -12,6 +12,14 @@ pub enum GruxiErrorKind {
     GruxiRequest(GruxiRequestError),
     Runtime(GruxiRuntimeError),
     Database(DatabaseError),
+    Site(SiteError),
+}
+
+#[derive(Debug)]
+pub enum SiteError {
+    NotFound,
+    Conflict,
+    Referenced,
 }
 
 #[derive(Debug)]

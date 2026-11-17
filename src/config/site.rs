@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
+use sqlite::Connection;
 use uuid::Uuid;
+
+use crate::error::{
+    gruxi_error::GruxiError,
+    gruxi_error_enums::{DatabaseError, GruxiErrorKind, SiteError},
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HeaderKV {
@@ -85,6 +91,10 @@ impl Site {
             *func = func.trim().to_string();
         }
 
+        for handler in &mut self.request_handlers {
+            *handler = handler.trim().to_string();
+        }
+
         // Trim whitespace from access log file
         self.access_log_file = self.access_log_file.trim().to_string();
 
@@ -101,6 +111,18 @@ impl Site {
 
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
+
+        if self.id.is_empty() || self.id == "." || self.id == ".." || !self.id.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte)) {
+            errors.push("Invalid site id".to_string());
+        }
+
+        if self.hostnames.iter().chain(&self.request_handlers).chain(&self.rewrite_functions).any(|value| value.trim().is_empty() || value.contains(',')) {
+            errors.push("Site lists cannot contain empty values or commas".to_string());
+        }
+
+        if self.extra_headers.iter().any(|header| header.key.contains([',', '=']) || header.value.contains(',')) {
+            errors.push("Extra header keys cannot contain commas or equals signs, and values cannot contain commas".to_string());
+        }
 
         // Validate hostnames
         if self.hostnames.is_empty() {
@@ -209,6 +231,96 @@ impl Site {
         self.rewrite_functions.iter().any(|f| f == func_name)
     }
 
+    pub fn exists(connection: &Connection, id: &str) -> Result<bool, GruxiError> {
+        let query = || -> Result<bool, sqlite::Error> {
+            let mut statement = connection.prepare("SELECT EXISTS(SELECT 1 FROM sites WHERE id = ?)")?;
+            statement.bind((1, id))?;
+            statement.next()?;
+            Ok(statement.read::<i64, _>(0)? != 0)
+        };
+        query().map_err(|e| database_error("Failed to check whether site exists", e))
+    }
+
+    /// Check existence and write on the same connection to keep the operation atomic.
+    pub fn save(&self, connection: &Connection, create: bool) -> Result<(), GruxiError> {
+        site_transaction(connection, || {
+            let exists = Site::exists(connection, &self.id)?;
+            if create && exists {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Site(SiteError::Conflict)));
+            }
+            if !create && !exists {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Site(SiteError::NotFound)));
+            }
+            self.save_to_db(connection).map_err(|e| database_error("Failed to save site", e))
+        })
+    }
+
+    fn save_to_db(&self, connection: &Connection) -> Result<(), sqlite::Error> {
+        let headers = self.extra_headers.iter().map(|header| format!("{}={}", header.key, header.value)).collect::<Vec<_>>().join(",");
+        let hostnames = self.hostnames.join(",");
+        let handlers = self.request_handlers.join(",");
+        let rewrites = self.rewrite_functions.join(",");
+
+        // An update must not delete the row, since that would cascade to binding_sites.
+        let mut statement = connection.prepare(
+            "INSERT INTO sites (id, is_default, is_enabled, hostnames, tls_cert_path, tls_cert_content, \
+             tls_key_path, tls_key_content, request_handlers, rewrite_functions, access_log_enabled, \
+             access_log_file, extra_headers, tls_automatic_enabled, force_tls, force_tls_port, canonical_host) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET \
+             is_default=excluded.is_default, is_enabled=excluded.is_enabled, hostnames=excluded.hostnames, \
+             tls_cert_path=excluded.tls_cert_path, tls_cert_content=excluded.tls_cert_content, \
+             tls_key_path=excluded.tls_key_path, tls_key_content=excluded.tls_key_content, \
+             request_handlers=excluded.request_handlers, rewrite_functions=excluded.rewrite_functions, \
+             access_log_enabled=excluded.access_log_enabled, access_log_file=excluded.access_log_file, \
+             extra_headers=excluded.extra_headers, tls_automatic_enabled=excluded.tls_automatic_enabled, \
+             force_tls=excluded.force_tls, force_tls_port=excluded.force_tls_port, canonical_host=excluded.canonical_host",
+        )?;
+        statement.bind((1, self.id.as_str()))?;
+        statement.bind((2, self.is_default as i64))?;
+        statement.bind((3, self.is_enabled as i64))?;
+        statement.bind((4, hostnames.as_str()))?;
+        statement.bind((5, self.tls_cert_path.as_str()))?;
+        statement.bind((6, self.tls_cert_content.as_str()))?;
+        statement.bind((7, self.tls_key_path.as_str()))?;
+        statement.bind((8, self.tls_key_content.as_str()))?;
+        statement.bind((9, handlers.as_str()))?;
+        statement.bind((10, rewrites.as_str()))?;
+        statement.bind((11, self.access_log_enabled as i64))?;
+        statement.bind((12, self.access_log_file.as_str()))?;
+        statement.bind((13, headers.as_str()))?;
+        statement.bind((14, self.tls_automatic_enabled as i64))?;
+        statement.bind((15, self.force_tls as i64))?;
+        statement.bind((16, self.force_tls_port as i64))?;
+        statement.bind((17, self.canonical_host.as_str()))?;
+        statement.next()?;
+        Ok(())
+    }
+
+    pub fn delete(connection: &Connection, id: &str) -> Result<(), GruxiError> {
+        site_transaction(connection, || {
+            if !Site::exists(connection, id)? {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Site(SiteError::NotFound)));
+            }
+            let referenced = || -> Result<bool, sqlite::Error> {
+                let mut statement = connection.prepare("SELECT EXISTS(SELECT 1 FROM binding_sites WHERE site_id = ?)")?;
+                statement.bind((1, id))?;
+                statement.next()?;
+                Ok(statement.read::<i64, _>(0)? != 0)
+            };
+            if referenced().map_err(|e| database_error("Failed to check site relationships", e))? {
+                return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Site(SiteError::Referenced)));
+            }
+            let delete = || -> Result<(), sqlite::Error> {
+                let mut statement = connection.prepare("DELETE FROM sites WHERE id = ?")?;
+                statement.bind((1, id))?;
+                statement.next()?;
+                Ok(())
+            };
+            delete().map_err(|e| database_error("Failed to delete site", e))
+        })
+    }
+
     pub fn verify_hostname(hostname: &str) -> Result<(), String> {
         let hostname_trimmed = hostname.trim();
 
@@ -247,6 +359,91 @@ impl Site {
 
         Ok(())
     }
+}
+
+fn database_error(context: &str, error: sqlite::Error) -> GruxiError {
+    GruxiError::new(GruxiErrorKind::Database(DatabaseError::QueryFailed), format!("{}: {}", context, error))
+}
+
+fn site_transaction(connection: &Connection, operation: impl FnOnce() -> Result<(), GruxiError>) -> Result<(), GruxiError> {
+    connection.execute("BEGIN IMMEDIATE").map_err(|e| database_error("Failed to begin site transaction", e))?;
+    let result = operation().and_then(|()| connection.execute("COMMIT").map_err(|e| database_error("Failed to commit site transaction", e)));
+    if let Err(error) = result {
+        if let Err(rollback_error) = connection.execute("ROLLBACK") {
+            return Err(database_error(&format!("Failed to roll back site transaction after {:?}: {}", error.kind, error.message), rollback_error));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[test]
+fn test_site_persistence_existence_and_conflicts() {
+    let connection = sqlite::open(":memory:").unwrap();
+    for sql in crate::database::database_schema::DatabaseSchema::new().init_sql {
+        connection.execute(sql).unwrap();
+    }
+
+    let mut site = Site::new();
+    site.id = "quoted'id".to_string();
+    assert!(!Site::exists(&connection, &site.id).unwrap());
+    assert!(matches!(site.save(&connection, false), Err(GruxiError { kind: GruxiErrorKind::Site(SiteError::NotFound), .. })));
+    site.save(&connection, true).unwrap();
+    assert!(Site::exists(&connection, &site.id).unwrap());
+    assert!(matches!(site.save(&connection, true), Err(GruxiError { kind: GruxiErrorKind::Site(SiteError::Conflict), .. })));
+
+    site.hostnames = vec!["changed.example".to_string()];
+    site.save(&connection, false).unwrap();
+    assert_eq!(crate::config::load_configuration::load_sites(&connection).unwrap()[0].hostnames, site.hostnames);
+    Site::delete(&connection, &site.id).unwrap();
+    assert!(!Site::exists(&connection, &site.id).unwrap());
+    assert!(matches!(Site::delete(&connection, &site.id), Err(GruxiError { kind: GruxiErrorKind::Site(SiteError::NotFound), .. })));
+}
+
+#[test]
+fn test_site_validation_storage_constraints() {
+    let mut site = Site::new();
+    for id in ["", ".", "..", "bad/id", "bad id"] {
+        site.id = id.to_string();
+        assert!(site.validate().unwrap_err().iter().any(|error| error == "Invalid site id"));
+    }
+
+    site.id = "valid-id".to_string();
+    for (hostnames, handlers, rewrites) in [
+        (vec!["one.example,two.example"], vec![], vec![]),
+        (vec!["example.com"], vec!["  "], vec![]),
+        (vec!["example.com"], vec!["one,two"], vec![]),
+        (vec!["example.com"], vec![], vec!["one,two"]),
+    ] {
+        site.hostnames = hostnames.into_iter().map(str::to_string).collect();
+        site.request_handlers = handlers.into_iter().map(str::to_string).collect();
+        site.rewrite_functions = rewrites.into_iter().map(str::to_string).collect();
+        assert!(site.validate().unwrap_err().iter().any(|error| error.contains("Site lists")));
+    }
+
+    site = Site::new();
+    for (key, value) in [("Bad=Key", "value"), ("Bad,Key", "value"), ("Key", "one,two")] {
+        site.extra_headers = vec![HeaderKV { key: key.to_string(), value: value.to_string() }];
+        assert!(site.validate().unwrap_err().iter().any(|error| error.contains("Extra header keys cannot")));
+    }
+}
+
+#[test]
+fn test_site_sanitize_request_handlers() {
+    let mut site = Site::new();
+    site.request_handlers = vec![" handler-id ".to_string()];
+    site.sanitize();
+    assert_eq!(site.request_handlers, vec!["handler-id"]);
+    assert!(site.validate().is_ok());
+}
+
+#[test]
+fn test_configuration_applies_site_storage_validation() {
+    let mut configuration = crate::config::configuration::Configuration::new();
+    let mut site = Site::new();
+    site.id = "invalid/id".to_string();
+    configuration.sites.push(site);
+    assert!(configuration.validate().unwrap_err().iter().any(|error| error == "Site 1: Invalid site id"));
 }
 
 #[test]

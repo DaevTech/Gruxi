@@ -373,7 +373,7 @@ fn load_bindings(connection: &Connection) -> Result<Vec<Binding>, String> {
     Ok(bindings)
 }
 
-fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
+pub(crate) fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
     let mut statement = connection
         .prepare(
             "SELECT id, is_default, is_enabled, hostnames, tls_cert_path, tls_cert_content, tls_key_path, \

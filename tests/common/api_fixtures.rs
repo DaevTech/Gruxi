@@ -66,3 +66,25 @@ pub fn binding_payload() -> Value {
         "protocol": "Tcp",
     })
 }
+
+pub fn site_payload() -> Value {
+    serde_json::json!({
+        "id": uuid::Uuid::new_v4().to_string(),
+        "hostnames": ["example.com"],
+        "is_default": false,
+        "is_enabled": true,
+        "tls_automatic_enabled": false,
+        "tls_cert_path": "",
+        "tls_cert_content": "",
+        "tls_key_path": "",
+        "tls_key_content": "",
+        "rewrite_functions": [],
+        "request_handlers": [],
+        "extra_headers": [],
+        "access_log_enabled": false,
+        "access_log_file": "",
+        "force_tls": false,
+        "force_tls_port": 443,
+        "canonical_host": ""
+    })
+}
