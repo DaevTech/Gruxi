@@ -83,12 +83,12 @@ async fn load_balancer_task<T: LoadBalancerImpl>(mut lb: T, mut rx: mpsc::Receiv
             _ = interval.tick() => {
                 lb.check_health();
             }
-            Some(cmd) = rx.recv() => {
+            cmd = rx.recv() => {
                 match cmd {
-                    LoadBalancerCommand::GetNextServer { respond_to } => {
+                    Some(LoadBalancerCommand::GetNextServer { respond_to }) => {
                         let _ = respond_to.send(lb.get_next_server());
                     }
-                    LoadBalancerCommand::Shutdown => {
+                    Some(LoadBalancerCommand::Shutdown) | None => {
                         break;
                     }
                 }

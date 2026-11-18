@@ -8,6 +8,7 @@ use hyper::StatusCode;
 pub(super) fn change_error(error: GruxiError) -> GruxiResponse {
     match error.kind {
         GruxiErrorKind::Site(SiteError::NotFound) => json_error(StatusCode::NOT_FOUND, "Site not found"),
+        GruxiErrorKind::Site(SiteError::BindingNotFound) => json_error(StatusCode::NOT_FOUND, "Binding not found"),
         GruxiErrorKind::Site(SiteError::Conflict) => json_error(StatusCode::CONFLICT, "Site with same id already exists"),
         GruxiErrorKind::Site(SiteError::Referenced) => json_error(StatusCode::CONFLICT, "Site is referenced by a binding"),
         _ => {

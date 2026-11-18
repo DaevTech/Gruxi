@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    config::site::Site, core::running_state_manager::get_running_state_manager, error::{gruxi_error::GruxiError, gruxi_error_enums::*}, http::{
-        request_handlers::processor_trait::ProcessorTrait,
+    config::site::Site, error::{gruxi_error::GruxiError, gruxi_error_enums::*}, http::{
+        request_handlers::{processor_trait::ProcessorTrait, processors::processor_manager::ProcessorManager},
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     }, runtime::binding_manager::BindingRuntime, trace,
 };
@@ -115,10 +115,7 @@ impl RequestHandler {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, binding_runtime: &BindingRuntime) -> Result<GruxiResponse, GruxiError> {
-
-        let running_state = get_running_state_manager().await.get_running_state();
-        let processor_manager = running_state.get_processor_manager();
+    pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, binding_runtime: &BindingRuntime, processor_manager: &ProcessorManager) -> Result<GruxiResponse, GruxiError> {
 
         // Depending on request handler type, we get the appropriate processor
         let response_result = match self.processor_type.as_str() {
@@ -152,7 +149,7 @@ impl RequestHandler {
                 trace!("Handling request with proxy processor id '{}'", &self.processor_id);
                 let pm_option = processor_manager.get_proxy_processor_by_id(&self.processor_id);
                 match pm_option {
-                    Some(p) => p.handle_request(gruxi_request, site, binding_runtime).await,
+                    Some(p) => p.handle_request_with_manager(gruxi_request, processor_manager).await,
                     None => {
                         return Err(GruxiError::new(
                             GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal),

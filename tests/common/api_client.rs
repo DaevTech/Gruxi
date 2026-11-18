@@ -20,7 +20,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(10);
 static ADMIN_SESSION_TOKEN: OnceCell<String> = OnceCell::const_new();
 
 #[derive(Debug)]
-struct AcceptAllVerifier;
+pub(crate) struct AcceptAllVerifier;
 
 impl ServerCertVerifier for AcceptAllVerifier {
     fn verify_server_cert(&self, _: &CertificateDer<'_>, _: &[CertificateDer<'_>], _: &ServerName<'_>, _: &[u8], _: UnixTime) -> Result<ServerCertVerified, TlsError> {

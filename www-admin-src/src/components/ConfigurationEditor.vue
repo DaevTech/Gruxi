@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { apiFetch } from '../api';
-import { createResourceApi, saveResourceChanges } from '../resourceApi';
+import { createResourceApi, createSiteBindingApi, globalConfiguration, loadEditorResources, saveEditorResources } from '../resourceApi';
 import TagInput from './TagInput.vue';
 
 // Define props
@@ -36,8 +36,13 @@ const successMessage = ref('');
 const originalConfig = ref(null);
 const config = ref(null);
 const bindingApi = createResourceApi('/api/bindings');
+const siteApi = createResourceApi('/api/sites');
+const relationshipApi = createSiteBindingApi();
 const bindings = ref([]);
 const originalBindings = ref([]);
+const siteBindingStates = reactive({});
+const siteBindingRequests = new Map();
+const isLoadingSiteBindings = computed(() => Object.values(siteBindingStates).some((state) => state.loading));
 const copy = (value) => JSON.parse(JSON.stringify(value));
 const suggestedTelemetryToken = ref(Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, '0')).join(''));
 
@@ -76,19 +81,11 @@ const loadConfiguration = async () => {
     error.value = '';
 
     try {
-        const [response, loadedBindings] = await Promise.all([apiFetch('/config', { method: 'GET' }), bindingApi.list()]);
-
-        if (response.ok) {
-            const data = await response.json();
-            if (!Array.isArray(loadedBindings)) throw new Error('Invalid bindings response');
-            delete data.bindings;
-            originalConfig.value = copy(data);
-            config.value = data;
-            bindings.value = loadedBindings;
-            originalBindings.value = copy(loadedBindings);
-        } else {
-            error.value = 'Failed to load configuration';
-        }
+        const loaded = await loadEditorResources(bindingApi, siteApi);
+        originalConfig.value = copy(loaded.config);
+        config.value = loaded.config;
+        bindings.value = loaded.bindings;
+        originalBindings.value = copy(loaded.bindings);
     } catch (err) {
         console.error('Config loading error:', err);
         error.value = `Failed to load configuration: ${err.message}`;
@@ -163,28 +160,51 @@ const saveConfiguration = async () => {
             if (addresses.has(address)) throw new Error(`Duplicate binding for IP/Port combination: ${address}`);
             addresses.add(address);
         }
-        await saveResourceChanges(bindingApi, originalBindings.value, bindings.value, (operation, binding) => {
-            if (operation === 'remove') {
-                originalBindings.value = originalBindings.value.filter((item) => item.id !== binding.id);
-                originalConfig.value.binding_sites = originalConfig.value.binding_sites.filter((relation) => relation.binding_id !== binding.id);
-            } else {
-                const originalIndex = originalBindings.value.findIndex((item) => item.id === binding.id);
-                if (originalIndex === -1) originalBindings.value.push(copy(binding));
-                else originalBindings.value[originalIndex] = copy(binding);
-                const index = bindings.value.findIndex((item) => item.id === binding.id);
-                bindings.value[index] = copy(binding);
-            }
+        await saveEditorResources({
+            bindingApi, siteApi, relationshipApi,
+            originalBindings: originalBindings.value, bindings: bindings.value,
+            originalSites: originalConfig.value.sites, sites: config.value.sites,
+            originalRelationships: originalConfig.value.binding_sites, relationships: config.value.binding_sites,
+            onBindingSaved: (operation, binding) => {
+                if (operation === 'remove') {
+                    originalBindings.value = originalBindings.value.filter((item) => item.id !== binding.id);
+                } else {
+                    const index = originalBindings.value.findIndex((item) => item.id === binding.id);
+                    if (index === -1) originalBindings.value.push(copy(binding));
+                    else originalBindings.value[index] = copy(binding);
+                    const draftIndex = bindings.value.findIndex((item) => item.id === binding.id);
+                    bindings.value[draftIndex] = copy(binding);
+                }
+            },
+            onSiteSaved: (operation, site) => {
+                if (operation === 'remove') {
+                    originalConfig.value.sites = originalConfig.value.sites.filter((item) => item.id !== site.id);
+                } else {
+                    const index = originalConfig.value.sites.findIndex((item) => item.id === site.id);
+                    if (index === -1) originalConfig.value.sites.push(copy(site));
+                    else originalConfig.value.sites[index] = copy(site);
+                    const draftIndex = config.value.sites.findIndex((item) => item.id === site.id);
+                    config.value.sites[draftIndex] = copy(site);
+                }
+            },
+            onRelationshipSaved: (operation, relation) => {
+                if (operation === 'remove') {
+                    originalConfig.value.binding_sites = originalConfig.value.binding_sites.filter((item) => item.site_id !== relation.site_id || item.binding_id !== relation.binding_id);
+                } else {
+                    originalConfig.value.binding_sites.push(copy(relation));
+                }
+            },
         });
 
-        if (JSON.stringify(originalConfig.value) === JSON.stringify(config.value)) {
-            successMessage.value = 'Configuration saved. Reload the configuration if needed to apply site associations.';
+        if (JSON.stringify(globalConfiguration(originalConfig.value)) === JSON.stringify(globalConfiguration(config.value))) {
+            successMessage.value = 'Bindings, sites, and site associations saved and applied.';
             setTimeout(() => { successMessage.value = ''; }, 10000);
             return;
         }
 
         const response = await apiFetch('/config/editor', {
             method: 'POST',
-            body: JSON.stringify({ ...config.value, bindings: [] }),
+            body: JSON.stringify(globalConfiguration(config.value)),
         });
 
         const responseData = await response.json().catch(() => ({}));
@@ -192,9 +212,9 @@ const saveConfiguration = async () => {
         if (response.ok) {
             // Apply the sanitized configuration returned from the server
             if (!responseData.configuration) throw new Error('Server did not return the saved configuration');
-            delete responseData.configuration.bindings;
-            config.value = responseData.configuration;
-            originalConfig.value = copy(responseData.configuration);
+            const saved = globalConfiguration(responseData.configuration);
+            originalConfig.value = { ...copy(saved), sites: originalConfig.value.sites, binding_sites: originalConfig.value.binding_sites };
+            config.value = { ...saved, sites: config.value.sites, binding_sites: config.value.binding_sites };
             successMessage.value = responseData.message || 'Configuration saved successfully!';
             saveErrorMessage.value = ''; // Clear any previous save errors
             saveErrors.value = [];
@@ -249,11 +269,39 @@ const toggleBinding = (bindingIndex) => {
     expandedItems.bindings[bindingIndex] = !expandedItems.bindings[bindingIndex];
 };
 
-const toggleSite = (siteIndex) => {
-    if (!expandedItems.sites[siteIndex]) {
-        expandedItems.sites[siteIndex] = false;
+const loadSiteBindings = (siteId) => {
+    if (siteBindingStates[siteId]?.loaded) return Promise.resolve(true);
+    if (siteBindingRequests.has(siteId)) return siteBindingRequests.get(siteId);
+    if (!originalConfig.value.sites.some((site) => site.id === siteId)) {
+        siteBindingStates[siteId] = { loaded: true, loading: false, error: '' };
+        return Promise.resolve(true);
     }
-    expandedItems.sites[siteIndex] = !expandedItems.sites[siteIndex];
+
+    siteBindingStates[siteId] = { loaded: false, loading: true, error: '' };
+    const request = (async () => {
+        try {
+            const relationships = await relationshipApi.list(siteId);
+            originalConfig.value.binding_sites.push(...copy(relationships));
+            const draftBindings = new Set(bindings.value.map((binding) => binding.id));
+            const removedBindings = new Set(originalBindings.value.filter((binding) => !draftBindings.has(binding.id)).map((binding) => binding.id));
+            config.value.binding_sites.push(...relationships.filter((relation) => !removedBindings.has(relation.binding_id)));
+            siteBindingStates[siteId] = { loaded: true, loading: false, error: '' };
+            return true;
+        } catch (err) {
+            console.error('Site bindings loading error:', err);
+            siteBindingStates[siteId] = { loaded: false, loading: false, error: `Failed to load site bindings: ${err.message}` };
+            return false;
+        } finally {
+            siteBindingRequests.delete(siteId);
+        }
+    })();
+    siteBindingRequests.set(siteId, request);
+    return request;
+};
+
+const toggleSite = (siteId) => {
+    expandedItems.sites[siteId] = !expandedItems.sites[siteId];
+    if (expandedItems.sites[siteId]) loadSiteBindings(siteId);
 };
 
 const togglePhpCgiHandler = (handlerIndex) => {
@@ -276,8 +324,8 @@ const isBindingExpanded = (bindingIndex) => {
     return expandedItems.bindings[bindingIndex] || false;
 };
 
-const isSiteExpanded = (siteIndex) => {
-    return expandedItems.sites[siteIndex] || false;
+const isSiteExpanded = (siteId) => {
+    return expandedItems.sites[siteId] || false;
 };
 
 const isPhpCgiHandlerExpanded = (handlerIndex) => {
@@ -458,15 +506,18 @@ const addSite = () => {
 };
 
 // Remove site
-const removeSite = (index) => {
-    if (config.value.sites && config.value.sites.length > index) {
-        const siteId = config.value.sites[index].id;
+const removeSite = async (siteId) => {
+    expandedItems.sites[siteId] = true;
+    if (await loadSiteBindings(siteId)) {
+        const index = config.value.sites.findIndex((site) => site.id === siteId);
+        if (index === -1) return;
         config.value.sites.splice(index, 1);
         // Remove associated binding_sites relationships
         if (!config.value.binding_sites) {
             config.value.binding_sites = [];
         }
         config.value.binding_sites = config.value.binding_sites.filter((bs) => bs.site_id !== siteId);
+        delete expandedItems.sites[siteId];
     }
 };
 
@@ -792,11 +843,11 @@ onMounted(() => {
         <div v-if="!inline" class="config-header">
             <h2>Configuration Editor</h2>
             <div class="config-actions">
-                <button @click="saveConfiguration" class="save-button" :disabled="isSaving || isLoading || !config">
+                <button @click="saveConfiguration" class="save-button" :disabled="isSaving || isLoading || isLoadingSiteBindings || !config">
                     <span v-if="isSaving">Saving...</span>
                     <span v-else>Save Configuration</span>
                 </button>
-                <button v-if="hasUnsavedChanges" @click="resetChanges" class="reset-button" :disabled="isSaving">Reset Changes</button>
+                <button v-if="hasUnsavedChanges" @click="resetChanges" class="reset-button" :disabled="isSaving || isLoadingSiteBindings">Reset Changes</button>
                 <button @click="showReloadConfirmation" class="reload-button" :disabled="isReloading || isSaving">
                     <span v-if="isReloading">Reloading...</span>
                     <span v-else>Reload Configuration</span>
@@ -833,7 +884,7 @@ onMounted(() => {
                     <li v-for="(err, idx) in saveErrors" :key="idx">{{ err }}</li>
                 </ul>
                 <p v-if="saveErrorMessage">{{ saveErrorMessage }}</p>
-                <p class="error-help">Some binding changes may already have been saved. Review the errors before retrying.</p>
+                <p class="error-help">Some binding, site, or association changes may already have been saved. Review the errors before retrying.</p>
             </div>
 
             <!-- Success message -->
@@ -850,11 +901,11 @@ onMounted(() => {
             <!-- Top Actions for Inline Mode -->
             <div v-if="inline" class="top-actions">
                 <div class="top-buttons">
-                    <button @click="saveConfiguration" class="save-button top" :disabled="isSaving">
+                    <button @click="saveConfiguration" class="save-button top" :disabled="isSaving || isLoadingSiteBindings">
                         <span v-if="isSaving">Saving...</span>
                         <span v-else>Save Configuration</span>
                     </button>
-                    <button v-if="hasUnsavedChanges" @click="resetChanges" class="reset-button top" :disabled="isSaving">Reset Changes</button>
+                    <button v-if="hasUnsavedChanges" @click="resetChanges" class="reset-button top" :disabled="isSaving || isLoadingSiteBindings">Reset Changes</button>
                     <button @click="showReloadConfirmation" class="reload-button top" :disabled="isReloading || isSaving">
                         <span v-if="isReloading">Reloading...</span>
                         <span v-else>Reload Config</span>
@@ -944,19 +995,19 @@ onMounted(() => {
 
                     <!-- Sites List -->
                     <div v-for="(site, siteIndex) in config.sites" :key="site.id" class="server-item">
-                        <div class="item-header compact" @click="toggleSite(siteIndex)">
+                        <div class="item-header compact" @click="toggleSite(site.id)">
                             <div class="header-left">
-                                <span class="section-icon" :class="{ expanded: isSiteExpanded(siteIndex) }">▶</span>
+                                <span class="section-icon" :class="{ expanded: isSiteExpanded(site.id) }">▶</span>
                                 <span class="hierarchy-indicator site-indicator">🌐</span>
                                 <h4 class="site-hostname-title">{{ site.hostnames.join(' - ') || 'No hostnames' }}</h4>
                                 <span v-if="site.is_default" class="default-badge">DEFAULT</span>
                                 <span v-if="!site.is_enabled" class="admin-badge">DISABLED</span>
                             </div>
-                            <button @click.stop="removeSite(siteIndex)" class="remove-button compact" :disabled="config.sites.length === 1">Remove</button>
+                            <button @click.stop="removeSite(site.id)" class="remove-button compact" :disabled="config.sites.length === 1">Remove</button>
                         </div>
 
                         <!-- Site Content -->
-                        <div v-if="isSiteExpanded(siteIndex)" class="item-content">
+                        <div v-if="isSiteExpanded(site.id)" class="item-content">
                             <div class="form-grid compact">
                                 <div class="form-field checkbox-grid compact">
                                     <label>
@@ -973,7 +1024,12 @@ onMounted(() => {
                             </div>
 
                             <!-- Associated Network Bindings -->
-                            <div class="form-grid compact">
+                            <div v-if="siteBindingStates[site.id]?.loading" class="form-grid compact">Loading site bindings...</div>
+                            <div v-else-if="siteBindingStates[site.id]?.error" class="form-error-message">
+                                {{ siteBindingStates[site.id].error }}
+                                <button @click="loadSiteBindings(site.id)" class="retry-button">Retry</button>
+                            </div>
+                            <div v-else-if="siteBindingStates[site.id]?.loaded" class="form-grid compact">
                                 <div class="form-field checkbox-grid compact">
                                     <span>Listen on:</span>
                                     <label v-for="binding in getAvailableBindings()" :key="binding.id">
@@ -983,7 +1039,7 @@ onMounted(() => {
                                 </div>
                             </div>
 
-                            <div v-if="getSiteBindings(site.id).length === 0" class="form-grid compact">
+                            <div v-if="siteBindingStates[site.id]?.loaded && getSiteBindings(site.id).length === 0" class="form-grid compact">
                                 <div class="form-field">
                                     <div class="empty-association-warning-inline">⚠️ This site is not associated with any bindings and will not be accessible.</div>
                                 </div>

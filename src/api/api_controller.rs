@@ -1,4 +1,5 @@
 use crate::api::bindings::*;
+use crate::api::sites::bindings::site_bindings;
 use crate::api::sites::*;
 use crate::api::common::no_route_matched;
 use crate::error::gruxi_error::GruxiError;
@@ -32,6 +33,10 @@ pub async fn handle_routes(gruxi_request: &mut GruxiRequest, path: &str) -> Resu
     }
 
     if path == "/api/sites" || path.starts_with("/api/sites/") {
+        let segments: Vec<_> = path.split('/').collect();
+        if segments.len() >= 5 && segments[4] == "bindings" {
+            return site_bindings::handle(&segments, method).await;
+        }
         return match method {
             "GET" => get_sites::handle(gruxi_request).await,
             "POST" => create_site::handle(gruxi_request).await,

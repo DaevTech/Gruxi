@@ -11,6 +11,7 @@ use crate::error::{
 };
 
 use crate::http::handle_request::handle_request;
+use crate::runtime::site_manager::get_site_manager;
 use crate::http::http_util::add_standard_headers_to_response;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
@@ -56,12 +57,13 @@ pub fn create_tcp_listener_with_retry(ip: IpAddr, port: u16) -> Result<TcpListen
     }
 }
 
-pub async fn tcp_connection_handler(binding_runtime: Arc<BindingRuntime>) {
+pub async fn tcp_connection_handler(binding_runtime: Arc<BindingRuntime>, listener: Arc<TcpListener>) {
     let should_increment_connections_in_queue = !binding_runtime.binding.is_admin && !binding_runtime.binding.is_telemetry;
 
     if binding_runtime.binding.is_tls {
+        let mut site_changes = get_site_manager().subscribe_changes();
         // Build unified TLS acceptor that handles both ACME and manual certificates
-        let tls_acceptor = match build_unified_tls_acceptor(&binding_runtime.binding).await {
+        let mut tls_acceptor = match build_unified_tls_acceptor(&binding_runtime.binding).await {
             Ok(result) => result,
             Err(e) => {
                 error!("TLS setup failed for {}:{} => {}", binding_runtime.binding.ip, binding_runtime.binding.port, e);
@@ -74,12 +76,26 @@ pub async fn tcp_connection_handler(binding_runtime: Arc<BindingRuntime>) {
             let local_binding_runtime = binding_runtime.clone();
 
             select! {
+                biased;
                 _ = local_binding_runtime.stop_binding_token.cancelled() => {
                     trace!("Binding stop signal received, stopping server on {}:{}", binding_runtime.binding.ip, binding_runtime.binding.port);
                     info!("Server stopped on {}:{}", binding_runtime.binding.ip, binding_runtime.binding.port);
                     break;
                 },
-                result = binding_runtime.tcp_listener.as_ref().unwrap().accept() => {
+                changed = site_changes.changed() => {
+                    if changed.is_err() {
+                        error!("Site change notifications stopped for binding {}", binding_runtime.binding.id);
+                        break;
+                    }
+                    match build_unified_tls_acceptor(&binding_runtime.binding).await {
+                        Ok(acceptor) => tls_acceptor = acceptor,
+                        Err(e) => {
+                            error!("TLS refresh failed for {}:{}: {}", binding_runtime.binding.ip, binding_runtime.binding.port, e);
+                            break;
+                        }
+                    }
+                },
+                result = listener.accept() => {
                     match result {
                         Ok((tcp_stream, _)) => {
                             let remote_socket = tcp_stream.peer_addr();
@@ -123,12 +139,13 @@ pub async fn tcp_connection_handler(binding_runtime: Arc<BindingRuntime>) {
             let local_binding_runtime = binding_runtime.clone();
 
             select! {
+                biased;
                 _ = local_binding_runtime.stop_binding_token.cancelled() => {
                     trace!("Binding stop signal received, stopping server on {}:{}", binding_runtime.binding.ip, binding_runtime.binding.port);
                     info!("Server stopped on {}:{}", binding_runtime.binding.ip, binding_runtime.binding.port);
                     break;
                 },
-                result = binding_runtime.tcp_listener.as_ref().unwrap().accept() => {
+                result = listener.accept() => {
                     match result {
                         Ok((tcp_stream, _)) => {
                             let remote_socket = tcp_stream.peer_addr();

@@ -34,8 +34,6 @@ pub fn request_processing_benchmark(c: &mut Criterion) {
     let binding_runtime = BindingRuntime {
         binding: binding,
         config: binding_runtime_configuration,
-        tcp_listener: None,
-        udp_listener: None,
         stop_binding_token: CancellationToken::new(),
         http_builder: HttpAutoBuilder::new(TokioExecutor::new()),
     };

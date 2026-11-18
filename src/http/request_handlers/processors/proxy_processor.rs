@@ -13,6 +13,7 @@ use crate::{
         request_handlers::{
             processor_trait::ProcessorTrait,
             processors::load_balancers::{load_balancer::LoadBalancerImpl, round_robin::RoundRobin},
+            processors::processor_manager::ProcessorManager,
         },
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
     },
@@ -263,11 +264,23 @@ impl ProcessorTrait for ProxyProcessor {
     }
 
     async fn handle_request(&self, gruxi_request: &mut GruxiRequest, _site: &Site, _binding_runtime: &BindingRuntime) -> Result<GruxiResponse, GruxiError> {
-        trace!("ProxyProcessor handling request - {:?}", &self);
-
-        // We determine which upstream server to use based on the load balancing strategy.
         let running_state = get_running_state_manager().await.get_running_state();
-        let processor_manager = running_state.get_processor_manager();
+        let processing = running_state.get_site_processing();
+        self.handle_request_with_manager(gruxi_request, &processing.processors).await
+    }
+
+    fn get_type(&self) -> String {
+        "proxy".to_string()
+    }
+
+    fn get_default_pretty_name(&self) -> String {
+        "Proxy Processor".to_string()
+    }
+}
+
+impl ProxyProcessor {
+    pub async fn handle_request_with_manager(&self, gruxi_request: &mut GruxiRequest, processor_manager: &ProcessorManager) -> Result<GruxiResponse, GruxiError> {
+        trace!("ProxyProcessor handling request - {:?}", &self);
 
         let server_to_handle_request_option = processor_manager.load_balancer_registry.get_next_server(self.id.as_str()).await;
         let server_to_handle_request = match server_to_handle_request_option {
@@ -295,6 +308,7 @@ impl ProcessorTrait for ProxyProcessor {
         };
 
         // Get the client appropriate for TLS verification settings
+        let running_state = get_running_state_manager().await.get_running_state();
         let client = running_state.get_http_client().get_client(self.verify_tls_certificates);
 
         // Get the client-side upgrade on the request side
@@ -409,11 +423,4 @@ impl ProcessorTrait for ProxyProcessor {
         }
     }
 
-    fn get_type(&self) -> String {
-        "proxy".to_string()
-    }
-
-    fn get_default_pretty_name(&self) -> String {
-        "Proxy Processor".to_string()
-    }
 }

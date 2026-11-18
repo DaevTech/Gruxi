@@ -1,4 +1,8 @@
 use crate::config::cached_configuration::get_cached_configuration;
+use crate::config::request_handler::RequestHandler;
+use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
+use arc_swap::{ArcSwap, Guard};
+use std::{collections::HashSet, sync::Arc};
 use crate::logging::access_logging::AccessLogBuffer;
 use crate::{
     compression::compression_cache::CompressionCache,
@@ -8,7 +12,6 @@ use crate::{
     http::{
         client::http_client::HttpClient,
         request_handlers::{processors::processor_manager::ProcessorManager, request_handler_manager::RequestHandlerManager},
-        site_match::binding_site_cache::BindingSiteCache,
     },
     logging::log_rotation::LogRotation,
 };
@@ -16,13 +19,19 @@ use crate::{
 pub struct RunningState {
     access_log_buffer: std::sync::Arc<AccessLogBuffer>,
     file_reader_cache: FileReaderCache,
-    request_handler_manager: RequestHandlerManager,
-    processor_manager: ProcessorManager,
+    site_processing: ArcSwap<SiteProcessing>,
+    processing_refresh: tokio::sync::Mutex<()>,
+    generated_handlers: Vec<RequestHandler>,
+    generated_static: Vec<StaticFileProcessor>,
     external_system_handler: ExternalSystemHandler,
     http_client: HttpClient,
-    binding_site_cache: BindingSiteCache,
     log_rotation: LogRotation,
     compression_cache: CompressionCache,
+}
+
+pub struct SiteProcessing {
+    pub request_handlers: RequestHandlerManager,
+    pub processors: ProcessorManager,
 }
 
 impl RunningState {
@@ -52,14 +61,16 @@ impl RunningState {
         let processor_manager = ProcessorManager::new().await;
         debug!("Processor manager initialized");
 
+        let generated_binding_ids: HashSet<_> = config.bindings.iter().filter(|binding| binding.is_admin || binding.is_telemetry).map(|binding| &binding.id).collect();
+        let generated_site_ids: HashSet<_> = config.binding_sites.iter().filter(|relation| generated_binding_ids.contains(&relation.binding_id)).map(|relation| &relation.site_id).collect();
+        let generated_handler_ids: HashSet<_> = config.sites.iter().filter(|site| generated_site_ids.contains(&site.id)).flat_map(|site| site.request_handlers.iter()).collect();
+        let generated_handlers: Vec<_> = config.request_handlers.iter().filter(|handler| generated_handler_ids.contains(&handler.id)).cloned().collect();
+        let generated_static_ids: HashSet<_> = generated_handlers.iter().filter(|handler| handler.processor_type == "static").map(|handler| &handler.processor_id).collect();
+        let generated_static = config.static_file_processors.iter().filter(|processor| generated_static_ids.contains(&processor.id)).cloned().collect();
+
         // Initialize http clients
         let http_client = HttpClient::new();
         debug!("HTTP client initialized");
-
-        // Start binding site cache
-        let mut binding_site_cache = BindingSiteCache::new();
-        binding_site_cache.init();
-        debug!("Binding <> site cache initialized");
 
         // Start log rotation manager
         let log_rotation = LogRotation::new().await;
@@ -71,11 +82,12 @@ impl RunningState {
         RunningState {
             access_log_buffer,
             file_reader_cache,
-            request_handler_manager,
-            processor_manager,
+            site_processing: ArcSwap::from_pointee(SiteProcessing { request_handlers: request_handler_manager, processors: processor_manager }),
+            processing_refresh: tokio::sync::Mutex::new(()),
+            generated_handlers,
+            generated_static,
             external_system_handler,
             http_client,
-            binding_site_cache,
             log_rotation,
             compression_cache,
         }
@@ -89,12 +101,17 @@ impl RunningState {
         &self.file_reader_cache
     }
 
-    pub fn get_request_handler_manager(&self) -> &RequestHandlerManager {
-        &self.request_handler_manager
+    pub fn get_site_processing(&self) -> Guard<Arc<SiteProcessing>> {
+        self.site_processing.load()
     }
 
-    pub fn get_processor_manager(&self) -> &ProcessorManager {
-        &self.processor_manager
+    pub async fn refresh_site_processing(&self) -> Result<(), String> {
+        let _refresh = self.processing_refresh.lock().await;
+        let config = crate::config::load_configuration::fetch_configuration_in_db()?;
+        let request_handlers = RequestHandlerManager::from_handlers(config.request_handlers.iter().chain(&self.generated_handlers));
+        let processors = ProcessorManager::from_configuration(&config, &self.generated_static).await;
+        self.site_processing.store(Arc::new(SiteProcessing { request_handlers, processors }));
+        Ok(())
     }
 
     pub fn get_external_system_handler(&self) -> &ExternalSystemHandler {
@@ -103,10 +120,6 @@ impl RunningState {
 
     pub fn get_http_client(&self) -> &HttpClient {
         &self.http_client
-    }
-
-    pub fn get_binding_site_cache(&self) -> &BindingSiteCache {
-        &self.binding_site_cache
     }
 
     pub fn get_log_rotation(&self) -> &LogRotation {

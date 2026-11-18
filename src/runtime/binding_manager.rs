@@ -7,14 +7,16 @@ use crate::http::tcp_listener::{create_tcp_listener_with_retry, tcp_connection_h
 use crate::{config::binding::Binding, error::gruxi_error::GruxiError, info};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{net::SocketAddr, sync::OnceLock};
-use tokio::net::{TcpListener, UdpSocket};
+use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 pub struct BindingManager {
     binding_runtimes: Vec<Arc<BindingRuntime>>,
+    tcp_listeners: HashMap<String, Arc<TcpListener>>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,81 +46,72 @@ impl BindingRuntimeConfiguration {
 pub struct BindingRuntime {
     pub binding: Binding,
     pub config: BindingRuntimeConfiguration,
-    pub tcp_listener: Option<TcpListener>,
-    pub udp_listener: Option<UdpSocket>,
     pub stop_binding_token: CancellationToken,
     pub http_builder: Builder<TokioExecutor>,
 }
 
 impl BindingManager {
     pub fn new() -> Self {
-        Self { binding_runtimes: Vec::new() }
+        Self { binding_runtimes: Vec::new(), tcp_listeners: HashMap::new() }
     }
 
     pub fn remove_binding(&mut self, binding_id: &str) {
         if let Some(b_index) = self.binding_runtimes.iter().position(|b| b.binding.id == binding_id) {
             let binding_to_be_removed = &self.binding_runtimes.remove(b_index);
             binding_to_be_removed.stop_binding_token.cancel();
+            self.tcp_listeners.remove(binding_id);
         }
     }
 
     pub fn add_binding(&mut self, binding: Binding, config: BindingRuntimeConfiguration) -> Result<(), GruxiError> {
-        // Check if an existing binding with that id exist, if so, we stop the current one and start the new like a fresh one
-        let _removed = &self.remove_binding(&binding.id);
+        let existing = self.binding_runtimes.iter().find(|runtime| runtime.binding.id == binding.id);
+        let listener = if existing.is_some_and(|runtime| {
+            runtime.binding.ip == binding.ip && runtime.binding.port == binding.port && runtime.binding.protocol == binding.protocol
+        }) {
+            self.tcp_listeners.get(&binding.id).cloned()
+        } else {
+            None
+        };
+        let listener = match listener {
+            Some(listener) => listener,
+            None => Arc::new(self.start_binding(&binding)?),
+        };
 
-        let mut binding_runtime = BindingRuntime {
+        self.remove_binding(&binding.id);
+        let binding_runtime = BindingRuntime {
             binding: binding,
             config: config,
-            tcp_listener: None,
-            udp_listener: None,
             stop_binding_token: CancellationToken::new(),
             http_builder: Builder::new(TokioExecutor::new()),
         };
-
-        // We start it before adding it to the list, and if fail, we return the error
-        match self.start_binding(&mut binding_runtime) {
-            Ok(_) => (),
-            Err(e) => {
-                error!("Failed to start binding {}: {:?}", &binding_runtime.binding.ip, e);
-                return Err(e);
-            }
-        };
-
         let arc_binding_runtime = Arc::new(binding_runtime);
-
-        // Start connection handler for the binding if it's TCP
-        if let Protocol::Tcp = arc_binding_runtime.binding.protocol {
-            if let Some(_) = &arc_binding_runtime.tcp_listener {
-                tokio::spawn(tcp_connection_handler(arc_binding_runtime.clone()));
-            }
-        }
-
+        tokio::spawn(tcp_connection_handler(arc_binding_runtime.clone(), listener.clone()));
+        self.tcp_listeners.insert(arc_binding_runtime.binding.id.clone(), listener);
         self.binding_runtimes.push(arc_binding_runtime);
         Ok(())
     }
 
-    fn start_binding(&self, binding_runtime: &mut BindingRuntime) -> Result<(), GruxiError> {
-        let ip_result = binding_runtime.binding.ip.parse::<std::net::IpAddr>();
+    fn start_binding(&self, binding: &Binding) -> Result<TcpListener, GruxiError> {
+        let ip_result = binding.ip.parse::<std::net::IpAddr>();
         let ip = match ip_result {
             Ok(ip_addr) => ip_addr,
             Err(e) => {
-                error!("Invalid IP address for binding {}: {}. Could not start server", binding_runtime.binding.ip, e);
+                error!("Invalid IP address for binding {}: {}. Could not start server", binding.ip, e);
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Runtime(GruxiRuntimeError::BindingError(format!(
                     "Invalid IP address for binding {}: {}",
-                    binding_runtime.binding.ip, e
+                    binding.ip, e
                 )))));
             }
         };
-        let port = binding_runtime.binding.port;
+        let port = binding.port;
         let addr = SocketAddr::new(ip, port);
 
         info!("Starting server on {}", addr);
 
-        match binding_runtime.binding.protocol {
+        match binding.protocol {
             Protocol::Tcp => {
                 // Start TCP listener
-                binding_runtime.tcp_listener = Some(create_tcp_listener_with_retry(ip, port)?);
-                return Ok(());
+                return create_tcp_listener_with_retry(ip, port);
             }
             Protocol::Udp => {
                 // Start UDP listener (for HTTP3)

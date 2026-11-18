@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use crate::config::configuration::Configuration;
 
 use crate::http::request_handlers::processors::{
     load_balancers::load_balancer::LoadBalancerRegistry, php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor,
@@ -17,7 +18,10 @@ impl ProcessorManager {
     pub async fn new() -> Self {
         let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration();
+        Self::from_configuration(&config, &[]).await
+    }
 
+    pub async fn from_configuration(config: &Configuration, generated_static: &[StaticFileProcessor]) -> Self {
         let mut processor_manager = ProcessorManager {
             static_file_processors: HashMap::new(),
             php_processors: HashMap::new(),
@@ -26,7 +30,7 @@ impl ProcessorManager {
         };
 
         // Insert the static file processors from config
-        config.static_file_processors.iter().for_each(|p| {
+        config.static_file_processors.iter().chain(generated_static).for_each(|p| {
             processor_manager.static_file_processors.insert(p.id.clone(), p.clone());
         });
 

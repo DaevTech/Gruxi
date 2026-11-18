@@ -18,6 +18,7 @@ pub enum GruxiErrorKind {
 #[derive(Debug)]
 pub enum SiteError {
     NotFound,
+    BindingNotFound,
     Conflict,
     Referenced,
 }

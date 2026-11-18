@@ -4,6 +4,7 @@ use crate::error::gruxi_error::GruxiError;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::runtime::binding_manager::{BindingRuntimeConfiguration, get_binding_manager};
+use crate::runtime::site_manager::get_site_manager;
 use hyper::StatusCode;
 
 pub async fn handle(gruxi_request: &mut GruxiRequest) -> Result<GruxiResponse, GruxiError> {
@@ -15,6 +16,10 @@ pub async fn handle(gruxi_request: &mut GruxiRequest) -> Result<GruxiResponse, G
         return Ok(json_error(StatusCode::BAD_REQUEST, "Invalid JSON"));
     }
     let binding = binding.unwrap();
+
+    if binding.is_admin || binding.is_telemetry {
+        return Ok(json_error(StatusCode::BAD_REQUEST, "Cannot update admin or telemetry binding"));
+    }
 
     // Validate the content
     if let Err(errors) = binding.validate() {
@@ -36,9 +41,9 @@ pub async fn handle(gruxi_request: &mut GruxiRequest) -> Result<GruxiResponse, G
     };
 
     // Make sure it exist
-    if !current_bindings.iter().any(|b| b.id == binding.id) {
+    let Some(previous) = current_bindings.iter().find(|b| b.id == binding.id) else {
         return Ok(json_error(StatusCode::NOT_FOUND, "Binding not found"));
-    }
+    };
 
     // Save the updated binding to the configuration
     match binding.save() {
@@ -51,13 +56,19 @@ pub async fn handle(gruxi_request: &mut GruxiRequest) -> Result<GruxiResponse, G
     // Restart the binding through the shared binding manager.
     let runtime_config = BindingRuntimeConfiguration::default();
 
-    // We try to add the new binding to the manager and start it, but accept failure
-    match binding_manager.add_binding(binding.clone(), runtime_config) {
-        Ok(_) => {}
-        Err(_) => {
-            // Accept if it fails for whatever reason
-        }
+    if let Err(error) = binding_manager.add_binding(binding.clone(), runtime_config.clone()) {
+        let saved = previous.save();
+        get_site_manager().notify_bindings_changed();
+        let detail = match saved {
+            Ok(()) => "The previous configuration and listener were retained.".to_string(),
+            Err(error) => format!("Failed to restore previous configuration: {:?}", error),
+        };
+        return Ok(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("Failed to start updated binding: {:?}. {}", error, detail),
+        ));
     }
+    get_site_manager().notify_bindings_changed();
 
     Ok(json_response(hyper::StatusCode::OK, &binding))
 }

@@ -27,6 +27,7 @@ impl TokioServiceHandler for GruxiService {
 
         // Start the runtime manager
         let _runtime_manager = get_runtime_manager();
+        crate::tls::shared_acme_manager::start_acme_reconciliation();
 
         // Start the running state, which are all the configuration dependent parts
         let _running_state_manager = get_running_state_manager().await;

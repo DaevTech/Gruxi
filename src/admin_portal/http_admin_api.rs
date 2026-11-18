@@ -1,8 +1,12 @@
 use crate::admin_portal::login_rate_limiter::get_login_rate_limiter;
 use crate::config::cached_configuration::get_cached_configuration;
 use crate::config::configuration::Configuration;
-use crate::config::save_configuration::{save_configuration, save_configuration_preserving_bindings};
+use crate::config::save_configuration::save_configuration_preserving_resources;
 use crate::config::site::Site;
+use crate::config::core::Core;
+use crate::config::request_handler::RequestHandler;
+use crate::external_connections::managed_system::php_cgi::PhpCgi;
+use crate::http::request_handlers::processors::{php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor};
 use crate::core::admin_user::{LoginRequest, Session, authenticate_user, change_user_password, create_session, create_unauthenticated_admin_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
@@ -36,6 +40,48 @@ const ADMIN_SESSION_COOKIE_NAME: &str = "__Host-gruxi_admin_session";
 const ADMIN_CSRF_COOKIE_NAME: &str = "__Host-gruxi_admin_csrf";
 const ADMIN_CSRF_HEADER_NAME: &str = "X-CSRF-Token";
 const ADMIN_COOKIE_MAX_AGE_SECONDS: i64 = 24 * 60 * 60;
+
+#[derive(Serialize, Deserialize)]
+struct AdminConfiguration {
+    version: i32,
+    core: Core,
+    request_handlers: Vec<RequestHandler>,
+    static_file_processors: Vec<StaticFileProcessor>,
+    php_processors: Vec<PHPProcessor>,
+    proxy_processors: Vec<ProxyProcessor>,
+    php_cgi_handlers: Vec<PhpCgi>,
+}
+
+impl From<Configuration> for AdminConfiguration {
+    fn from(config: Configuration) -> Self {
+        Self {
+            version: config.version,
+            core: config.core,
+            request_handlers: config.request_handlers,
+            static_file_processors: config.static_file_processors,
+            php_processors: config.php_processors,
+            proxy_processors: config.proxy_processors,
+            php_cgi_handlers: config.php_cgi_handlers,
+        }
+    }
+}
+
+impl From<AdminConfiguration> for Configuration {
+    fn from(config: AdminConfiguration) -> Self {
+        Self {
+            version: config.version,
+            bindings: Vec::new(),
+            sites: Vec::new(),
+            binding_sites: Vec::new(),
+            core: config.core,
+            request_handlers: config.request_handlers,
+            static_file_processors: config.static_file_processors,
+            php_processors: config.php_processors,
+            proxy_processors: config.proxy_processors,
+            php_cgi_handlers: config.php_cgi_handlers,
+        }
+    }
+}
 
 pub async fn handle_api_routes(gruxi_request: &mut GruxiRequest, site: &Site, _binding_runtime: &Arc<BindingRuntime>) -> Result<GruxiResponse, GruxiError> {
     let path = gruxi_request.get_path();
@@ -264,7 +310,7 @@ pub async fn admin_get_configuration_endpoint(gruxi_request: &mut GruxiRequest, 
         }
     };
 
-    let json_config = match serde_json::to_string_pretty(&config) {
+    let json_config = match serde_json::to_string_pretty(&AdminConfiguration::from(config)) {
         Ok(json) => json,
         Err(e) => {
             error!("Failed to serialize configuration: {}", e);
@@ -354,9 +400,9 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
     }
     let body_bytes = gruxi_request.get_body_bytes().await;
 
-    // Parse JSON body into Configuration struct
-    let mut configuration: Configuration = match serde_json::from_slice(&body_bytes) {
-        Ok(config) => config,
+    // Resource fields from older clients are ignored; only the resource APIs can update them.
+    let mut configuration: Configuration = match serde_json::from_slice::<AdminConfiguration>(&body_bytes) {
+        Ok(config) => config.into(),
         Err(e) => {
             error!("Failed to parse configuration JSON: {}", e);
             let error_response = serde_json::json!({
@@ -371,17 +417,20 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
     };
 
     // Save the configuration
-    let result = if gruxi_request.get_path() == "/config/editor" {
-        save_configuration_preserving_bindings(&mut configuration)
-    } else {
-        save_configuration(&mut configuration, false)
-    };
+    let result = save_configuration_preserving_resources(&mut configuration);
+    if result.is_ok() {
+        let running_state = get_running_state_manager().await.get_running_state();
+        if let Err(error) = running_state.refresh_site_processing().await {
+            error!("Configuration saved, but site processing refresh failed: {}", error);
+            return Ok(crate::api::common::json_error(hyper::StatusCode::INTERNAL_SERVER_ERROR, "Configuration saved, but site processing could not be refreshed"));
+        }
+    }
     match result {
         Ok(true) => {
             info!("Configuration updated successfully");
 
             // Serialize the sanitized configuration to return to the client
-            let config_json = match serde_json::to_value(&configuration) {
+            let config_json = match serde_json::to_value(AdminConfiguration::from(configuration)) {
                 Ok(json) => json,
                 Err(e) => {
                     error!("Failed to serialize updated configuration: {}", e);
@@ -395,9 +444,10 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
                 }
             };
 
+            let message = "Configuration saved. Site processor changes are applied; other settings may require a restart.";
             let success_response = serde_json::json!({
                 "success": true,
-                "message": "Configuration updated successfully. Please restart the server for changes to take effect.",
+                "message": message,
                 "configuration": config_json
             });
 
@@ -409,7 +459,7 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
             info!("Configuration save requested, but no changes detected");
 
             // Even if no changes were made, return the current configuration
-            let config_json = match serde_json::to_value(&configuration) {
+            let config_json = match serde_json::to_value(AdminConfiguration::from(configuration)) {
                 Ok(json) => json,
                 Err(e) => {
                     error!("Failed to serialize configuration: {}", e);

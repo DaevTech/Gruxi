@@ -113,13 +113,10 @@ impl Binding {
     }
 
     fn save_to_db(&self, connection: &Connection) -> Result<(), sqlite::Error> {
-        // Delete any existing binding with the same ID to avoid duplicates
-        let mut delete_statement = connection.prepare("DELETE FROM bindings WHERE id = ?")?;
-        delete_statement.bind((1, self.id.as_str()))?;
-        delete_statement.next()?;
-
-        // Insert the binding into the database
-        let mut insert_statement = connection.prepare("INSERT INTO bindings (id, ip, port, is_tls, protocol) VALUES (?, ?, ?, ?, ?)")?;
+        let mut insert_statement = connection.prepare(
+            "INSERT INTO bindings (id, ip, port, is_tls, protocol) VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET ip=excluded.ip, port=excluded.port, is_tls=excluded.is_tls, protocol=excluded.protocol",
+        )?;
         insert_statement.bind((1, self.id.as_str()))?;
         insert_statement.bind((2, self.ip.as_str()))?;
         insert_statement.bind((3, self.port as i64))?;
@@ -159,5 +156,32 @@ impl Binding {
         statement.bind((1, self.id.as_str()))?;
         statement.next()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::database_schema::DatabaseSchema;
+
+    #[test]
+    fn updating_binding_preserves_site_relationships() {
+        let connection = sqlite::open(":memory:").unwrap();
+        connection.execute("PRAGMA foreign_keys=ON").unwrap();
+        for sql in DatabaseSchema::new().init_sql {
+            connection.execute(sql).unwrap();
+        }
+        let mut binding = Binding::new();
+        binding.save_to_db(&connection).unwrap();
+        connection.execute("INSERT INTO sites (id) VALUES ('site-1')").unwrap();
+        let mut statement = connection.prepare("INSERT INTO binding_sites (binding_id, site_id) VALUES (?, 'site-1')").unwrap();
+        statement.bind((1, binding.id.as_str())).unwrap();
+        statement.next().unwrap();
+        drop(statement);
+        binding.port = 8080;
+        binding.save_to_db(&connection).unwrap();
+        let mut statement = connection.prepare("SELECT b.port FROM bindings b JOIN binding_sites bs ON b.id = bs.binding_id WHERE bs.site_id = 'site-1'").unwrap();
+        assert_eq!(statement.next().unwrap(), sqlite::State::Row);
+        assert_eq!(statement.read::<i64, _>(0).unwrap(), 8080);
     }
 }

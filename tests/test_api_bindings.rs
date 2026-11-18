@@ -132,6 +132,18 @@ async fn update_binding_persists_changes() {
 }
 
 #[tokio::test]
+async fn update_binding_on_same_socket_remains_reachable() {
+    let client = ApiClient::login().await;
+    let created = create_binding(&client).await;
+    let mut updated = created.payload.clone();
+    updated["is_tls"] = json!(true);
+    let response = client.put(BINDINGS, Some(&updated)).await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    let port = updated["port"].as_u64().unwrap() as u16;
+    assert!(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok());
+}
+
+#[tokio::test]
 async fn update_binding_unknown_id_returns_not_found() {
     let client = ApiClient::login().await;
     let response = client.put(BINDINGS, Some(&binding_payload())).await;
@@ -150,6 +162,27 @@ async fn update_binding_rejects_invalid_json_and_values() {
     invalid["port"] = json!(0);
     let response = client.put(BINDINGS, Some(&invalid)).await;
     assert_eq!(response.status, 400);
+}
+
+#[tokio::test]
+async fn unavailable_listener_is_reported_and_previous_binding_is_restored() {
+    let client = ApiClient::login().await;
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let occupied_port = occupied.local_addr().unwrap().port();
+    let mut payload = binding_payload();
+    payload["port"] = json!(occupied_port);
+    let response = client.post(BINDINGS, Some(&payload)).await;
+    assert_eq!(response.status, 500, "{}", response.body);
+    assert_eq!(client.get(&format!("{}/{}", BINDINGS, payload["id"].as_str().unwrap())).await.status, 404);
+
+    let existing = create_binding(&client).await;
+    let mut updated = existing.payload.clone();
+    updated["port"] = json!(occupied_port);
+    let response = client.put(BINDINGS, Some(&updated)).await;
+    assert_eq!(response.status, 500, "{}", response.body);
+    assert_eq!(client.get(existing.path()).await.json, existing.payload);
+    let port = existing.payload["port"].as_u64().unwrap() as u16;
+    assert!(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok());
 }
 
 // ---------- delete ----------

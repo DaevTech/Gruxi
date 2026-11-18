@@ -21,16 +21,21 @@ pub fn save_configuration(config: &mut Configuration, force: bool) -> Result<boo
     save_configuration_inner(config, force, false)
 }
 
-pub fn save_configuration_preserving_bindings(config: &mut Configuration) -> Result<bool, Vec<String>> {
-    // Serialize editor saves with the binding API while reading and saving its state.
-    let manager = crate::runtime::binding_manager::get_binding_manager()
+pub fn save_configuration_preserving_resources(config: &mut Configuration) -> Result<bool, Vec<String>> {
+    // Keep the lock order consistent with binding deletion.
+    let _bindings = crate::runtime::binding_manager::get_binding_manager()
         .lock()
         .map_err(|_| vec!["Binding manager lock poisoned".to_string()])?;
-    config.bindings = manager.get_configuration_bindings().map_err(|e| vec![format!("Failed to load bindings: {:?}", e)])?;
+    let _sites = crate::runtime::site_manager::get_site_manager()
+        .sites.lock().map_err(|_| vec!["Site manager lock poisoned".to_string()])?;
+    let current = fetch_configuration_in_db().map_err(|e| vec![format!("Failed to load API-managed resources: {}", e)])?;
+    config.bindings = current.bindings;
+    config.sites = current.sites;
+    config.binding_sites = current.binding_sites;
     save_configuration_inner(config, false, true)
 }
 
-fn save_configuration_inner(config: &mut Configuration, force: bool, preserve_bindings: bool) -> Result<bool, Vec<String>> {
+fn save_configuration_inner(config: &mut Configuration, force: bool, preserve_resources: bool) -> Result<bool, Vec<String>> {
     // First, we sanitize the configuration
     config.sanitize();
 
@@ -71,7 +76,7 @@ fn save_configuration_inner(config: &mut Configuration, force: bool, preserve_bi
     save_core_config(&connection, &config.core).map_err(|e| vec![format!("Failed to save core configuration: {}", e)])?;
 
     // Clear and re-insert all bindings (simpler than update/delete logic)
-    if !preserve_bindings {
+    if !preserve_resources {
         connection.execute("DELETE FROM bindings").map_err(|e| vec![format!("Failed to clear existing bindings: {}", e)])?;
 
         for binding in &config.bindings {
@@ -79,26 +84,22 @@ fn save_configuration_inner(config: &mut Configuration, force: bool, preserve_bi
         }
     }
 
-    // Clear and re-insert all sites (simpler than update/delete logic)
-    connection.execute("DELETE FROM sites").map_err(|e| vec![format!("Failed to clear existing sites: {}", e)])?;
-
-    for site in &config.sites {
-        save_site(&connection, site).map_err(|e| vec![format!("Failed to save site: {}", e)])?;
-    }
-
-    // Save the binding-site relationships
-    // First, clear existing relationships
-    connection
-        .execute("DELETE FROM binding_sites")
-        .map_err(|e| vec![format!("Failed to clear existing binding-site relationships: {}", e)])?;
-
-    for relationship in &config.binding_sites {
+    if !preserve_resources {
+        connection.execute("DELETE FROM sites").map_err(|e| vec![format!("Failed to clear existing sites: {}", e)])?;
+        for site in &config.sites {
+            save_site(&connection, site).map_err(|e| vec![format!("Failed to save site: {}", e)])?;
+        }
         connection
-            .execute(format!(
-                "INSERT INTO binding_sites (binding_id, site_id) VALUES ('{}', '{}')",
-                relationship.binding_id, relationship.site_id
-            ))
-            .map_err(|e| vec![format!("Failed to insert binding-site relationship: {}", e)])?;
+            .execute("DELETE FROM binding_sites")
+            .map_err(|e| vec![format!("Failed to clear existing binding-site relationships: {}", e)])?;
+        for relationship in &config.binding_sites {
+            connection
+                .execute(format!(
+                    "INSERT INTO binding_sites (binding_id, site_id) VALUES ('{}', '{}')",
+                    relationship.binding_id, relationship.site_id
+                ))
+                .map_err(|e| vec![format!("Failed to insert binding-site relationship: {}", e)])?;
+        }
     }
 
     // Save request handlers, but clear existing one first

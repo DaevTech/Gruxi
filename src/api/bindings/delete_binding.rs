@@ -3,6 +3,7 @@ use crate::error::gruxi_error::GruxiError;
 use crate::http::request_response::gruxi_request::GruxiRequest;
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::runtime::binding_manager::get_binding_manager;
+use crate::runtime::site_manager::get_site_manager;
 use hyper::StatusCode;
 
 pub async fn handle(gruxi_request: &mut GruxiRequest) -> Result<GruxiResponse, GruxiError> {
@@ -32,16 +33,13 @@ pub async fn handle(gruxi_request: &mut GruxiRequest) -> Result<GruxiResponse, G
     }
     let binding = current_bindings.iter().find(|b| b.id == binding_id).unwrap();
 
-    // We remove the binding from the manager first to stop it from running
-    binding_manager.remove_binding(&binding.id);
-
-    // Now we delete the binding from the configuration/database
-    match binding.delete() {
+    match get_site_manager().delete_binding(binding) {
         Ok(_) => {}
         Err(e) => {
             return Ok(json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Failed to delete binding with id {}: {:?}", &binding.id, e)));
         }
     }
 
+    binding_manager.remove_binding(&binding.id);
     Ok(json_error(StatusCode::OK, "Binding deleted successfully"))
 }

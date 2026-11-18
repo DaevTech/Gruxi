@@ -122,8 +122,8 @@ pub async fn handle_request(mut gruxi_request: GruxiRequest, binding_runtime: Ar
         }
 
         // Now we let the request handler manager process the request in the order defined by the site's request_handlers list.
-        let request_handler_manager = running_state.get_request_handler_manager();
-        let response_result = request_handler_manager.handle_request(&mut gruxi_request, site, binding_runtime).await;
+        let processing = running_state.get_site_processing();
+        let response_result = processing.request_handlers.handle_request(&mut gruxi_request, site, binding_runtime, &processing.processors).await;
         if response_result.is_err() {
             trace!("No request handler matched for URL path: {}", &gruxi_request.get_path_and_query());
             return Ok(GruxiResponse::new_empty_with_status(hyper::StatusCode::NOT_FOUND.as_u16()));

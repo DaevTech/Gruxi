@@ -1,10 +1,11 @@
-use crate::core::running_state_manager::get_running_state_manager;
+use crate::runtime::site_manager::{get_site_manager, SiteRuntime};
 use crate::file::app_paths::get_app_paths;
 use crate::tls::shared_acme_manager::{get_acme_resolver_for_host, is_acme_configured};
 use crate::{debug, error, warn};
 use rustls::crypto::aws_lc_rs;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::BufReader;
+use std::collections::HashSet;
 use std::path::Path;
 use tls_listener::rustls as tokio_rustls;
 use tokio::fs;
@@ -17,10 +18,12 @@ use tokio_rustls::rustls::{self, ServerConfig as RustlsServerConfig};
 
 use crate::config::binding::Binding;
 use crate::config::site::Site;
-use crate::core::database_connection::get_database_connection;
+use std::sync::Arc;
+
+static CERT_BUILD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 // Persist generated cert/key to disk and update configuration for a specific site
-pub async fn persist_generated_tls_for_site(site: &Site, cert_pem: &str, key_pem: &str, is_admin: bool) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn persist_generated_tls_for_site(site: &Arc<SiteRuntime>, cert_pem: &str, key_pem: &str, is_admin: bool) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
     // Ensure target directory exists with appropriate permissions
     let app_paths = get_app_paths();
     let dir = app_paths.certificates_dir.display().to_string();
@@ -54,36 +57,7 @@ pub async fn persist_generated_tls_for_site(site: &Site, cert_pem: &str, key_pem
         .await
         .map_err(|e| format!("Failed to rename temp key file '{}' to '{}': {}", key_tmp, key_path, e))?;
 
-    // Update configuration in DB so future runs use persisted files
-    let connection = get_database_connection()?;
-
-    // Update the fields in the database directly using prepared statements
-    if is_admin {
-        // For admin portal, update the configuration table
-        let mut stmt = connection
-            .prepare("UPDATE server_settings SET setting_value = ? WHERE setting_key = 'admin_portal_tls_certificate_path'")
-            .map_err(|e| format!("Failed to prepare admin cert path update: {}", e))?;
-        stmt.bind((1, cert_path.as_str())).map_err(|e| format!("Failed to bind cert path: {}", e))?;
-        stmt.next().map_err(|e| format!("Failed to update admin portal TLS cert path in database: {}", e))?;
-
-        let mut stmt = connection
-            .prepare("UPDATE server_settings SET setting_value = ? WHERE setting_key = 'admin_portal_tls_key_path'")
-            .map_err(|e| format!("Failed to prepare admin key path update: {}", e))?;
-        stmt.bind((1, key_path.as_str())).map_err(|e| format!("Failed to bind key path: {}", e))?;
-        stmt.next().map_err(|e| format!("Failed to update admin portal TLS key path in database: {}", e))?;
-
-        return Ok((cert_path, key_path));
-    } else {
-        // For regular site, update the sites table
-        let mut stmt = connection
-            .prepare("UPDATE sites SET tls_cert_path = ?, tls_key_path = ? WHERE id = ?")
-            .map_err(|e| format!("Failed to prepare site TLS path update: {}", e))?;
-        stmt.bind((1, cert_path.as_str())).map_err(|e| format!("Failed to bind cert path: {}", e))?;
-        stmt.bind((2, key_path.as_str())).map_err(|e| format!("Failed to bind key path: {}", e))?;
-        stmt.bind((3, site.id.as_str())).map_err(|e| format!("Failed to bind site id: {}", e))?;
-        stmt.next().map_err(|e| format!("Failed to update site TLS paths in database: {}", e))?;
-    }
-
+    get_site_manager().record_generated_tls_paths(site, is_admin, &cert_path, &key_path).map_err(|error| format!("Failed to store generated certificate paths: {:?}", error))?;
     Ok((cert_path, key_path))
 }
 
@@ -96,6 +70,7 @@ pub struct UnifiedCertResolver {
     sni_resolver: ResolvesServerCertUsingSni,
     /// Fallback certificate when no SNI match is found
     fallback_cert: Option<std::sync::Arc<RustlsCertifiedKey>>,
+    acme_hosts: HashSet<String>,
 }
 
 impl UnifiedCertResolver {
@@ -103,6 +78,7 @@ impl UnifiedCertResolver {
         Self {
             sni_resolver: ResolvesServerCertUsingSni::new(),
             fallback_cert: None,
+            acme_hosts: HashSet::new(),
         }
     }
 
@@ -121,7 +97,7 @@ impl ResolvesServerCert for UnifiedCertResolver {
         let sni_name = client_hello.server_name().map(|s| s.to_lowercase());
 
         if let Some(ref domain) = sni_name {
-            if let Some(acme_resolver) = get_acme_resolver_for_host(domain) {
+            if self.acme_hosts.contains(domain) && let Some(acme_resolver) = get_acme_resolver_for_host(domain) {
                 // Challenges are answered by the host's own resolver; otherwise serve its certificate if it has one.
                 if let Some(cert) = acme_resolver.resolve(client_hello) {
                     return Some(cert);
@@ -147,18 +123,21 @@ impl ResolvesServerCert for UnifiedCertResolver {
 
 /// Build a unified certificate resolver that handles both ACME and manual certificates.
 pub async fn build_unified_cert_resolver(binding: &Binding) -> Result<UnifiedCertResolver, Box<dyn std::error::Error + Send + Sync>> {
+    let _build = CERT_BUILD_LOCK.lock().await;
     debug!("Building unified cert resolver for {}:{}", binding.ip, binding.port);
 
     let mut resolver = UnifiedCertResolver::new();
     let mut fallback_certificate: Option<std::sync::Arc<RustlsCertifiedKey>> = None;
 
     // Get sites for this binding
-    let running_state = get_running_state_manager().await.get_running_state();
-    let binding_site_cache = running_state.get_binding_site_cache();
-    let sites = binding_site_cache.get_sites_for_binding(&binding.id);
+    let sites = get_site_manager().get_sites_for_binding(&binding.id);
+    for runtime in sites.iter().filter(|runtime| runtime.site.is_enabled && runtime.site.tls_automatic_enabled) {
+        resolver.acme_hosts.extend(runtime.site.hostnames.iter().map(|hostname| hostname.trim().to_lowercase()));
+    }
 
     // Skip sites that are disabled or have ACME enabled - they'll be handled by the ACME resolver
-    for site in sites.iter().filter(|s| s.is_enabled && !s.tls_automatic_enabled) {
+    for runtime in sites.iter().filter(|runtime| runtime.site.is_enabled && !runtime.site.tls_automatic_enabled) {
+        let site = &runtime.site;
         // Determine SANs for this site
         let mut sans: Vec<String> = site.hostnames.iter().filter(|&h| !h.trim().is_empty() && h != "*").cloned().collect();
         let has_wildcard = site.hostnames.contains(&"*".to_string());
@@ -222,7 +201,7 @@ pub async fn build_unified_cert_resolver(binding: &Binding) -> Result<UnifiedCer
 
         // Final attempt is to create self-signed certificates
         if certificates.is_none() {
-            let generated_certs = generate_self_signed_certificate_and_persist(site, sans.clone(), binding.is_admin).await;
+            let generated_certs = generate_self_signed_certificate_and_persist(runtime, sans.clone(), binding.is_admin).await;
             if let Some(certs) = generated_certs {
                 debug!("Generated self-signed certificate, because of missing certificates, for site '{}' with hostnames: {:?}", site.id, sans);
                 certificates = Some(certs);
@@ -344,7 +323,7 @@ fn generate_self_signed_certificate(sans: Vec<String>) -> Option<(Vec<Certificat
     Some((cert_chain, cert_pem, priv_key, key_pem))
 }
 
-async fn generate_self_signed_certificate_and_persist(site: &Site, sans: Vec<String>, is_admin: bool) -> Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+async fn generate_self_signed_certificate_and_persist(site: &Arc<SiteRuntime>, sans: Vec<String>, is_admin: bool) -> Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
     let (cert_chain, cert_pem, priv_key, key_pem) = match generate_self_signed_certificate(sans) {
         Some(certs) => certs,
         None => {

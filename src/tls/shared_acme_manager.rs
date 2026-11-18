@@ -1,7 +1,7 @@
-use crate::core::running_state_manager::get_running_state_manager;
+use crate::runtime::{binding_manager::get_binding_manager, site_manager::get_site_manager};
 use crate::core::triggers::get_trigger_handler;
 use crate::file::app_paths::get_app_paths;
-use crate::{debug, trace, warn};
+use crate::{debug, error, trace, warn};
 use rustls_acme::caches::DirCache;
 use rustls_acme::{AcmeConfig, ResolvesServerCertAcme};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -25,6 +25,35 @@ struct ManagerState {
 }
 
 static MANAGER_STATE: Mutex<Option<ManagerState>> = Mutex::const_new(None);
+static RECONCILE_LOCK: Mutex<()> = Mutex::const_new(());
+
+pub fn start_acme_reconciliation() {
+    let mut changes = get_site_manager().subscribe_changes();
+    tokio::spawn(async move {
+        let shutdown = get_trigger_handler().get_token("shutdown").await;
+        let Some(shutdown) = shutdown else {
+            error!("Failed to subscribe to shutdown for ACME reconciliation");
+            return;
+        };
+        loop {
+            if let Err(e) = initialize_shared_acme_manager().await {
+                error!("Failed to reconcile ACME certificates: {}", e);
+            }
+            tokio::select! {
+                _ = shutdown.cancelled() => {
+                    shutdown_shared_acme_manager().await;
+                    break;
+                }
+                result = changes.changed() => {
+                    if result.is_err() {
+                        error!("Site change notifications stopped for ACME reconciliation");
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
 
 /// Per-hostname resolvers, readable synchronously from the TLS handshake path.
 /// Updated incrementally so existing hosts keep serving their certificate during reloads.
@@ -60,6 +89,7 @@ pub async fn shutdown_shared_acme_manager() {
 /// Initialize or reconcile the ACME hosts with the current configuration.
 /// Hosts that are unchanged keep their running state and certificate; only added and removed hosts are touched.
 pub async fn initialize_shared_acme_manager() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _reconcile = RECONCILE_LOCK.lock().await;
     let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
     let config = cached_configuration.get_configuration();
     let tls_settings = &config.core.tls_settings;
@@ -71,7 +101,7 @@ pub async fn initialize_shared_acme_manager() -> Result<(), Box<dyn std::error::
         return Ok(());
     }
 
-    let desired = collect_acme_domains().await;
+    let desired = collect_acme_domains()?;
     if desired.is_empty() {
         debug!("ACME not enabled: no valid domains found with tls_automatic_enabled");
         shutdown_shared_acme_manager().await;
@@ -164,23 +194,18 @@ pub async fn get_shared_acme_domains() -> HashSet<String> {
 }
 
 /// Collect all ACME-enabled hostnames across all TLS bindings
-async fn collect_acme_domains() -> BTreeSet<String> {
-    let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
-    let config = cached_configuration.get_configuration();
-
+fn collect_acme_domains() -> Result<BTreeSet<String>, Box<dyn std::error::Error + Send + Sync>> {
     let mut all_domains: BTreeSet<String> = BTreeSet::new();
-
-    let running_state = get_running_state_manager().await.get_running_state();
-    let binding_site_cache = running_state.get_binding_site_cache();
-
-    for binding in &config.bindings {
+    let bindings = get_binding_manager().lock().map_err(|_| "binding manager lock poisoned")?;
+    for runtime in bindings.get_binding_runtimes() {
+        let binding = &runtime.binding;
         if !binding.is_tls {
             continue;
         }
 
-        let sites = binding_site_cache.get_sites_for_binding(&binding.id);
+        let sites = get_site_manager().get_sites_for_binding(&binding.id);
 
-        for site in sites.iter().filter(|s| s.is_enabled && s.tls_automatic_enabled) {
+        for site in sites.iter().map(|runtime| &runtime.site).filter(|s| s.is_enabled && s.tls_automatic_enabled) {
             for hostname in &site.hostnames {
                 let h = hostname.trim().to_lowercase();
                 // Wildcards require DNS-01, which rustls-acme does not support.
@@ -193,7 +218,7 @@ async fn collect_acme_domains() -> BTreeSet<String> {
         }
     }
 
-    all_domains
+    Ok(all_domains)
 }
 
 /// Spawn a background task that drives certificate acquisition and renewal for a single host.

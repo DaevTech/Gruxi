@@ -22,6 +22,30 @@ export const createResourceApi = (path) => ({
     remove: (id) => request(`${path}/${encodeURIComponent(id)}`, 'DELETE'),
 });
 
+export const createSiteBindingApi = () => {
+    const collection = (siteId) => `/api/sites/${encodeURIComponent(siteId)}/bindings`;
+    const relationship = (siteId, bindingId) => `${collection(siteId)}/${encodeURIComponent(bindingId)}`;
+    return {
+        list: async (siteId) => {
+            const ids = await request(collection(siteId), 'GET');
+            if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new Error('Invalid site bindings response');
+            return ids.map((bindingId) => ({ site_id: siteId, binding_id: bindingId }));
+        },
+        attach: (relation) => request(relationship(relation.site_id, relation.binding_id), 'PUT'),
+        detach: (relation) => request(relationship(relation.site_id, relation.binding_id), 'DELETE'),
+    };
+};
+
+export const globalConfiguration = ({ bindings, sites, binding_sites, ...settings }) => settings;
+
+export const loadEditorResources = async (bindingApi, siteApi) => {
+    const [settings, bindings, sites] = await Promise.all([request('/config', 'GET'), bindingApi.list(), siteApi.list()]);
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Invalid configuration response');
+    if (!Array.isArray(bindings)) throw new Error('Invalid bindings response');
+    if (!Array.isArray(sites)) throw new Error('Invalid sites response');
+    return { config: { ...globalConfiguration(settings), sites, binding_sites: [] }, bindings };
+};
+
 const saveItem = async (path, method, item) => {
     const saved = await request(path, method, item);
     if (!saved || saved.id !== item.id) throw new Error(`${method} ${path} returned an invalid resource`);
@@ -46,5 +70,22 @@ export const saveResourceChanges = async (api, original, draft, onSaved) => {
         } else if (JSON.stringify(previous) !== JSON.stringify(item)) {
             onSaved('update', await api.update(item));
         }
+    }
+};
+
+export const saveEditorResources = async ({ bindingApi, siteApi, relationshipApi, originalBindings, bindings, originalSites, sites, originalRelationships, relationships, onBindingSaved, onSiteSaved, onRelationshipSaved }) => {
+    const key = (relation) => JSON.stringify([relation.site_id, relation.binding_id]);
+    const originalKeys = new Set(originalRelationships.map(key));
+    const draftKeys = new Set(relationships.map(key));
+
+    for (const relation of originalRelationships.filter((item) => !draftKeys.has(key(item)))) {
+        await relationshipApi.detach(relation);
+        onRelationshipSaved('remove', relation);
+    }
+    await saveResourceChanges(bindingApi, originalBindings, bindings, onBindingSaved);
+    await saveResourceChanges(siteApi, originalSites, sites, onSiteSaved);
+    for (const relation of relationships.filter((item) => !originalKeys.has(key(item)))) {
+        await relationshipApi.attach(relation);
+        onRelationshipSaved('create', relation);
     }
 };
