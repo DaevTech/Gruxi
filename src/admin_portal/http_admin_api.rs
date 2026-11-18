@@ -5,7 +5,6 @@ use crate::config::save_configuration::save_configuration_preserving_resources;
 use crate::config::site::Site;
 use crate::config::core::Core;
 use crate::config::request_handler::RequestHandler;
-use crate::external_connections::managed_system::php_cgi::PhpCgi;
 use crate::http::request_handlers::processors::{php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor};
 use crate::core::admin_user::{LoginRequest, Session, authenticate_user, change_user_password, create_session, create_unauthenticated_admin_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
@@ -49,7 +48,6 @@ struct AdminConfiguration {
     static_file_processors: Vec<StaticFileProcessor>,
     php_processors: Vec<PHPProcessor>,
     proxy_processors: Vec<ProxyProcessor>,
-    php_cgi_handlers: Vec<PhpCgi>,
 }
 
 impl From<Configuration> for AdminConfiguration {
@@ -61,7 +59,6 @@ impl From<Configuration> for AdminConfiguration {
             static_file_processors: config.static_file_processors,
             php_processors: config.php_processors,
             proxy_processors: config.proxy_processors,
-            php_cgi_handlers: config.php_cgi_handlers,
         }
     }
 }
@@ -78,7 +75,7 @@ impl From<AdminConfiguration> for Configuration {
             static_file_processors: config.static_file_processors,
             php_processors: config.php_processors,
             proxy_processors: config.proxy_processors,
-            php_cgi_handlers: config.php_cgi_handlers,
+            php_cgi_handlers: Vec::new(),
         }
     }
 }

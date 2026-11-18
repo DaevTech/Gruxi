@@ -36,6 +36,7 @@ const successMessage = ref('');
 const originalConfig = ref(null);
 const config = ref(null);
 const bindingApi = createResourceApi('/api/bindings');
+const managedSystemApi = createResourceApi('/api/managed-systems');
 const siteApi = createResourceApi('/api/sites');
 const relationshipApi = createSiteBindingApi();
 const bindings = ref([]);
@@ -81,7 +82,7 @@ const loadConfiguration = async () => {
     error.value = '';
 
     try {
-        const loaded = await loadEditorResources(bindingApi, siteApi);
+        const loaded = await loadEditorResources(bindingApi, siteApi, managedSystemApi);
         originalConfig.value = copy(loaded.config);
         config.value = loaded.config;
         bindings.value = loaded.bindings;
@@ -162,7 +163,9 @@ const saveConfiguration = async () => {
         }
         await saveEditorResources({
             bindingApi, siteApi, relationshipApi,
+            managedSystemApi,
             originalBindings: originalBindings.value, bindings: bindings.value,
+            originalManagedSystems: originalConfig.value.php_cgi_handlers, managedSystems: config.value.php_cgi_handlers,
             originalSites: originalConfig.value.sites, sites: config.value.sites,
             originalRelationships: originalConfig.value.binding_sites, relationships: config.value.binding_sites,
             onBindingSaved: (operation, binding) => {
@@ -174,6 +177,17 @@ const saveConfiguration = async () => {
                     else originalBindings.value[index] = copy(binding);
                     const draftIndex = bindings.value.findIndex((item) => item.id === binding.id);
                     bindings.value[draftIndex] = copy(binding);
+                }
+            },
+            onManagedSystemSaved: (operation, system) => {
+                if (operation === 'remove') {
+                    originalConfig.value.php_cgi_handlers = originalConfig.value.php_cgi_handlers.filter((item) => item.id !== system.id);
+                } else {
+                    const index = originalConfig.value.php_cgi_handlers.findIndex((item) => item.id === system.id);
+                    if (index === -1) originalConfig.value.php_cgi_handlers.push(copy(system));
+                    else originalConfig.value.php_cgi_handlers[index] = copy(system);
+                    const draftIndex = config.value.php_cgi_handlers.findIndex((item) => item.id === system.id);
+                    config.value.php_cgi_handlers[draftIndex] = copy(system);
                 }
             },
             onSiteSaved: (operation, site) => {
@@ -197,7 +211,7 @@ const saveConfiguration = async () => {
         });
 
         if (JSON.stringify(globalConfiguration(originalConfig.value)) === JSON.stringify(globalConfiguration(config.value))) {
-            successMessage.value = 'Bindings, sites, and site associations saved and applied.';
+            successMessage.value = 'Bindings, managed systems, sites, and site associations saved and applied.';
             setTimeout(() => { successMessage.value = ''; }, 10000);
             return;
         }

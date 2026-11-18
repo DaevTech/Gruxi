@@ -26,7 +26,7 @@ impl CompressionPolicy {
     fn should_compress_mime_type(&self, mime_type: &str) -> bool {
         // First, check cache if we should even consider this mime type
         if let Some(cached_result) = self.compressible_content_types_cache.get(mime_type) {
-            trace!("[Compression]: Mime type '{}' is compression friendly (cached): {:?}", mime_type, cached_result);
+            trace!("[Compression]: Mime type '{}' is compression friendly (cached)", mime_type);
             return *cached_result;
         }
 

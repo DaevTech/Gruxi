@@ -1,9 +1,11 @@
 use crate::{
     config::{cached_configuration::get_cached_configuration, configuration::Configuration},
     runtime::binding_manager::{BindingRuntimeConfiguration, get_binding_manager},
+    runtime::managed_systems_manager::get_managed_systems_manager,
     runtime::site_manager::init_site_manager,
 };
-use std::{sync::OnceLock, time::Duration};
+use std::time::Duration;
+use tokio::sync::OnceCell;
 
 pub struct RuntimeManager;
 
@@ -12,7 +14,7 @@ impl RuntimeManager {
         Self
     }
 
-    pub fn init(&mut self) {
+    pub async fn init(&mut self) {
         // Fetch our current configuration for init
         let configuration = get_cached_configuration().get_configuration();
 
@@ -21,6 +23,9 @@ impl RuntimeManager {
 
         // Start bindings
         self.init_bindings(&configuration);
+
+        // Start managed external systems
+        let _managed_systems_manager = get_managed_systems_manager().await;
     }
 
     fn init_bindings(&mut self, configuration: &Configuration) {
@@ -43,12 +48,12 @@ impl RuntimeManager {
     }
 }
 
-static RUNTIME_MANAGER_SINGLETON: OnceLock<RuntimeManager> = OnceLock::new();
+static RUNTIME_MANAGER_SINGLETON: OnceCell<RuntimeManager> = OnceCell::const_new();
 
-pub fn get_runtime_manager() -> &'static RuntimeManager {
-    RUNTIME_MANAGER_SINGLETON.get_or_init(|| {
+pub async fn get_runtime_manager() -> &'static RuntimeManager {
+    RUNTIME_MANAGER_SINGLETON.get_or_init(|| async {
         let mut manager = RuntimeManager::new();
-        manager.init();
+        manager.init().await;
         manager
-    })
+    }).await
 }

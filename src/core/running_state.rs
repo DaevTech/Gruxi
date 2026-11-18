@@ -7,7 +7,6 @@ use crate::logging::access_logging::AccessLogBuffer;
 use crate::{
     compression::compression_cache::CompressionCache,
     debug,
-    external_connections::external_system_handler::ExternalSystemHandler,
     file::file_reader_cache::FileReaderCache,
     http::{
         client::http_client::HttpClient,
@@ -23,7 +22,6 @@ pub struct RunningState {
     processing_refresh: tokio::sync::Mutex<()>,
     generated_handlers: Vec<RequestHandler>,
     generated_static: Vec<StaticFileProcessor>,
-    external_system_handler: ExternalSystemHandler,
     http_client: HttpClient,
     log_rotation: LogRotation,
     compression_cache: CompressionCache,
@@ -44,10 +42,6 @@ impl RunningState {
         let access_log_buffer = std::sync::Arc::new(AccessLogBuffer::new().await);
         access_log_buffer.start_flushing_task();
         debug!("Access log buffers initialized");
-
-        // Start external system handler, which in turns load any defined external handlers, such as PHP-CGI
-        let external_system_handler = ExternalSystemHandler::new().await;
-        debug!("External system handler initialized");
 
         // Start file read cache
         let file_reader_cache = FileReaderCache::new(&config);
@@ -86,7 +80,6 @@ impl RunningState {
             processing_refresh: tokio::sync::Mutex::new(()),
             generated_handlers,
             generated_static,
-            external_system_handler,
             http_client,
             log_rotation,
             compression_cache,
@@ -112,10 +105,6 @@ impl RunningState {
         let processors = ProcessorManager::from_configuration(&config, &self.generated_static).await;
         self.site_processing.store(Arc::new(SiteProcessing { request_handlers, processors }));
         Ok(())
-    }
-
-    pub fn get_external_system_handler(&self) -> &ExternalSystemHandler {
-        &self.external_system_handler
     }
 
     pub fn get_http_client(&self) -> &HttpClient {

@@ -22,7 +22,6 @@ pub fn save_configuration(config: &mut Configuration, force: bool) -> Result<boo
 }
 
 pub fn save_configuration_preserving_resources(config: &mut Configuration) -> Result<bool, Vec<String>> {
-    // Keep the lock order consistent with binding deletion.
     let _bindings = crate::runtime::binding_manager::get_binding_manager()
         .lock()
         .map_err(|_| vec!["Binding manager lock poisoned".to_string()])?;
@@ -32,6 +31,7 @@ pub fn save_configuration_preserving_resources(config: &mut Configuration) -> Re
     config.bindings = current.bindings;
     config.sites = current.sites;
     config.binding_sites = current.binding_sites;
+    config.php_cgi_handlers = current.php_cgi_handlers;
     save_configuration_inner(config, false, true)
 }
 
@@ -135,12 +135,14 @@ fn save_configuration_inner(config: &mut Configuration, force: bool, preserve_re
         save_proxy_processor(&connection, processor).map_err(|e| vec![format!("Failed to save Proxy processor: {}", e)])?;
     }
 
-    // Save PHP-CGI handlers, clear existing first
-    connection
-        .execute("DELETE FROM php_cgi_handlers")
-        .map_err(|e| vec![format!("Failed to clear existing PHP-CGI handlers: {}", e)])?;
-    for handler in &config.php_cgi_handlers {
-        save_php_cgi_handler(&connection, handler).map_err(|e| vec![format!("Failed to save PHP-CGI handler: {}", e)])?;
+    if !preserve_resources {
+        // Save PHP-CGI handlers, clear existing first
+        connection
+            .execute("DELETE FROM php_cgi_handlers")
+            .map_err(|e| vec![format!("Failed to clear existing PHP-CGI handlers: {}", e)])?;
+        for handler in &config.php_cgi_handlers {
+            save_php_cgi_handler(&connection, handler).map_err(|e| vec![format!("Failed to save PHP-CGI handler: {}", e)])?;
+        }
     }
 
     // Commit transaction

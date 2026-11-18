@@ -13,6 +13,15 @@ pub enum GruxiErrorKind {
     Runtime(GruxiRuntimeError),
     Database(DatabaseError),
     Site(SiteError),
+    ManagedSystem(ManagedSystemErrorKind),
+}
+
+#[derive(Debug)]
+pub enum ManagedSystemErrorKind {
+    NotFound,
+    Conflict,
+    StartFailed,
+    StopFailed,
 }
 
 #[derive(Debug)]

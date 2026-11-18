@@ -1,4 +1,5 @@
 use crate::api::bindings::*;
+use crate::api::managed_systems::*;
 use crate::api::sites::bindings::site_bindings;
 use crate::api::sites::*;
 use crate::api::common::no_route_matched;
@@ -28,6 +29,16 @@ pub async fn handle_routes(gruxi_request: &mut GruxiRequest, path: &str) -> Resu
             "POST" => create_binding::handle(gruxi_request).await,
             "PUT" => update_binding::handle(gruxi_request).await,
             "DELETE" => delete_binding::handle(gruxi_request).await,
+            _ => Err(no_route_matched()),
+        };
+    }
+
+    if path == "/api/managed-systems" || path.starts_with("/api/managed-systems/") {
+        return match method {
+            "GET" => get_managed_systems::handle(gruxi_request).await,
+            "POST" => create_managed_system::handle(gruxi_request).await,
+            "PUT" => update_managed_system::handle(gruxi_request).await,
+            "DELETE" => delete_managed_system::handle(gruxi_request).await,
             _ => Err(no_route_matched()),
         };
     }

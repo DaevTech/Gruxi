@@ -36,14 +36,15 @@ export const createSiteBindingApi = () => {
     };
 };
 
-export const globalConfiguration = ({ bindings, sites, binding_sites, ...settings }) => settings;
+export const globalConfiguration = ({ bindings, sites, binding_sites, php_cgi_handlers, ...settings }) => settings;
 
-export const loadEditorResources = async (bindingApi, siteApi) => {
-    const [settings, bindings, sites] = await Promise.all([request('/config', 'GET'), bindingApi.list(), siteApi.list()]);
+export const loadEditorResources = async (bindingApi, siteApi, managedSystemApi) => {
+    const [settings, bindings, sites, managedSystems] = await Promise.all([request('/config', 'GET'), bindingApi.list(), siteApi.list(), managedSystemApi.list()]);
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Invalid configuration response');
     if (!Array.isArray(bindings)) throw new Error('Invalid bindings response');
     if (!Array.isArray(sites)) throw new Error('Invalid sites response');
-    return { config: { ...globalConfiguration(settings), sites, binding_sites: [] }, bindings };
+    if (!Array.isArray(managedSystems)) throw new Error('Invalid managed systems response');
+    return { config: { ...globalConfiguration(settings), sites, binding_sites: [], php_cgi_handlers: managedSystems }, bindings };
 };
 
 const saveItem = async (path, method, item) => {
@@ -73,7 +74,7 @@ export const saveResourceChanges = async (api, original, draft, onSaved) => {
     }
 };
 
-export const saveEditorResources = async ({ bindingApi, siteApi, relationshipApi, originalBindings, bindings, originalSites, sites, originalRelationships, relationships, onBindingSaved, onSiteSaved, onRelationshipSaved }) => {
+export const saveEditorResources = async ({ bindingApi, siteApi, managedSystemApi, relationshipApi, originalBindings, bindings, originalManagedSystems, managedSystems, originalSites, sites, originalRelationships, relationships, onBindingSaved, onManagedSystemSaved, onSiteSaved, onRelationshipSaved }) => {
     const key = (relation) => JSON.stringify([relation.site_id, relation.binding_id]);
     const originalKeys = new Set(originalRelationships.map(key));
     const draftKeys = new Set(relationships.map(key));
@@ -83,6 +84,7 @@ export const saveEditorResources = async ({ bindingApi, siteApi, relationshipApi
         onRelationshipSaved('remove', relation);
     }
     await saveResourceChanges(bindingApi, originalBindings, bindings, onBindingSaved);
+    await saveResourceChanges(managedSystemApi, originalManagedSystems, managedSystems, onManagedSystemSaved);
     await saveResourceChanges(siteApi, originalSites, sites, onSiteSaved);
     for (const relation of relationships.filter((item) => !originalKeys.has(key(item)))) {
         await relationshipApi.attach(relation);

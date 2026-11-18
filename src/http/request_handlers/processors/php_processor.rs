@@ -3,13 +3,13 @@ use std::time::Duration;
 use crate::core::running_state_manager::get_running_state_manager;
 use crate::error::gruxi_error::GruxiError;
 use crate::error::gruxi_error_enums::{GruxiErrorKind, PHPProcessorError};
-use crate::external_connections::external_system_handler::ExternalSystemHandler;
 use crate::external_connections::fastcgi::FastCgi;
 use crate::file::normalized_path::NormalizedPath;
 use crate::http::http_util::trailing_slash_check;
 use crate::http::request_response::gruxi_request_processor_data::{GruxiRequestProcessorData, PhpProcessorFastCgiData};
 use crate::http::request_response::gruxi_response::GruxiResponse;
 use crate::runtime::binding_manager::BindingRuntime;
+use crate::runtime::managed_systems_manager::{get_managed_systems_manager, ManagedSystemsManager};
 use crate::{
     config::site::Site,
     http::{request_handlers::processor_trait::ProcessorTrait, request_response::gruxi_request::GruxiRequest},
@@ -250,7 +250,8 @@ impl ProcessorTrait for PHPProcessor {
         drop(file_data);
 
         // Now get the IP and port to connect to
-        let connect_ip_and_port_result = self.get_ip_and_port(running_state.get_external_system_handler()).await;
+        let managed_systems_manager = get_managed_systems_manager().await.lock().await;
+        let connect_ip_and_port_result = self.get_ip_and_port(&managed_systems_manager);
         let connect_ip_and_port = match connect_ip_and_port_result {
             Ok(ip_and_port) => ip_and_port,
             Err(_) => {
@@ -262,9 +263,7 @@ impl ProcessorTrait for PHPProcessor {
 
         // Figure out if we have a connection semaphore to use
         if self.served_by_type == "win-php-cgi" {
-            let external_system_handler = running_state.get_external_system_handler();
-
-            let semaphore_option = external_system_handler.get_connection_semaphore(&self.php_cgi_handler_id);
+            let semaphore_option = managed_systems_manager.get_connection_semaphore(&self.php_cgi_handler_id);
             let connection_semaphore = match semaphore_option {
                 Some(semaphore) => semaphore,
                 None => {
@@ -274,6 +273,7 @@ impl ProcessorTrait for PHPProcessor {
             };
             gruxi_request.set_connection_semaphore(connection_semaphore);
         }
+        drop(managed_systems_manager);
 
         // So now we have everything we need to handle the request, so we pass it to the FastCGI handler
         trace!("Serving PHP request via FastCGI at {} and full file path: {}", &connect_ip_and_port, &normalized_path.get_full_path());
@@ -331,10 +331,10 @@ impl ProcessorTrait for PHPProcessor {
 }
 
 impl PHPProcessor {
-    async fn get_ip_and_port(&self, external_system_handler: &ExternalSystemHandler) -> Result<String, ()> {
+    fn get_ip_and_port(&self, managed_systems_manager: &ManagedSystemsManager) -> Result<String, ()> {
         if self.served_by_type == "win-php-cgi" {
             // Served by local PHP-CGI executable managed by Gruxi, so this means we use the local_web_root as web root and the php_cgi_handler_id to find the port to connect to with fastcgi
-            let php_cgi_port_result = external_system_handler.get_port_for_php_cgi(&self.php_cgi_handler_id);
+            let php_cgi_port_result = managed_systems_manager.get_port_for_php_cgi(&self.php_cgi_handler_id);
             let php_cgi_port = match php_cgi_port_result {
                 Ok(port) => port,
                 Err(_) => {

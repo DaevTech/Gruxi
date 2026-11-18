@@ -6,6 +6,7 @@ use tokio::{
     process::{Child, Command},
     select,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::file::normalized_path::NormalizedPath;
 use crate::{
@@ -191,7 +192,7 @@ impl PhpCgi {
         Ok(port)
     }
 
-    pub async fn start_monitoring_thread(mut instance: PhpCgi) {
+    pub async fn start_monitoring_thread(mut instance: PhpCgi, stop_token: CancellationToken) {
         let triggers = get_trigger_handler();
 
         let shutdown_token_option = triggers.get_token("shutdown").await;
@@ -203,15 +204,6 @@ impl PhpCgi {
             }
         };
 
-        let stop_services_token_option = triggers.get_token("stop_services").await;
-        let stop_services_token = match stop_services_token_option {
-            Some(token) => token,
-            None => {
-                error!("Failed to get stop_services token - PHP-CGI monitoring thread exiting - Please report a bug");
-                return;
-            }
-        };
-
         loop {
             select! {
                 _ = shutdown_token.cancelled() => {
@@ -219,8 +211,8 @@ impl PhpCgi {
                     instance.stop().await;
                     break;
                 },
-                _ = stop_services_token.cancelled() => {
-                    trace!("Stop services signal received, stopping PHP processes if running");
+                _ = stop_token.cancelled() => {
+                    trace!("Managed system stop requested, stopping PHP process if running");
                     instance.stop().await;
                     break;
                 },
