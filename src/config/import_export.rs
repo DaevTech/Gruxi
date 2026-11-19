@@ -23,14 +23,11 @@ pub fn import_configuration_from_file(path: &PathBuf) -> Result<(), String> {
     // Read file contents
     let file_contents = std::fs::read_to_string(path).map_err(|e| format!("Failed to read configuration file {}: {}", path.display(), e))?;
 
-    // Load json into loose typed to validate version and possibly do version migrations later
+    // Load JSON into a value to validate its version
     let loose_typed: serde_json::Value = serde_json::from_str(&file_contents).map_err(|e| format!("Failed to parse configuration file {}: {}", path.display(), e))?;
 
     // Check that versions match
     if loose_typed["version"] != crate::config::configuration::CURRENT_CONFIGURATION_VERSION {
-        // Here we could add version migration logic in the future
-
-        // If we reach here, versions do not match
         return Err(format!(
             "Configuration version mismatch: expected {}, found {}",
             crate::config::configuration::CURRENT_CONFIGURATION_VERSION,
@@ -40,7 +37,7 @@ pub fn import_configuration_from_file(path: &PathBuf) -> Result<(), String> {
 
     // Deserialize JSON to Configuration struct
     let mut configuration: crate::config::configuration::Configuration =
-        serde_json::from_str(&file_contents).map_err(|e| format!("Failed to deserialize configuration from file {}: {}", path.display(), e))?;
+        serde_json::from_value(loose_typed).map_err(|e| format!("Failed to deserialize configuration from file {}: {}", path.display(), e))?;
 
     // Save configuration to database
     crate::config::save_configuration::save_configuration(&mut configuration, false).map_err(|e| format!("Failed to save imported configuration to database: {:?}", e))?;
@@ -68,9 +65,46 @@ pub fn validate_configuration_file(path: &PathBuf) -> Result<(), String> {
 
     // Deserialize JSON to Configuration struct to ensure it's valid
     let configuration: crate::config::configuration::Configuration =
-        serde_json::from_str(&file_contents).map_err(|e| format!("Failed to deserialize configuration from file {}: {}", path.display(), e))?;
+        serde_json::from_value(loose_typed).map_err(|e| format!("Failed to deserialize configuration from file {}: {}", path.display(), e))?;
 
     configuration.validate().map_err(|e| format!("Configuration validation failed: {:?}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::configuration::Configuration;
+
+    #[test]
+    fn validates_current_format_and_rejects_flat_handlers() {
+        struct TestFile(PathBuf);
+        impl Drop for TestFile {
+            fn drop(&mut self) {
+                if let Err(error) = std::fs::remove_file(&self.0) {
+                    eprintln!("Failed to remove test configuration file: {}", error);
+                }
+            }
+        }
+
+        let file = TestFile(std::env::temp_dir().join(format!("gruxi-config-{}.json", uuid::Uuid::new_v4())));
+        let config = Configuration::get_default();
+        let mut value = serde_json::to_value(&config).unwrap();
+        std::fs::write(&file.0, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(validate_configuration_file(&file.0).is_ok());
+
+        let handler = value["sites"][0]["request_handlers"][0].clone();
+        let processor = handler["processor"]["config"].clone();
+        value["sites"][0]["request_handlers"] = serde_json::json!([handler["id"]]);
+        value["request_handlers"] = serde_json::json!([{
+            "id": handler["id"], "name": handler["name"], "is_enabled": handler["is_enabled"],
+            "url_match": handler["url_match"], "processor_type": "static", "processor_id": processor["id"]
+        }]);
+        value["static_file_processors"] = serde_json::json!([processor]);
+        value["php_processors"] = serde_json::json!([]);
+        value["proxy_processors"] = serde_json::json!([]);
+        std::fs::write(&file.0, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(validate_configuration_file(&file.0).unwrap_err().contains("Failed to deserialize configuration"));
+    }
 }

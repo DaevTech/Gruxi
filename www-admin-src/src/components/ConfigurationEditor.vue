@@ -374,51 +374,15 @@ const isCoreSubsectionExpanded = (subsection) => {
     return expandedItems.coreSubsections[subsection] || false;
 };
 
-const normalizeSiteRequestHandlersOrder = (siteIndex) => {
-    if (!config.value?.sites?.[siteIndex]) return;
-
-    const site = config.value.sites[siteIndex];
-    if (!Array.isArray(site.request_handlers) || site.request_handlers.length === 0) return;
-    if (!Array.isArray(config.value.request_handlers)) return;
-
-    const handlerById = new Map(config.value.request_handlers.map((h) => [h.id, h]));
-
-    const uniquePreserveOrder = (items) => {
-        const seen = new Set();
-        const out = [];
-        for (const item of items) {
-            if (seen.has(item)) continue;
-            seen.add(item);
-            out.push(item);
-        }
-        return out;
-    };
-
-    const ids = site.request_handlers.filter((id) => id !== null && id !== undefined && String(id).length > 0);
-    const knownIds = uniquePreserveOrder(ids.filter((id) => handlerById.has(id)));
-    const unknownIds = uniquePreserveOrder(ids.filter((id) => !handlerById.has(id)));
-
-    // Ordering is now defined solely by the order of handler IDs on the site.
-    site.request_handlers = [...knownIds, ...unknownIds];
-};
-
 const moveProcessorOrder = (siteIndex, requestHandlerId, direction) => {
     if (!config.value?.sites?.[siteIndex]) return;
     const site = config.value.sites[siteIndex];
     if (!Array.isArray(site.request_handlers) || site.request_handlers.length === 0) return;
-    if (!Array.isArray(config.value.request_handlers)) return;
-
-    normalizeSiteRequestHandlersOrder(siteIndex);
-
-    const handlerIdSet = new Set(config.value.request_handlers.map((h) => h.id));
-    const currentIndex = site.request_handlers.findIndex((id) => id === requestHandlerId);
+    const currentIndex = site.request_handlers.findIndex((handler) => handler.id === requestHandlerId);
     if (currentIndex === -1) return;
 
     const step = direction === 'up' ? -1 : 1;
-    let targetIndex = currentIndex + step;
-    while (targetIndex >= 0 && targetIndex < site.request_handlers.length && !handlerIdSet.has(site.request_handlers[targetIndex])) {
-        targetIndex += step;
-    }
+    const targetIndex = currentIndex + step;
     if (targetIndex < 0 || targetIndex >= site.request_handlers.length) return;
 
     const tmp = site.request_handlers[currentIndex];
@@ -426,21 +390,8 @@ const moveProcessorOrder = (siteIndex, requestHandlerId, direction) => {
     site.request_handlers[targetIndex] = tmp;
 };
 
-// Get processors for a site by looking up request handlers
 const getSiteProcessors = (siteIndex) => {
-    if (!config.value || !config.value.sites || !config.value.sites[siteIndex]) {
-        return [];
-    }
-
-    const site = config.value.sites[siteIndex];
-    if (!site.request_handlers || !config.value.request_handlers) {
-        return [];
-    }
-
-    // Order is defined by the site.request_handlers array.
-    const resolvedHandlers = site.request_handlers.map((handlerId) => config.value.request_handlers.find((h) => h.id === handlerId)).filter((handler) => handler !== undefined);
-
-    return resolvedHandlers;
+    return config.value?.sites?.[siteIndex]?.request_handlers || [];
 };
 
 // View-model for template binding: includes the handler plus a reference to its processor config object.
@@ -448,12 +399,10 @@ const getSiteProcessors = (siteIndex) => {
 const getSiteProcessorModels = (siteIndex) => {
     const handlers = getSiteProcessors(siteIndex);
     return handlers.map((handler) => {
-        const processorType = handler.processor_type;
-        const processorId = handler.processor_id;
-
-        const staticConfig = processorType === 'static' ? config.value?.static_file_processors?.find((p) => p.id === processorId) : null;
-        const phpConfig = processorType === 'php' ? config.value?.php_processors?.find((p) => p.id === processorId) : null;
-        const proxyConfig = processorType === 'proxy' ? config.value?.proxy_processors?.find((p) => p.id === processorId) : null;
+        const processorType = handler.processor.type;
+        const staticConfig = processorType === 'static' ? handler.processor.config : null;
+        const phpConfig = processorType === 'php' ? handler.processor.config : null;
+        const proxyConfig = processorType === 'proxy' ? handler.processor.config : null;
 
         return {
             handler,
@@ -559,8 +508,10 @@ const removePhpCgiHandler = (index) => {
     config.value.php_cgi_handlers.splice(index, 1);
 
     // Clear references from PHP processors that used this managed handler.
-    if (Array.isArray(config.value.php_processors)) {
-        for (const processor of config.value.php_processors) {
+    for (const site of config.value.sites || []) {
+        for (const handler of site.request_handlers || []) {
+            if (handler.processor.type !== 'php') continue;
+            const processor = handler.processor.config;
             if (processor.served_by_type === 'win-php-cgi' && processor.php_cgi_handler_id === removedId) {
                 processor.php_cgi_handler_id = '';
             }
@@ -569,23 +520,6 @@ const removePhpCgiHandler = (index) => {
 };
 
 // ========== Core -> Server Settings ==========
-
-// Add enabled handler to site
-const addEnabledHandler = (siteIndex) => {
-    if (config.value.sites && config.value.sites[siteIndex]) {
-        // Add the first available handler ID, or empty string if none available
-        const availableHandlers = getAvailableRequestHandlers();
-        const handlerId = availableHandlers.length > 0 ? availableHandlers[0].id : '';
-        config.value.sites[siteIndex].request_handlers.push(handlerId);
-    }
-};
-
-// Remove enabled handler from site
-const removeEnabledHandler = (siteIndex, handlerIndex) => {
-    if (config.value.sites && config.value.sites[siteIndex] && config.value.sites[siteIndex].request_handlers.length > handlerIndex) {
-        config.value.sites[siteIndex].request_handlers.splice(handlerIndex, 1);
-    }
-};
 
 // Extra headers helpers
 const addExtraHeader = (siteIndex) => {
@@ -627,24 +561,6 @@ const getAvailableBindings = () => {
     );
 };
 
-// Get available request handlers for site association
-const getAvailableRequestHandlers = () => {
-    return (
-        config.value.request_handlers?.map((h) => ({
-            id: h.id,
-            name: h.name,
-            handler_type: h.handler_type,
-            label: `${h.name} (${h.handler_type})${!h.is_enabled ? ' - DISABLED' : ''}`,
-        })) || []
-    );
-};
-
-// Get handler name by ID
-const getHandlerNameById = (handlerId) => {
-    const handler = config.value.request_handlers?.find((h) => h.id === handlerId);
-    return handler ? `${handler.name} (${handler.handler_type})` : `Handler ID: ${handlerId}`;
-};
-
 // Get bindings associated with a site
 const getSiteBindings = (siteId) => {
     if (!config.value.binding_sites) return [];
@@ -681,30 +597,19 @@ const addProcessorToSite = (siteIndex, processorType) => {
     if (!site.request_handlers) {
         site.request_handlers = [];
     }
-    if (!config.value.request_handlers) {
-        config.value.request_handlers = [];
-    }
-
     // Create processor object with UUID
     const processorId = crypto.randomUUID();
     let newProcessor;
 
     let newName = '';
     if (processorType === 'static') {
-        if (!config.value.static_file_processors) {
-            config.value.static_file_processors = [];
-        }
         newProcessor = {
             id: processorId,
             web_root: './www-default',
             web_root_index_file_list: ['index.html'],
         };
-        config.value.static_file_processors.push(newProcessor);
         newName = 'Static File Processor';
     } else if (processorType === 'php') {
-        if (!config.value.php_processors) {
-            config.value.php_processors = [];
-        }
         newProcessor = {
             id: processorId,
             served_by_type: 'php-fpm',
@@ -715,12 +620,8 @@ const addProcessorToSite = (siteIndex, processorType) => {
             fastcgi_web_root: '',
             server_software_spoof: '',
         };
-        config.value.php_processors.push(newProcessor);
         newName = 'PHP Processor';
     } else if (processorType === 'proxy') {
-        if (!config.value.proxy_processors) {
-            config.value.proxy_processors = [];
-        }
         newProcessor = {
             id: processorId,
             proxy_type: 'http',
@@ -735,7 +636,6 @@ const addProcessorToSite = (siteIndex, processorType) => {
             forced_host_header: '',
             verify_tls_certificates: true,
         };
-        config.value.proxy_processors.push(newProcessor);
         newName = 'Proxy Processor';
     }
 
@@ -745,15 +645,11 @@ const addProcessorToSite = (siteIndex, processorType) => {
         id: requestHandlerId,
         is_enabled: true,
         name: newName,
-        processor_type: processorType,
-        processor_id: processorId,
+        processor: { type: processorType, config: newProcessor },
         url_match: ['*'],
     };
 
-    config.value.request_handlers.push(newRequestHandler);
-    site.request_handlers.push(requestHandlerId);
-
-    normalizeSiteRequestHandlersOrder(siteIndex);
+    site.request_handlers.push(newRequestHandler);
 };
 
 // Remove processor from site
@@ -761,32 +657,7 @@ const removeProcessorFromSite = (siteIndex, processorIndex) => {
     const processors = getSiteProcessors(siteIndex);
     if (!processors || processorIndex >= processors.length) return;
 
-    const requestHandler = processors[processorIndex];
-    const site = config.value.sites[siteIndex];
-
-    // Remove the request handler ID from site
-    const handlerIdIndex = site.request_handlers.indexOf(requestHandler.id);
-    if (handlerIdIndex !== -1) {
-        site.request_handlers.splice(handlerIdIndex, 1);
-    }
-
-    // Remove the actual processor from the appropriate array
-    if (requestHandler.processor_type === 'static' && config.value.static_file_processors) {
-        const idx = config.value.static_file_processors.findIndex((p) => p.id === requestHandler.processor_id);
-        if (idx !== -1) config.value.static_file_processors.splice(idx, 1);
-    } else if (requestHandler.processor_type === 'php' && config.value.php_processors) {
-        const idx = config.value.php_processors.findIndex((p) => p.id === requestHandler.processor_id);
-        if (idx !== -1) config.value.php_processors.splice(idx, 1);
-    } else if (requestHandler.processor_type === 'proxy' && config.value.proxy_processors) {
-        const idx = config.value.proxy_processors.findIndex((p) => p.id === requestHandler.processor_id);
-        if (idx !== -1) config.value.proxy_processors.splice(idx, 1);
-    }
-
-    // Remove the request handler from top level
-    const rhIndex = config.value.request_handlers.findIndex((h) => h.id === requestHandler.id);
-    if (rhIndex !== -1) {
-        config.value.request_handlers.splice(rhIndex, 1);
-    }
+    config.value.sites[siteIndex].request_handlers.splice(processorIndex, 1);
 };
 
 // Add index file to static processor
@@ -795,8 +666,8 @@ const addIndexFileToProcessor = (siteIndex, processorIndex) => {
     if (!processors || !processors[processorIndex]) return;
 
     const requestHandler = processors[processorIndex];
-    if (requestHandler.processor_type === 'static' && config.value.static_file_processors) {
-        const staticProcessor = config.value.static_file_processors.find((p) => p.id === requestHandler.processor_id);
+    if (requestHandler.processor.type === 'static') {
+        const staticProcessor = requestHandler.processor.config;
         if (staticProcessor && staticProcessor.web_root_index_file_list) {
             staticProcessor.web_root_index_file_list.push('index.html');
         }
@@ -809,8 +680,8 @@ const removeIndexFileFromProcessor = (siteIndex, processorIndex, fileIndex) => {
     if (!processors || !processors[processorIndex]) return;
 
     const requestHandler = processors[processorIndex];
-    if (requestHandler.processor_type === 'static' && config.value.static_file_processors) {
-        const staticProcessor = config.value.static_file_processors.find((p) => p.id === requestHandler.processor_id);
+    if (requestHandler.processor.type === 'static') {
+        const staticProcessor = requestHandler.processor.config;
         if (staticProcessor && staticProcessor.web_root_index_file_list) {
             staticProcessor.web_root_index_file_list.splice(fileIndex, 1);
         }
@@ -1157,10 +1028,10 @@ onMounted(() => {
                                         <div class="item-header compact" @click="toggleSiteProcessor(siteIndex, processorIndex)">
                                             <div class="header-left">
                                                 <span class="section-icon" :class="{ expanded: isSiteProcessorExpanded(siteIndex, processorIndex) }">▶</span>
-                                                <span v-if="processor.handler.processor_type === 'static'" class="hierarchy-indicator">📄</span>
-                                                <span v-else-if="processor.handler.processor_type === 'php'" class="hierarchy-indicator">🐘</span>
-                                                <span v-else-if="processor.handler.processor_type === 'proxy'" class="hierarchy-indicator">🔀</span>
-                                                <h6>{{ processor.handler.name || processor.handler.processor_type?.toUpperCase() + ' Processor' }}</h6>
+                                                <span v-if="processor.handler.processor.type === 'static'" class="hierarchy-indicator">📄</span>
+                                                <span v-else-if="processor.handler.processor.type === 'php'" class="hierarchy-indicator">🐘</span>
+                                                <span v-else-if="processor.handler.processor.type === 'proxy'" class="hierarchy-indicator">🔀</span>
+                                                <h6>{{ processor.handler.name || processor.handler.processor.type?.toUpperCase() + ' Processor' }}</h6>
                                                 <span class="priority-badge">Priority: {{ processorIndex + 1 }}</span>
                                                 <div class="priority-controls">
                                                     <button @click.stop="moveProcessorOrder(siteIndex, processor.handler.id, 'up')" class="priority-adjust-button" title="Move up">▲</button>
@@ -1181,7 +1052,7 @@ onMounted(() => {
                                                             Enabled
                                                         </label>
 
-                                                        <label v-if="processor.handler.processor_type === 'proxy'">
+                                                        <label v-if="processor.handler.processor.type === 'proxy'">
                                                             <input v-model="processor.proxy_config.verify_tls_certificates" type="checkbox" />
                                                             Verify TLS Certificates
                                                             <span class="help-icon" data-tooltip="If enabled, TLS certificates of the upstream server will be verified when proxying. For self-signed certificates, this should likely be disabled.">?</span>
@@ -1201,7 +1072,7 @@ onMounted(() => {
                                                     </div>
 
                                                     <!-- Processor type-specific configuration -->
-                                                    <div v-if="processor.handler.processor_type === 'static'" class="form-field">
+                                                    <div v-if="processor.handler.processor.type === 'static'" class="form-field">
                                                         <div v-if="processor.static_config" class="processor-type-config form-grid">
                                                             <label>
                                                                 Web Root
@@ -1221,10 +1092,10 @@ onMounted(() => {
                                                             </div>
                                                         </div>
 
-                                                        <div v-else class="empty-association-warning-inline">⚠️ Static processor config not found for ID: {{ processor.handler.processor_id }}</div>
+                                                        <div v-else class="empty-association-warning-inline">⚠️ Static processor config not found</div>
                                                     </div>
 
-                                                    <div v-else-if="processor.handler.processor_type === 'php'" class="form-field">
+                                                    <div v-else-if="processor.handler.processor.type === 'php'" class="form-field">
                                                         <div v-if="processor.php_config" class="processor-type-config">
                                                             <label>Served By <span class="help-icon" data-tooltip="Select the PHP handler type used to serve PHP files. The Windows PHP-CGI option is mostly on Windows platforms and refers to a managed instance of PHP-CGI controlled by Gruxi. On Linux systems, PHP-FPM (FastCGI Process Manager) should be used.">?</span></label>
                                                             <select v-model="processor.php_config.served_by_type">
@@ -1271,10 +1142,10 @@ onMounted(() => {
                                                                 <input v-model="processor.php_config.server_software_spoof" type="text" placeholder="For WordPress, set this to: nginx" />
                                                             </div>
                                                         </div>
-                                                        <div v-else class="empty-association-warning-inline">⚠️ PHP processor config not found for ID: {{ processor.handler.processor_id }}</div>
+                                                        <div v-else class="empty-association-warning-inline">⚠️ PHP processor config not found</div>
                                                     </div>
 
-                                                    <div v-else-if="processor.handler.processor_type === 'proxy'" class="form-field">
+                                                    <div v-else-if="processor.handler.processor.type === 'proxy'" class="form-field">
                                                         <div v-if="processor.proxy_config" class="processor-type-config">
                                                             <div class="two-column-layout">
                                                                 <div class="half-width">
@@ -1369,7 +1240,7 @@ onMounted(() => {
                                                                 </div>
                                                             </div>
                                                         </div>
-                                                        <div v-else class="empty-association-warning-inline">⚠️ Proxy processor config not found for ID: {{ processor.handler.processor_id }}</div>
+                                                        <div v-else class="empty-association-warning-inline">⚠️ Proxy processor config not found</div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1641,7 +1512,7 @@ onMounted(() => {
                                 <div class="form-field full-width">
                                     <label>
                                         <input v-model="config.core.admin_portal.allow_unauthenticated_access" type="checkbox" />
-                                        Allow Unauthenticated Access to Admin Portal
+                                        Allow Unauthenticated Access to Admin Portal &#9888;
                                         <span class="help-icon" data-tooltip="When enabled, users can access the admin portal without authentication, which can be nice in local development environments. This is not recommended for production environments unless secured by other means.">?</span>
                                     </label>
                                 </div>

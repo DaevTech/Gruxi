@@ -15,7 +15,7 @@ impl RequestHandlerManager {
         let cached_configuration = crate::config::cached_configuration::get_cached_configuration();
         let config = cached_configuration.get_configuration();
 
-        Self::from_handlers(config.request_handlers.iter())
+        Self::from_handlers(config.sites.iter().flat_map(|site| site.request_handlers.iter()))
     }
 
     pub fn from_handlers<'a>(handlers: impl Iterator<Item = &'a RequestHandler>) -> Self {
@@ -25,8 +25,7 @@ impl RequestHandlerManager {
     pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, binding_runtime: Arc<BindingRuntime>, processors: &ProcessorManager) -> Result<GruxiResponse, GruxiError> {
         let lowercased_path = gruxi_request.get_path().to_lowercase();
         let mut found = false;
-        for id in &site.request_handlers {
-            if let Some(handler) = self.request_handlers.get(id) {
+        for handler in &site.request_handlers {
                 found = true;
                     // Check if enabled
                     if !handler.is_enabled {
@@ -42,7 +41,6 @@ impl RequestHandlerManager {
                             continue;
                         }
                         return response_result;
-                    }
             }
         }
         if !found {

@@ -263,10 +263,9 @@ impl ProcessorTrait for ProxyProcessor {
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
-    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, _site: &Site, _binding_runtime: &BindingRuntime) -> Result<GruxiResponse, GruxiError> {
-        let running_state = get_running_state_manager().await.get_running_state();
-        let processing = running_state.get_site_processing();
-        self.handle_request_with_manager(gruxi_request, &processing.processors).await
+    async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, _binding_runtime: &BindingRuntime) -> Result<GruxiResponse, GruxiError> {
+        let runtime = crate::runtime::site_manager::get_site_manager().get_site_by_id(&site.id)?;
+        self.handle_request_with_manager(gruxi_request, &runtime.processors).await
     }
 
     fn get_type(&self) -> String {

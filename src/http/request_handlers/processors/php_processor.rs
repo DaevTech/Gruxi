@@ -65,18 +65,15 @@ impl PHPProcessor {
 
 impl ProcessorTrait for PHPProcessor {
     fn initialize(&mut self) {
-        // Check and normalize web roots if not already done
-        if self.normalized_local_web_root.is_none() {
-            let normalized_path_result = NormalizedPath::new(&self.local_web_root, "", true);
-            self.normalized_local_web_root = match normalized_path_result {
-                Ok(path) => Some(path),
-                Err(_) => {
-                    error!("Failed to normalize local web root path: {}", self.local_web_root);
-                    None
-                }
-            };
-        }
-        if self.normalized_fastcgi_web_root.is_none() && !self.fastcgi_web_root.is_empty() {
+        let normalized_path_result = NormalizedPath::new(&self.local_web_root, "", true);
+        self.normalized_local_web_root = match normalized_path_result {
+            Ok(path) => Some(path),
+            Err(_) => {
+                error!("Failed to normalize local web root path: {}", self.local_web_root);
+                None
+            }
+        };
+        if !self.fastcgi_web_root.is_empty() {
             let normalized_path_result = NormalizedPath::new(&self.fastcgi_web_root, "", true);
             self.normalized_fastcgi_web_root = match normalized_path_result {
                 Ok(path) => Some(path),
@@ -85,6 +82,8 @@ impl ProcessorTrait for PHPProcessor {
                     None
                 }
             };
+        } else {
+            self.normalized_fastcgi_web_root = None;
         }
     }
 
@@ -353,4 +352,19 @@ impl PHPProcessor {
             Err(())
         }
     }
+
+}
+
+#[test]
+fn reinitializing_php_processor_updates_web_roots() {
+    let mut processor = PHPProcessor::new();
+    processor.local_web_root = "./www-default".into();
+    processor.fastcgi_web_root = "./www-default".into();
+    processor.initialize();
+    processor.local_web_root = "./www-testing".into();
+    processor.fastcgi_web_root.clear();
+    processor.initialize();
+    let expected = NormalizedPath::new("./www-testing", "", true).unwrap();
+    assert_eq!(processor.normalized_local_web_root.as_ref().unwrap().get_full_path(), expected.get_full_path());
+    assert!(processor.normalized_fastcgi_web_root.is_none());
 }

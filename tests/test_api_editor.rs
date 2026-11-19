@@ -25,7 +25,7 @@ async fn editor_save_preserves_api_resources_and_applies_new_site_processor() {
     }
 
     let client = ApiClient::login().await;
-    let mut config = client.get("/config").await.json;
+    let config = client.get("/config").await.json;
     for field in ["bindings", "sites", "binding_sites"] {
         assert!(config.get(field).is_none(), "/config returned {field}");
     }
@@ -35,7 +35,13 @@ async fn editor_save_preserves_api_resources_and_applies_new_site_processor() {
     let handler_id = uuid::Uuid::new_v4().to_string();
     let processor_id = uuid::Uuid::new_v4().to_string();
     let mut site_data = site_payload();
-    site_data["request_handlers"] = json!([handler_id]);
+    let handler = json!({
+        "id": handler_id, "is_enabled": true, "name": "Editor test", "url_match": ["*"],
+        "processor": { "type": "static", "config": {
+            "id": processor_id, "web_root": root.0.to_str().unwrap().replace('\\', "/"), "web_root_index_file_list": ["index.html"]
+        }}
+    });
+    site_data["request_handlers"] = json!([handler]);
     let (site, response) = CreatedResource::create(&client, "/api/sites", site_data).await;
     assert_eq!(response.status, 201, "{}", response.body);
     let (binding, response) = CreatedResource::create(&client, "/api/bindings", binding_payload()).await;
@@ -45,6 +51,9 @@ async fn editor_save_preserves_api_resources_and_applies_new_site_processor() {
     let port = binding.payload["port"].as_u64().unwrap() as u16;
 
     let original_gzip = config["core"]["gzip"]["is_enabled"].as_bool().unwrap();
+    let mut legacy = config.clone();
+    legacy["request_handlers"] = json!([]);
+    assert_eq!(client.post("/config/editor", Some(&legacy)).await.status, 400);
     for (path, gzip_enabled) in [("/config", !original_gzip), ("/config/editor", original_gzip)] {
         let mut stale = config.clone();
         stale["core"]["gzip"]["is_enabled"] = json!(gzip_enabled);
@@ -62,13 +71,6 @@ async fn editor_save_preserves_api_resources_and_applies_new_site_processor() {
         assert_eq!(client.get(&format!("{}/bindings", site.path())).await.json, json!([binding.id]));
     }
 
-    config["request_handlers"].as_array_mut().unwrap().push(json!({
-        "id": handler_id, "is_enabled": true, "name": "Editor test",
-        "processor_type": "static", "processor_id": processor_id, "url_match": ["*"]
-    }));
-    config["static_file_processors"].as_array_mut().unwrap().push(json!({
-        "id": processor_id, "web_root": root.0.to_str().unwrap(), "web_root_index_file_list": ["index.html"]
-    }));
     let response = client.post("/config/editor", Some(&config)).await;
     assert_eq!(response.status, 200, "{}", response.body);
     assert!(response.json["configuration"].get("sites").is_none());
@@ -81,7 +83,7 @@ async fn editor_save_preserves_api_resources_and_applies_new_site_processor() {
     updated["request_handlers"] = json!([]);
     assert_eq!(client.put("/api/sites", Some(&updated)).await.status, 200);
     assert!(request_site(port, "example.com").await.starts_with("HTTP/1.1 404"));
-    updated["request_handlers"] = json!([handler_id]);
+    updated["request_handlers"] = json!([handler]);
     assert_eq!(client.put("/api/sites", Some(&updated)).await.status, 200);
     assert!(request_site(port, "example.com").await.starts_with("HTTP/1.1 200"));
 

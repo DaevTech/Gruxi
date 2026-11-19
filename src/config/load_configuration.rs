@@ -13,7 +13,7 @@ use crate::http::request_handlers::processors::proxy_processor::{ProxyProcessor,
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
 use crate::telemetry::init::add_telemetry_to_configuration;
 use crate::{
-    config::{binding::Binding, configuration::Configuration, core::Core, request_handler::RequestHandler, save_configuration::save_configuration, site::HeaderKV, site::Site},
+    config::{binding::Binding, configuration::Configuration, core::Core, request_handler::{Processor, RequestHandler}, save_configuration::save_configuration, site::HeaderKV, site::Site},
     core::database_connection::get_database_connection,
 };
 use crate::{info, trace};
@@ -80,6 +80,7 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
     let schema_version = get_schema_version();
 
     let connection = get_database_connection()?;
+    connection.execute("BEGIN").map_err(|e| format!("Failed to begin configuration read: {}", e))?;
 
     // Basic sites and bindings
     let bindings = load_bindings(&connection)?;
@@ -89,14 +90,9 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
     // Server configuration
     let core = load_core_config(&connection)?;
 
-    // Request handlers and attached processors
-    let request_handlers = load_request_handlers(&connection)?;
-    let static_file_processors = load_static_file_processors(&connection)?;
-    let php_processors = load_php_processors(&connection)?;
-    let proxy_processors = load_proxy_processors(&connection)?;
-
     // External systems
     let php_cgi_handlers = load_php_cgi_handlers(&connection)?;
+    connection.execute("COMMIT").map_err(|e| format!("Failed to finish configuration read: {}", e))?;
 
     // Do a sanitize, in case there are any invalid entries in the database
     let mut configuration = Configuration {
@@ -105,10 +101,6 @@ pub fn fetch_configuration_in_db() -> Result<Configuration, String> {
         sites,
         binding_sites,
         core,
-        request_handlers,
-        static_file_processors,
-        php_processors,
-        proxy_processors,
         php_cgi_handlers,
     };
     configuration.sanitize();
@@ -383,6 +375,7 @@ pub(crate) fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
         .map_err(|e| format!("Failed to prepare sites query: {}", e))?;
 
     let mut sites = Vec::new();
+    let mut site_handler_ids = Vec::new();
     while let sqlite::State::Row = statement.next().map_err(|e| format!("Failed to execute sites query: {}", e))? {
         let site_id: String = statement.read(0).map_err(|e| format!("Failed to read site id: {}", e))?;
         let is_default: i64 = statement.read(1).map_err(|e| format!("Failed to read is_default: {}", e))?;
@@ -432,7 +425,7 @@ pub(crate) fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
             tls_cert_content,
             tls_key_path,
             tls_key_content,
-            request_handlers,
+            request_handlers: Vec::new(),
             rewrite_functions,
             access_log_enabled: access_log_enabled != 0,
             access_log_file,
@@ -441,8 +434,43 @@ pub(crate) fn load_sites(connection: &Connection) -> Result<Vec<Site>, String> {
             force_tls_port: force_tls_port as u16,
             canonical_host,
         });
+        site_handler_ids.push(request_handlers);
     }
 
+    drop(statement);
+    if site_handler_ids.iter().any(|ids| !ids.is_empty()) {
+        let handlers = load_request_handlers(connection)?;
+        let static_processors = load_static_file_processors(connection)?;
+        let php_processors = load_php_processors(connection)?;
+        let proxy_processors = load_proxy_processors(connection)?;
+        let mut used_handlers = std::collections::HashSet::new();
+        let mut used_processors = std::collections::HashSet::new();
+        for (site, ids) in sites.iter_mut().zip(site_handler_ids) {
+            for id in ids {
+                if !used_handlers.insert(id.clone()) {
+                    return Err(format!("Request handler '{}' is referenced more than once", id));
+                }
+                let handler = handlers.iter().find(|handler| handler.id == id)
+                    .ok_or_else(|| format!("Site '{}' references missing request handler '{}'", site.id, id))?;
+                if !used_processors.insert((handler.processor_type.clone(), handler.processor_id.clone())) {
+                    return Err(format!("Processor '{}' of type '{}' is referenced more than once", handler.processor_id, handler.processor_type));
+                }
+                let processor = match handler.processor_type.as_str() {
+                    "static" => static_processors.iter().find(|p| p.id == handler.processor_id).cloned().map(Processor::Static),
+                    "php" => php_processors.iter().find(|p| p.id == handler.processor_id).cloned().map(Processor::Php),
+                    "proxy" => proxy_processors.iter().find(|p| p.id == handler.processor_id).cloned().map(Processor::Proxy),
+                    other => return Err(format!("Request handler '{}' has unknown processor type '{}'", id, other)),
+                }.ok_or_else(|| format!("Request handler '{}' references missing {} processor '{}'", id, handler.processor_type, handler.processor_id))?;
+                site.request_handlers.push(RequestHandler {
+                    id: handler.id.clone(),
+                    is_enabled: handler.is_enabled,
+                    name: handler.name.clone(),
+                    url_match: handler.url_match.clone(),
+                    processor,
+                });
+            }
+        }
+    }
     Ok(sites)
 }
 fn load_binding_sites_relationships(connection: &Connection) -> Result<Vec<BindingSiteRelationship>, String> {
@@ -461,7 +489,16 @@ fn load_binding_sites_relationships(connection: &Connection) -> Result<Vec<Bindi
     Ok(binding_sites)
 }
 
-fn load_request_handlers(connection: &Connection) -> Result<Vec<RequestHandler>, String> {
+struct StoredRequestHandler {
+    id: String,
+    is_enabled: bool,
+    name: String,
+    processor_type: String,
+    processor_id: String,
+    url_match: Vec<String>,
+}
+
+fn load_request_handlers(connection: &Connection) -> Result<Vec<StoredRequestHandler>, String> {
     let mut statement = connection
         // Select explicit columns to remain compatible with older schemas that may still have a legacy 'priority' column.
         .prepare("SELECT id, is_enabled, name, processor_type, processor_id, url_match FROM request_handler")
@@ -481,7 +518,7 @@ fn load_request_handlers(connection: &Connection) -> Result<Vec<RequestHandler>,
         // Make sure to lowercase the url match patterns, since matching should be case insensitive
         let url_match = url_match.into_iter().map(|s| s.to_lowercase()).collect();
 
-        request_handlers.push(RequestHandler {
+        request_handlers.push(StoredRequestHandler {
             id: handler_id,
             is_enabled: is_enabled != 0,
             name,

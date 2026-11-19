@@ -57,10 +57,11 @@ impl RunningState {
 
         let generated_binding_ids: HashSet<_> = config.bindings.iter().filter(|binding| binding.is_admin || binding.is_telemetry).map(|binding| &binding.id).collect();
         let generated_site_ids: HashSet<_> = config.binding_sites.iter().filter(|relation| generated_binding_ids.contains(&relation.binding_id)).map(|relation| &relation.site_id).collect();
-        let generated_handler_ids: HashSet<_> = config.sites.iter().filter(|site| generated_site_ids.contains(&site.id)).flat_map(|site| site.request_handlers.iter()).collect();
-        let generated_handlers: Vec<_> = config.request_handlers.iter().filter(|handler| generated_handler_ids.contains(&handler.id)).cloned().collect();
-        let generated_static_ids: HashSet<_> = generated_handlers.iter().filter(|handler| handler.processor_type == "static").map(|handler| &handler.processor_id).collect();
-        let generated_static = config.static_file_processors.iter().filter(|processor| generated_static_ids.contains(&processor.id)).cloned().collect();
+        let generated_handlers: Vec<_> = config.sites.iter().filter(|site| generated_site_ids.contains(&site.id)).flat_map(|site| site.request_handlers.iter().cloned()).collect();
+        let generated_static = generated_handlers.iter().filter_map(|handler| match &handler.processor {
+            crate::config::request_handler::Processor::Static(processor) => Some(processor.clone()),
+            _ => None,
+        }).collect();
 
         // Initialize http clients
         let http_client = HttpClient::new();
@@ -101,7 +102,7 @@ impl RunningState {
     pub async fn refresh_site_processing(&self) -> Result<(), String> {
         let _refresh = self.processing_refresh.lock().await;
         let config = crate::config::load_configuration::fetch_configuration_in_db()?;
-        let request_handlers = RequestHandlerManager::from_handlers(config.request_handlers.iter().chain(&self.generated_handlers));
+        let request_handlers = RequestHandlerManager::from_handlers(config.sites.iter().flat_map(|site| site.request_handlers.iter()).chain(&self.generated_handlers));
         let processors = ProcessorManager::from_configuration(&config, &self.generated_static).await;
         self.site_processing.store(Arc::new(SiteProcessing { request_handlers, processors }));
         Ok(())

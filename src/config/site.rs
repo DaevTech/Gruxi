@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlite::Connection;
 use uuid::Uuid;
+use crate::config::request_handler::RequestHandler;
 
 use crate::error::{
     gruxi_error::GruxiError,
@@ -31,7 +32,7 @@ pub struct Site {
     // Rewrite functions to apply
     pub rewrite_functions: Vec<String>, // List of rewrite functions to apply
     // List of request handelers (and therefore processors) to use, in order of priority
-    pub request_handlers: Vec<String>, // List of request handler IDs for this site
+    pub request_handlers: Vec<RequestHandler>,
     #[serde(default)]
     pub extra_headers: Vec<HeaderKV>,
     // Logs
@@ -92,7 +93,7 @@ impl Site {
         }
 
         for handler in &mut self.request_handlers {
-            *handler = handler.trim().to_string();
+            handler.sanitize();
         }
 
         // Trim whitespace from access log file
@@ -116,10 +117,23 @@ impl Site {
             errors.push("Invalid site id".to_string());
         }
 
-        if self.hostnames.iter().chain(&self.request_handlers).chain(&self.rewrite_functions).any(|value| value.trim().is_empty() || value.contains(',')) {
+        if self.hostnames.iter().chain(&self.rewrite_functions).any(|value| value.trim().is_empty() || value.contains(',')) {
             errors.push("Site lists cannot contain empty values or commas".to_string());
         }
 
+        let mut handler_ids = std::collections::HashSet::new();
+        let mut processor_ids = std::collections::HashSet::new();
+        for handler in &self.request_handlers {
+            if handler.id.contains(',') || !handler_ids.insert(&handler.id) {
+                errors.push(format!("Invalid or duplicate request handler ID '{}'", handler.id));
+            }
+            if !processor_ids.insert((std::mem::discriminant(&handler.processor), handler.processor.id())) {
+                errors.push(format!("Duplicate processor ID '{}'", handler.processor.id()));
+            }
+            if let Err(handler_errors) = handler.validate() {
+                errors.extend(handler_errors.into_iter().map(|error| format!("Request handler '{}': {}", handler.name, error)));
+            }
+        }
         if self.extra_headers.iter().any(|header| header.key.contains([',', '=']) || header.value.contains(',')) {
             errors.push("Extra header keys cannot contain commas or equals signs, and values cannot contain commas".to_string());
         }
@@ -251,6 +265,10 @@ impl Site {
             if !create && !exists {
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Site(SiteError::NotFound)));
             }
+            crate::config::save_configuration::delete_site_handlers(connection, &self.id)
+                .map_err(|e| GruxiError::new(GruxiErrorKind::Database(DatabaseError::QueryFailed), e))?;
+            crate::config::save_configuration::save_site_handlers(connection, self)
+                .map_err(|e| GruxiError::new(GruxiErrorKind::Database(DatabaseError::QueryFailed), e))?;
             self.save_to_db(connection).map_err(|e| database_error("Failed to save site", e))
         })
     }
@@ -258,7 +276,7 @@ impl Site {
     fn save_to_db(&self, connection: &Connection) -> Result<(), sqlite::Error> {
         let headers = self.extra_headers.iter().map(|header| format!("{}={}", header.key, header.value)).collect::<Vec<_>>().join(",");
         let hostnames = self.hostnames.join(",");
-        let handlers = self.request_handlers.join(",");
+        let handlers = self.request_handlers.iter().map(|handler| handler.id.as_str()).collect::<Vec<_>>().join(",");
         let rewrites = self.rewrite_functions.join(",");
 
         // An update must not delete the row, since that would cascade to binding_sites.
@@ -311,6 +329,8 @@ impl Site {
             if referenced().map_err(|e| database_error("Failed to check site relationships", e))? {
                 return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Site(SiteError::Referenced)));
             }
+            crate::config::save_configuration::delete_site_handlers(connection, id)
+                .map_err(|e| GruxiError::new(GruxiErrorKind::Database(DatabaseError::QueryFailed), e))?;
             let delete = || -> Result<(), sqlite::Error> {
                 let mut statement = connection.prepare("DELETE FROM sites WHERE id = ?")?;
                 statement.bind((1, id))?;
@@ -391,13 +411,58 @@ fn test_site_persistence_existence_and_conflicts() {
     site.save(&connection, true).unwrap();
     assert!(Site::exists(&connection, &site.id).unwrap());
     assert!(matches!(site.save(&connection, true), Err(GruxiError { kind: GruxiErrorKind::Site(SiteError::Conflict), .. })));
-
     site.hostnames = vec!["changed.example".to_string()];
     site.save(&connection, false).unwrap();
     assert_eq!(crate::config::load_configuration::load_sites(&connection).unwrap()[0].hostnames, site.hostnames);
     Site::delete(&connection, &site.id).unwrap();
     assert!(!Site::exists(&connection, &site.id).unwrap());
     assert!(matches!(Site::delete(&connection, &site.id), Err(GruxiError { kind: GruxiErrorKind::Site(SiteError::NotFound), .. })));
+}
+
+#[test]
+fn site_handlers_round_trip_and_save_atomically() {
+    use crate::config::request_handler::Processor;
+    use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
+
+    let connection = sqlite::open(":memory:").unwrap();
+    for sql in crate::database::database_schema::DatabaseSchema::new().init_sql {
+        connection.execute(sql).unwrap();
+    }
+    let make_handler = |name: &str| {
+        let mut handler = RequestHandler::new();
+        handler.name = name.to_string();
+        handler.processor = Processor::Static(StaticFileProcessor::new("./www-default".into(), vec!["index.html".into()]));
+        handler
+    };
+    let mut site = Site::new();
+    site.request_handlers = vec![make_handler("first"), make_handler("second")];
+    site.save(&connection, true).unwrap();
+    let loaded = crate::config::load_configuration::load_sites(&connection).unwrap();
+    assert_eq!(loaded[0].request_handlers.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(), vec!["first", "second"]);
+
+    site.request_handlers.reverse();
+    site.request_handlers[0].name = "changed".into();
+    site.save(&connection, false).unwrap();
+    let loaded = crate::config::load_configuration::load_sites(&connection).unwrap();
+    assert_eq!(loaded[0].request_handlers.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(), vec!["changed", "first"]);
+
+    let mut other = Site::new();
+    other.request_handlers.push(make_handler("other"));
+    other.save(&connection, true).unwrap();
+    site.request_handlers.push(other.request_handlers[0].clone());
+    assert!(site.save(&connection, false).is_err());
+    let loaded = crate::config::load_configuration::load_sites(&connection).unwrap();
+    let saved = loaded.iter().find(|saved| saved.id == site.id).unwrap();
+    assert_eq!(saved.request_handlers.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(), vec!["changed", "first"]);
+
+    Site::delete(&connection, &site.id).unwrap();
+    let mut statement = connection.prepare("SELECT COUNT(*) FROM request_handler").unwrap();
+    statement.next().unwrap();
+    assert_eq!(statement.read::<i64, _>(0).unwrap(), 1);
+    drop(statement);
+    let mut statement = connection.prepare("SELECT COUNT(*) FROM static_file_processors").unwrap();
+    statement.next().unwrap();
+    assert_eq!(statement.read::<i64, _>(0).unwrap(), 1);
 }
 
 #[test]
@@ -409,14 +474,11 @@ fn test_site_validation_storage_constraints() {
     }
 
     site.id = "valid-id".to_string();
-    for (hostnames, handlers, rewrites) in [
-        (vec!["one.example,two.example"], vec![], vec![]),
-        (vec!["example.com"], vec!["  "], vec![]),
-        (vec!["example.com"], vec!["one,two"], vec![]),
-        (vec!["example.com"], vec![], vec!["one,two"]),
+    for (hostnames, rewrites) in [
+        (vec!["one.example,two.example"], vec![]),
+        (vec!["example.com"], vec!["one,two"]),
     ] {
         site.hostnames = hostnames.into_iter().map(str::to_string).collect();
-        site.request_handlers = handlers.into_iter().map(str::to_string).collect();
         site.rewrite_functions = rewrites.into_iter().map(str::to_string).collect();
         assert!(site.validate().unwrap_err().iter().any(|error| error.contains("Site lists")));
     }
@@ -431,10 +493,11 @@ fn test_site_validation_storage_constraints() {
 #[test]
 fn test_site_sanitize_request_handlers() {
     let mut site = Site::new();
-    site.request_handlers = vec![" handler-id ".to_string()];
+    let mut handler = RequestHandler::new();
+    handler.id = " handler-id ".to_string();
+    site.request_handlers = vec![handler];
     site.sanitize();
-    assert_eq!(site.request_handlers, vec!["handler-id"]);
-    assert!(site.validate().is_ok());
+    assert_eq!(site.request_handlers[0].id, "handler-id");
 }
 
 #[test]

@@ -2,7 +2,7 @@ use crate::config::binding::Binding;
 use crate::config::configuration::Configuration;
 use crate::config::core::Core;
 use crate::config::load_configuration::fetch_configuration_in_db;
-use crate::config::request_handler::RequestHandler;
+use crate::config::request_handler::{Processor, RequestHandler};
 use crate::config::site::HeaderKV;
 use crate::config::site::Site;
 use crate::core::database_connection::get_database_connection;
@@ -41,9 +41,6 @@ fn save_configuration_inner(config: &mut Configuration, force: bool, preserve_re
 
     // Then we validate the configuration
     config.validate()?;
-
-    // Clean orphans (like remove processor no longer used or request handlers not referenced)
-    config.clean_orphans();
 
     // Check if the configuration is different from what's currently in the database
     let current_config = fetch_configuration_in_db().map_err(|e| vec![format!("Failed to fetch current configuration from database: {}", e)])?;
@@ -102,37 +99,23 @@ fn save_configuration_inner(config: &mut Configuration, force: bool, preserve_re
         }
     }
 
-    // Save request handlers, but clear existing one first
-    connection
-        .execute("DELETE FROM request_handler")
-        .map_err(|e| vec![format!("Failed to clear existing request handlers: {}", e)])?;
-    for handler in &config.request_handlers {
-        save_request_handler(&connection, handler).map_err(|e| vec![format!("Failed to save request handler: {}", e)])?;
-    }
-
-    // Save static file processors, clear existing first
-    connection
-        .execute("DELETE FROM static_file_processors")
-        .map_err(|e| vec![format!("Failed to clear existing processors: {}", e)])?;
-    for processor in &config.static_file_processors {
-        save_static_file_processor(&connection, processor).map_err(|e| vec![format!("Failed to save static file processor: {}", e)])?;
-    }
-
-    // Save PHP processors, clear existing first
-    connection
-        .execute("DELETE FROM php_processors")
-        .map_err(|e| vec![format!("Failed to clear existing PHP processors: {}", e)])?;
-    for processor in &config.php_processors {
-        save_php_processor(&connection, processor).map_err(|e| vec![format!("Failed to save PHP processor: {}", e)])?;
-    }
-
-    // Save proxy processors, clear existing first
-    connection
-        .execute("DELETE FROM proxy_processors")
-        .map_err(|e| vec![format!("Failed to clear existing Proxy processors: {}", e)])?;
-    for processor in &config.proxy_processors {
-        // Implement save_proxy_processor similarly to other save functions
-        save_proxy_processor(&connection, processor).map_err(|e| vec![format!("Failed to save Proxy processor: {}", e)])?;
+    // Site-owned handlers and processors are only changed with their sites.
+    if !preserve_resources {
+        connection
+            .execute("DELETE FROM request_handler")
+            .map_err(|e| vec![format!("Failed to clear existing request handlers: {}", e)])?;
+        connection
+            .execute("DELETE FROM static_file_processors")
+            .map_err(|e| vec![format!("Failed to clear existing processors: {}", e)])?;
+        connection
+            .execute("DELETE FROM php_processors")
+            .map_err(|e| vec![format!("Failed to clear existing PHP processors: {}", e)])?;
+        connection
+            .execute("DELETE FROM proxy_processors")
+            .map_err(|e| vec![format!("Failed to clear existing Proxy processors: {}", e)])?;
+        for site in &config.sites {
+            save_site_handlers(&connection, site).map_err(|e| vec![format!("Failed to save site handlers: {}", e)])?;
+        }
     }
 
     if !preserve_resources {
@@ -159,7 +142,7 @@ fn save_proxy_processor(connection: &Connection, processor: &ProxyProcessor) -> 
     connection
         .execute(format!(
             "INSERT INTO proxy_processors (id, proxy_type, upstream_servers, load_balancing_strategy, timeout_seconds, health_check_path, health_check_interval_seconds, health_check_timeout_seconds, url_rewrites, preserve_host_header, forced_host_header, verify_tls_certificates) VALUES ('{}', '{}', '{}', '{}', {}, '{}', {}, {}, '{}', {}, '{}', {})",
-            processor.id,
+            processor.id.replace("'", "''"),
             processor.proxy_type.replace("'", "''"),
             processor.upstream_servers.join(",").replace("'", "''"),
             processor.load_balancing_strategy.replace("'", "''"),
@@ -181,7 +164,7 @@ fn save_php_processor(connection: &Connection, processor: &PHPProcessor) -> Resu
     connection
         .execute(format!(
             "INSERT INTO php_processors (id, served_by_type, php_cgi_handler_id, fastcgi_ip_and_port, request_timeout, local_web_root, fastcgi_web_root, server_software_spoof) VALUES ('{}', '{}', '{}', '{}', {}, '{}', '{}', '{}')",
-            processor.id,
+            processor.id.replace("'", "''"),
             processor.served_by_type.replace("'", "''"),
             processor.php_cgi_handler_id.replace("'", "''"),
             processor.fastcgi_ip_and_port.replace("'", "''"),
@@ -214,7 +197,7 @@ fn save_static_file_processor(connection: &Connection, processor: &StaticFilePro
     connection
         .execute(format!(
             "INSERT INTO static_file_processors (id, web_root, web_root_index_file_list) VALUES ('{}', '{}', '{}')",
-            processor.id,
+            processor.id.replace("'", "''"),
             processor.web_root.replace("'", "''"),
             processor.web_root_index_file_list.join(",").replace("'", "''")
         ))
@@ -363,7 +346,7 @@ pub fn save_site(connection: &Connection, site: &Site) -> Result<(), String> {
             site.tls_cert_content.replace("'", "''"),
             site.tls_key_path.replace("'", "''"),
             site.tls_key_content.replace("'", "''"),
-            site.request_handlers.join(","),
+            site.request_handlers.iter().map(|handler| handler.id.as_str()).collect::<Vec<_>>().join(",").replace("'", "''"),
             site.rewrite_functions.join(","),
             if site.access_log_enabled { 1 } else { 0 },
             site.access_log_file.replace("'", "''"),
@@ -385,17 +368,69 @@ fn save_request_handler(connection: &Connection, handler: &RequestHandler) -> Re
     let url_match_str = handler.url_match.join(",");
 
     // Insert request handler with comma-separated fields
+    let (processor_type, processor_id) = match &handler.processor {
+        Processor::Static(processor) => ("static", &processor.id),
+        Processor::Php(processor) => ("php", &processor.id),
+        Processor::Proxy(processor) => ("proxy", &processor.id),
+    };
     connection
         .execute(format!(
             "INSERT INTO request_handler (id, is_enabled, name, processor_type, processor_id, url_match) VALUES ('{}', {}, '{}', '{}', '{}', '{}')",
-            handler.id,
+            handler.id.replace("'", "''"),
             if handler.is_enabled { 1 } else { 0 },
             handler.name.replace("'", "''"),
-            handler.processor_type,
-            handler.processor_id,
-            url_match_str
+            processor_type,
+            processor_id.replace("'", "''"),
+            url_match_str.replace("'", "''")
         ))
         .map_err(|e| format!("Failed to insert request handler: {}", e))?;
 
+    Ok(())
+}
+
+pub(crate) fn save_site_handlers(connection: &Connection, site: &Site) -> Result<(), String> {
+    for handler in &site.request_handlers {
+        match &handler.processor {
+            Processor::Static(processor) => save_static_file_processor(connection, processor)?,
+            Processor::Php(processor) => save_php_processor(connection, processor)?,
+            Processor::Proxy(processor) => save_proxy_processor(connection, processor)?,
+        }
+        save_request_handler(connection, handler)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn delete_site_handlers(connection: &Connection, site_id: &str) -> Result<(), String> {
+    let mut statement = connection.prepare("SELECT request_handlers FROM sites WHERE id = ?").map_err(|e| e.to_string())?;
+    statement.bind((1, site_id)).map_err(|e| e.to_string())?;
+    let ids = if statement.next().map_err(|e| e.to_string())? == State::Row {
+        let value: String = statement.read(0).map_err(|e| e.to_string())?;
+        crate::util::string_manipulation::parse_comma_separated_list(&value, false)
+    } else {
+        Vec::new()
+    };
+    drop(statement);
+    for id in ids {
+        let mut query = connection.prepare("SELECT processor_type, processor_id FROM request_handler WHERE id = ?").map_err(|e| e.to_string())?;
+        query.bind((1, id.as_str())).map_err(|e| e.to_string())?;
+        if query.next().map_err(|e| e.to_string())? != State::Row {
+            return Err(format!("Site '{}' references missing request handler '{}'", site_id, id));
+        }
+        let processor_type: String = query.read(0).map_err(|e| e.to_string())?;
+        let processor_id: String = query.read(1).map_err(|e| e.to_string())?;
+        drop(query);
+        let table = match processor_type.as_str() {
+            "static" => "static_file_processors",
+            "php" => "php_processors",
+            "proxy" => "proxy_processors",
+            _ => return Err(format!("Unknown processor type '{}' for handler '{}'", processor_type, id)),
+        };
+        let mut delete = connection.prepare("DELETE FROM request_handler WHERE id = ?").map_err(|e| e.to_string())?;
+        delete.bind((1, id.as_str())).map_err(|e| e.to_string())?;
+        delete.next().map_err(|e| e.to_string())?;
+        let mut delete = connection.prepare(format!("DELETE FROM {} WHERE id = ?", table)).map_err(|e| e.to_string())?;
+        delete.bind((1, processor_id.as_str())).map_err(|e| e.to_string())?;
+        delete.next().map_err(|e| e.to_string())?;
+    }
     Ok(())
 }

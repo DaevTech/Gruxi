@@ -51,17 +51,13 @@ impl StaticFileProcessor {
 
 impl ProcessorTrait for StaticFileProcessor {
     fn initialize(&mut self) {
-        // Check and normalize web root if not already done
-        if self.normalized_web_root.is_none() {
-            let normalized_path_result = NormalizedPath::new(&self.web_root, "", true);
-            self.normalized_web_root = match normalized_path_result {
-                Ok(path) => Some(path),
-                Err(_) => {
-                    error!("Failed to normalize web root path: {}", self.web_root);
-                    return;
-                }
-            };
-        }
+        self.normalized_web_root = match NormalizedPath::new(&self.web_root, "", true) {
+            Ok(path) => Some(path),
+            Err(_) => {
+                error!("Failed to normalize web root path: {}", self.web_root);
+                None
+            }
+        };
     }
 
     fn sanitize(&mut self) {
@@ -377,6 +373,17 @@ impl StaticFileProcessor {
                     response.headers_mut().insert(header_name, value);
                 }
             }
+
         }
     }
+}
+
+#[test]
+fn reinitializing_static_processor_updates_web_root() {
+    let mut processor = StaticFileProcessor::new("./www-default".into(), vec![]);
+    processor.initialize();
+    processor.web_root = "./www-testing".into();
+    processor.initialize();
+    let expected = NormalizedPath::new("./www-testing", "", true).unwrap();
+    assert_eq!(processor.normalized_web_root.as_ref().unwrap().get_full_path(), expected.get_full_path());
 }

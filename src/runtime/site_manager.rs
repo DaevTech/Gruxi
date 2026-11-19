@@ -14,12 +14,23 @@ use crate::{
         gruxi_error_enums::{DatabaseError, GruxiErrorKind, GruxiRuntimeError::RequestHandling, SiteError},
     },
     http::site_match::site_matcher::find_best_match_site,
+    http::request_handlers::processors::processor_manager::ProcessorManager,
     warn,
 };
 
-#[derive(Debug)]
 pub struct SiteRuntime {
     pub site: Site,
+    pub processors: Arc<ProcessorManager>,
+}
+
+impl SiteRuntime {
+    pub fn new(mut site: Site) -> Self {
+        for handler in &mut site.request_handlers {
+            handler.processor.initialize();
+        }
+        let processors = Arc::new(ProcessorManager::from_site(&site));
+        Self { site, processors }
+    }
 }
 
 pub struct SiteManager {
@@ -64,11 +75,28 @@ impl SiteManager {
         if create && sites.contains_key(&site.id) {
             return Err(GruxiError::new_with_kind_only(GruxiErrorKind::Site(SiteError::Conflict)));
         }
-        site.save(connection, create)?;
-        if let Some(slot) = sites.get(&site.id) {
-            slot.store(Arc::new(SiteRuntime { site }));
+        let previous = sites.get(&site.id).map(|slot| slot.load_full());
+        let mut site = site;
+        for handler in &mut site.request_handlers {
+            handler.processor.initialize();
+        }
+        let same_processors = if let Some(previous) = &previous {
+            let serialize = |site: &Site| serde_json::to_vec(&site.request_handlers.iter().map(|handler| &handler.processor).collect::<Vec<_>>())
+                .map_err(|error| GruxiError::new(GruxiErrorKind::Internal("failed to compare site processors"), error.to_string()));
+            serialize(&site)? == serialize(&previous.site)?
         } else {
-            sites.insert(site.id.clone(), Arc::new(ArcSwap::from_pointee(SiteRuntime { site })));
+            false
+        };
+        let processors = match previous {
+            Some(previous) if same_processors => Arc::clone(&previous.processors),
+            _ => Arc::new(ProcessorManager::from_site(&site)),
+        };
+        let runtime = SiteRuntime { site, processors };
+        runtime.site.save(connection, create)?;
+        if let Some(slot) = sites.get(&runtime.site.id) {
+            slot.store(Arc::new(runtime));
+        } else {
+            sites.insert(runtime.site.id.clone(), Arc::new(ArcSwap::from_pointee(runtime)));
         }
         Ok(())
     }
@@ -102,11 +130,19 @@ impl SiteManager {
             if let Some(site_runtime) = find_best_match_site(sites, hostname) {
                 return Ok(Arc::clone(&site_runtime));
             }
+
         }
         Err(GruxiError::new(
             GruxiErrorKind::Runtime(RequestHandling),
             format!("No site found for binding ID {} for hostname {}", binding_id, hostname),
         ))
+    }
+
+    pub fn get_site_by_id(&self, site_id: &str) -> Result<Arc<SiteRuntime>, GruxiError> {
+        let sites = self.sites.lock().map_err(|e| GruxiError::new(GruxiErrorKind::Internal("site manager lock poisoned"), e.to_string()))?;
+        sites.get(site_id).map(|site| site.load_full()).ok_or_else(|| {
+            GruxiError::new(GruxiErrorKind::Site(SiteError::NotFound), format!("Site '{}' not found", site_id))
+        })
     }
 
     pub fn get_sites_for_binding(&self, binding_id: &str) -> Vec<Arc<SiteRuntime>> {
@@ -247,7 +283,7 @@ impl SiteManager {
         let mut site = original.site.clone();
         site.tls_cert_path = cert_path.to_string();
         site.tls_key_path = key_path.to_string();
-        slot.store(Arc::new(SiteRuntime { site }));
+        slot.store(Arc::new(SiteRuntime { site, processors: Arc::clone(&original.processors) }));
         Ok(())
     }
     fn load_all_sites(&mut self, configuration: &Configuration) -> Result<(), GruxiError> {
@@ -276,7 +312,7 @@ impl SiteManager {
 
         // For each site, we add it a hashmap with site id being the key
         for site in sites {
-            let site_runtime = SiteRuntime { site };
+            let site_runtime = SiteRuntime::new(site);
             self.sites
                 .get_mut()
                 .map_err(|e| GruxiError::new(GruxiErrorKind::Internal("site manager lock poisoned"), e.to_string()))?
@@ -304,7 +340,7 @@ impl SiteManager {
                         .get_mut()
                         .map_err(|e| GruxiError::new(GruxiErrorKind::Internal("site manager lock poisoned"), e.to_string()))?
                         .entry(site.id.clone())
-                        .or_insert_with(|| Arc::new(ArcSwap::from_pointee(SiteRuntime { site: site.clone() })));
+                        .or_insert_with(|| Arc::new(ArcSwap::from_pointee(SiteRuntime::new(site.clone()))));
                 }
                 self.add_site_relationships(vec![relationship.clone()]);
             }
@@ -411,7 +447,7 @@ mod tests {
         let mut manager = SiteManager::new();
         let site = Site::new();
         let site_id = site.id.clone();
-        manager.sites.get_mut().unwrap().insert(site_id.clone(), Arc::new(ArcSwap::new(Arc::new(SiteRuntime { site }))));
+        manager.sites.get_mut().unwrap().insert(site_id.clone(), Arc::new(ArcSwap::new(Arc::new(SiteRuntime::new(site)))));
         manager.add_site_relationships(vec![
             BindingSiteRelationship {
                 binding_id: "first".into(),
@@ -430,7 +466,7 @@ mod tests {
         assert!(!manager.binding_to_sites_lookup.load().contains_key("missing"));
         let mut updated_site = manager.sites.lock().unwrap()[&site_id].load().site.clone();
         updated_site.is_enabled = false;
-        manager.sites.lock().unwrap()[&site_id].store(Arc::new(SiteRuntime { site: updated_site }));
+        manager.sites.lock().unwrap()[&site_id].store(Arc::new(SiteRuntime::new(updated_site)));
 
         for binding_id in ["first", "second"] {
             let lookup = manager.binding_to_sites_lookup.load();
@@ -438,6 +474,59 @@ mod tests {
             assert_eq!(site.site.id, site_id);
             assert!(!site.site.is_enabled);
         }
+    }
+
+    #[test]
+    fn site_update_publishes_handlers_with_site_snapshot() {
+        use crate::config::request_handler::{Processor, RequestHandler};
+        use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
+
+        let connection = sqlite::open(":memory:").unwrap();
+        for sql in DatabaseSchema::new().init_sql {
+            connection.execute(sql).unwrap();
+        }
+        let manager = SiteManager::new();
+        let mut sites = manager.sites.lock().unwrap();
+        let mut site = Site::new();
+        let mut handler = RequestHandler::new();
+        handler.processor = Processor::Static(StaticFileProcessor::new("./www-default".into(), vec![]));
+        handler.name = "before".into();
+        site.request_handlers.push(handler);
+        manager.change_site_in_connection(&connection, &mut sites, site.clone(), true).unwrap();
+        let original = sites[&site.id].load_full();
+        site.request_handlers[0].name = "after".into();
+        manager.change_site_in_connection(&connection, &mut sites, site.clone(), false).unwrap();
+        let updated = sites[&site.id].load_full();
+        assert_eq!(original.site.request_handlers[0].name, "before");
+        assert_eq!(updated.site.request_handlers[0].name, "after");
+        assert!(Arc::ptr_eq(&original.processors, &updated.processors));
+        if let Processor::Static(processor) = &mut site.request_handlers[0].processor {
+            processor.web_root = "./www-testing".into();
+        }
+        manager.change_site_in_connection(&connection, &mut sites, site.clone(), false).unwrap();
+        assert!(!Arc::ptr_eq(&updated.processors, &sites[&site.id].load_full().processors));
+    }
+
+    #[tokio::test]
+    async fn proxy_load_balancers_follow_site_snapshots() {
+        use crate::config::request_handler::{Processor, RequestHandler};
+        use crate::http::request_handlers::processors::proxy_processor::ProxyProcessor;
+
+        let mut processor = ProxyProcessor::new();
+        processor.health_check_path.clear();
+        processor.upstream_servers = vec!["http://old.example".into()];
+        let id = processor.id.clone();
+        let mut handler = RequestHandler::new();
+        handler.processor = Processor::Proxy(processor);
+        let mut site = Site::new();
+        site.request_handlers.push(handler);
+        let original = SiteRuntime::new(site.clone());
+        if let Processor::Proxy(processor) = &mut site.request_handlers[0].processor {
+            processor.upstream_servers = vec!["http://new.example".into()];
+        }
+        let updated = SiteRuntime::new(site);
+        assert_eq!(original.processors.load_balancer_registry.get_next_server(&id).await.as_deref(), Some("http://old.example"));
+        assert_eq!(updated.processors.load_balancer_registry.get_next_server(&id).await.as_deref(), Some("http://new.example"));
     }
 
     #[test]

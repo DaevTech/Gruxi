@@ -3,21 +3,61 @@ use uuid::Uuid;
 
 use crate::{
     config::site::Site, error::{gruxi_error::GruxiError, gruxi_error_enums::*}, http::{
-        request_handlers::{processor_trait::ProcessorTrait, processors::processor_manager::ProcessorManager},
+        request_handlers::{processor_trait::ProcessorTrait, processors::{processor_manager::ProcessorManager, php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor}},
         request_response::{gruxi_request::GruxiRequest, gruxi_response::GruxiResponse},
-    }, runtime::binding_manager::BindingRuntime, trace,
+    }, runtime::binding_manager::BindingRuntime,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RequestHandler {
-    pub id: String,             // Generated uuid, unique, so it can be referenced from sites as a handler
+    pub id: String,             // Generated uuid, unique identifier for this handler
     pub is_enabled: bool,       // Whether it is enabled or not
     pub name: String,           // A name to identify the handler for the user, self chosen
-    pub processor_type: String, // Reference to the type of processor, e.g., "static_file", "proxy", "php" etc.
-    // Reference to specific processor that will handle the request
-    pub processor_id: String, // The processor ID
+    pub processor: Processor,
     // Match patterns
     pub url_match: Vec<String>, // /api, /admin/1*, *.php etc (use * to match all URLs)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "config", rename_all = "lowercase")]
+pub enum Processor {
+    Static(StaticFileProcessor),
+    Php(PHPProcessor),
+    Proxy(ProxyProcessor),
+}
+
+impl Processor {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Static(processor) => &processor.id,
+            Self::Php(processor) => &processor.id,
+            Self::Proxy(processor) => &processor.id,
+        }
+    }
+
+    pub fn sanitize(&mut self) {
+        match self {
+            Self::Static(processor) => processor.sanitize(),
+            Self::Php(processor) => processor.sanitize(),
+            Self::Proxy(processor) => processor.sanitize(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        match self {
+            Self::Static(processor) => processor.validate(),
+            Self::Php(processor) => processor.validate(),
+            Self::Proxy(processor) => processor.validate(),
+        }
+    }
+
+    pub fn initialize(&mut self) {
+        match self {
+            Self::Static(processor) => processor.initialize(),
+            Self::Php(processor) => processor.initialize(),
+            Self::Proxy(processor) => processor.initialize(),
+        }
+    }
 }
 
 impl Default for RequestHandler {
@@ -32,8 +72,7 @@ impl RequestHandler {
             id: Uuid::new_v4().to_string(),
             is_enabled: true,
             name: "New Request Handler".to_string(),
-            processor_type: "".to_string(),
-            processor_id: String::new(),
+            processor: Processor::Static(StaticFileProcessor::new(String::new(), Vec::new())),
             url_match: vec!["*".to_string()],
         }
     }
@@ -66,6 +105,7 @@ impl RequestHandler {
     }
 
     pub fn sanitize(&mut self) {
+        self.processor.sanitize();
         // Trim and clean ID
         self.id = self.id.trim().to_string();
 
@@ -112,58 +152,22 @@ impl RequestHandler {
             }
         }
 
+        if let Err(processor_errors) = self.processor.validate() {
+            errors.extend(processor_errors);
+        }
+        if self.processor.id().trim().is_empty() {
+            errors.push("Processor ID cannot be empty".to_string());
+        }
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
     pub async fn handle_request(&self, gruxi_request: &mut GruxiRequest, site: &Site, binding_runtime: &BindingRuntime, processor_manager: &ProcessorManager) -> Result<GruxiResponse, GruxiError> {
 
         // Depending on request handler type, we get the appropriate processor
-        let response_result = match self.processor_type.as_str() {
-            "static" => {
-                trace!("Handling request with static file processor id '{}'", &self.processor_id);
-                let pm_option = processor_manager.get_static_file_processor_by_id(&self.processor_id);
-                match pm_option {
-                    Some(p) => p.handle_request(gruxi_request, site, binding_runtime).await,
-                    None => {
-                        return Err(GruxiError::new(
-                            GruxiErrorKind::StaticFileProcessor(StaticFileProcessorError::Internal),
-                            format!("Static files processor with id '{}' not found for request handler '{}'", &self.processor_id, &self.name),
-                        ));
-                    }
-                }
-            }
-            "php" => {
-                trace!("Handling request with PHP processor id '{}'", &self.processor_id);
-                let pm_option = processor_manager.get_php_processor_by_id(&self.processor_id);
-                match pm_option {
-                    Some(p) => p.handle_request(gruxi_request, site, binding_runtime).await,
-                    None => {
-                        return Err(GruxiError::new(
-                            GruxiErrorKind::PHPProcessor(PHPProcessorError::Internal),
-                            format!("PHP processor with id '{}' not found for request handler '{}'", &self.processor_id, &self.name),
-                        ));
-                    }
-                }
-            }
-            "proxy" => {
-                trace!("Handling request with proxy processor id '{}'", &self.processor_id);
-                let pm_option = processor_manager.get_proxy_processor_by_id(&self.processor_id);
-                match pm_option {
-                    Some(p) => p.handle_request_with_manager(gruxi_request, processor_manager).await,
-                    None => {
-                        return Err(GruxiError::new(
-                            GruxiErrorKind::ProxyProcessor(ProxyProcessorError::Internal),
-                            format!("Proxy processor with id '{}' not found for request handler '{}'", &self.processor_id, &self.name),
-                        ));
-                    }
-                }
-            }
-            _ => {
-                return Err(GruxiError::new(
-                    GruxiErrorKind::Internal("Unknown processor type"),
-                    format!("Request handler with unknown type '{}' not found for request handler with id '{}'", &self.processor_type, &self.id),
-                ));
-            }
+        let response_result = match &self.processor {
+            Processor::Static(processor) => processor.handle_request(gruxi_request, site, binding_runtime).await,
+            Processor::Php(processor) => processor.handle_request(gruxi_request, site, binding_runtime).await,
+            Processor::Proxy(processor) => processor.handle_request_with_manager(gruxi_request, processor_manager).await,
         };
 
         match &response_result {
@@ -296,6 +300,8 @@ mod tests {
     }
 
     fn create_valid_handler() -> RequestHandler {
-        RequestHandler::new()
+        let mut handler = RequestHandler::new();
+        handler.processor = Processor::Static(StaticFileProcessor::new("./www-default".into(), vec![]));
+        handler
     }
 }

@@ -39,7 +39,7 @@ mod tests {
     use crate::config::site::Site;
 
     fn site_runtimes(sites: Vec<Site>) -> Vec<Arc<ArcSwap<SiteRuntime>>> {
-        sites.into_iter().map(|site| Arc::new(ArcSwap::from_pointee(SiteRuntime { site }))).collect()
+        sites.into_iter().map(|site| Arc::new(ArcSwap::from_pointee(SiteRuntime::new(site)))).collect()
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -150,7 +150,7 @@ mod tests {
         let matched = find_best_match_site(&sites, "original.example").unwrap();
         let mut updated = original.clone();
         updated.hostnames = vec!["updated.example".to_string()];
-        sites[0].store(Arc::new(SiteRuntime { site: updated }));
+        sites[0].store(Arc::new(SiteRuntime::new(updated)));
 
         assert_eq!(matched.site.hostnames, original.hostnames);
         assert!(find_best_match_site(&sites, "original.example").is_none());

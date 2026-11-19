@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::config::configuration::Configuration;
+use crate::config::{request_handler::Processor, site::Site};
 
 use crate::http::request_handlers::processors::{
     load_balancers::load_balancer::LoadBalancerRegistry, php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor,
@@ -30,28 +31,38 @@ impl ProcessorManager {
         };
 
         // Insert the static file processors from config
-        config.static_file_processors.iter().chain(generated_static).for_each(|p| {
+        for handler in config.sites.iter().flat_map(|site| &site.request_handlers) {
+            processor_manager.insert_processor(&handler.processor);
+        }
+        for p in generated_static {
             processor_manager.static_file_processors.insert(p.id.clone(), p.clone());
-        });
-
-        // Insert the PHP processors from config
-        config.php_processors.iter().for_each(|p| {
-            processor_manager.php_processors.insert(p.id.clone(), p.clone());
-        });
-
-        // Insert the proxy processors from config
-        config.proxy_processors.iter().for_each(|p| {
-            processor_manager.proxy_processors.insert(p.id.clone(), p.clone());
-        });
-
-        // Create load balancers for proxy processors
-        for proxy_processor in processor_manager.proxy_processors.values() {
-            // Currently, we load the processors even if the request handler is not enabled.
-            let lb = proxy_processor.get_load_balancer_service();
-            processor_manager.load_balancer_registry.create(proxy_processor.id.clone(), lb).await;
         }
 
         processor_manager
+    }
+
+    fn insert_processor(&mut self, processor: &Processor) {
+        match processor {
+            Processor::Static(p) => { self.static_file_processors.insert(p.id.clone(), p.clone()); }
+            Processor::Php(p) => { self.php_processors.insert(p.id.clone(), p.clone()); }
+            Processor::Proxy(p) => { self.proxy_processors.insert(p.id.clone(), p.clone()); }
+        }
+    }
+
+    pub fn from_site(site: &Site) -> Self {
+        let mut manager = Self {
+            static_file_processors: HashMap::new(),
+            php_processors: HashMap::new(),
+            proxy_processors: HashMap::new(),
+            load_balancer_registry: LoadBalancerRegistry::new(),
+        };
+        for handler in &site.request_handlers {
+            manager.insert_processor(&handler.processor);
+        }
+        for processor in manager.proxy_processors.values() {
+            manager.load_balancer_registry.create_initial(processor.id.clone(), processor.get_load_balancer_service());
+        }
+        manager
     }
 
     pub fn get_static_file_processor_by_id(&self, processor_id: &String) -> Option<&StaticFileProcessor> {

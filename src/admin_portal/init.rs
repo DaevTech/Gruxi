@@ -1,7 +1,7 @@
 use uuid::Uuid;
 use crate::config::binding::Protocol;
 use crate::error;
-use crate::{config::{binding::Binding, binding_site_relation::BindingSiteRelationship, configuration::Configuration, request_handler::RequestHandler, site::{HeaderKV, Site}}, core::admin_user::create_default_admin_user, error::{gruxi_error::GruxiError, gruxi_error_enums::{GruxiErrorKind, InitAdminPortalError}}, file::app_paths::get_app_paths, http::request_handlers::processors::static_files_processor::StaticFileProcessor};
+use crate::{config::{binding::Binding, binding_site_relation::BindingSiteRelationship, configuration::Configuration, request_handler::{Processor, RequestHandler}, site::{HeaderKV, Site}}, core::admin_user::create_default_admin_user, error::{gruxi_error::GruxiError, gruxi_error_enums::{GruxiErrorKind, InitAdminPortalError}}, file::app_paths::get_app_paths, http::request_handlers::processors::static_files_processor::StaticFileProcessor};
 use crate::http::request_handlers::processor_trait::ProcessorTrait;
 
 pub fn initialize_admin_site() -> Result<(), GruxiError>{
@@ -48,8 +48,7 @@ pub fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
         id: Uuid::new_v4().to_string(),
         is_enabled: true,
         name: "Static File Handler".to_string(),
-        processor_type: "static".to_string(),
-        processor_id: request_static_processor.id.clone(),
+        processor: Processor::Static(request_static_processor),
         url_match: vec!["*".to_string()],
     };
 
@@ -73,7 +72,7 @@ pub fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
         tls_cert_content: "".to_string(),
         tls_key_path: configuration.core.admin_portal.get_tls_key_path(),
         tls_key_content: "".to_string(),
-        request_handlers: vec![request_handler.id.clone()],
+        request_handlers: vec![request_handler],
         rewrite_functions: vec![],
         extra_headers: vec![
             HeaderKV {
@@ -118,8 +117,5 @@ pub fn add_admin_portal_to_configuration(configuration: &mut Configuration) {
         site_id: admin_site.id.clone(),
     });
     configuration.sites.push(admin_site);
-    configuration.request_handlers.push(request_handler);
-    configuration.static_file_processors.push(request_static_processor);
-
     configuration.bindings.push(admin_binding);
 }

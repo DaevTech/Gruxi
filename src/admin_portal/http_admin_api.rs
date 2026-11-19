@@ -4,8 +4,6 @@ use crate::config::configuration::Configuration;
 use crate::config::save_configuration::save_configuration_preserving_resources;
 use crate::config::site::Site;
 use crate::config::core::Core;
-use crate::config::request_handler::RequestHandler;
-use crate::http::request_handlers::processors::{php_processor::PHPProcessor, proxy_processor::ProxyProcessor, static_files_processor::StaticFileProcessor};
 use crate::core::admin_user::{LoginRequest, Session, authenticate_user, change_user_password, create_session, create_unauthenticated_admin_session, invalidate_session, verify_session_token};
 use crate::core::monitoring::get_monitoring_state;
 use crate::core::operation_mode::{get_operation_mode_as_string, is_valid_operation_mode, set_new_operation_mode};
@@ -44,10 +42,6 @@ const ADMIN_COOKIE_MAX_AGE_SECONDS: i64 = 24 * 60 * 60;
 struct AdminConfiguration {
     version: i32,
     core: Core,
-    request_handlers: Vec<RequestHandler>,
-    static_file_processors: Vec<StaticFileProcessor>,
-    php_processors: Vec<PHPProcessor>,
-    proxy_processors: Vec<ProxyProcessor>,
 }
 
 impl From<Configuration> for AdminConfiguration {
@@ -55,10 +49,6 @@ impl From<Configuration> for AdminConfiguration {
         Self {
             version: config.version,
             core: config.core,
-            request_handlers: config.request_handlers,
-            static_file_processors: config.static_file_processors,
-            php_processors: config.php_processors,
-            proxy_processors: config.proxy_processors,
         }
     }
 }
@@ -71,10 +61,6 @@ impl From<AdminConfiguration> for Configuration {
             sites: Vec::new(),
             binding_sites: Vec::new(),
             core: config.core,
-            request_handlers: config.request_handlers,
-            static_file_processors: config.static_file_processors,
-            php_processors: config.php_processors,
-            proxy_processors: config.proxy_processors,
             php_cgi_handlers: Vec::new(),
         }
     }
@@ -397,8 +383,15 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
     }
     let body_bytes = gruxi_request.get_body_bytes().await;
 
-    // Resource fields from older clients are ignored; only the resource APIs can update them.
-    let mut configuration: Configuration = match serde_json::from_slice::<AdminConfiguration>(&body_bytes) {
+    let value: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+        Ok(value) => value,
+        Err(error) => return Ok(crate::api::common::json_error(hyper::StatusCode::BAD_REQUEST, &format!("Invalid JSON format: {}", error))),
+    };
+    if ["request_handlers", "static_file_processors", "php_processors", "proxy_processors"].iter().any(|field| value.get(field).is_some()) {
+        return Ok(crate::api::common::json_error(hyper::StatusCode::BAD_REQUEST, "Handlers and processors must be updated through the site API"));
+    }
+    // Other resource fields from older clients are ignored; only resource APIs update them.
+    let mut configuration: Configuration = match serde_json::from_value::<AdminConfiguration>(value) {
         Ok(config) => config.into(),
         Err(e) => {
             error!("Failed to parse configuration JSON: {}", e);
@@ -415,13 +408,6 @@ pub async fn admin_post_configuration_endpoint(gruxi_request: &mut GruxiRequest,
 
     // Save the configuration
     let result = save_configuration_preserving_resources(&mut configuration);
-    if result.is_ok() {
-        let running_state = get_running_state_manager().await.get_running_state();
-        if let Err(error) = running_state.refresh_site_processing().await {
-            error!("Configuration saved, but site processing refresh failed: {}", error);
-            return Ok(crate::api::common::json_error(hyper::StatusCode::INTERNAL_SERVER_ERROR, "Configuration saved, but site processing could not be refreshed"));
-        }
-    }
     match result {
         Ok(true) => {
             info!("Configuration updated successfully");

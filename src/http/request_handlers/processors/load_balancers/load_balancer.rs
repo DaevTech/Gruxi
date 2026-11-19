@@ -122,6 +122,12 @@ impl LoadBalancerRegistry {
         Self { inner: RwLock::new(HashMap::new()) }
     }
 
+    pub fn create_initial<T: LoadBalancerImpl>(&mut self, id: String, lb: T) {
+        let (tx, rx) = mpsc::channel(32);
+        tokio::spawn(load_balancer_task(lb, rx));
+        self.inner.get_mut().insert(id, tx);
+    }
+
     pub async fn create<T: LoadBalancerImpl>(&self, id: String, lb: T) {
         let (tx, rx) = mpsc::channel(32);
         tokio::spawn(load_balancer_task(lb, rx));

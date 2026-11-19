@@ -6,7 +6,7 @@ use crate::config::file_cache::FileCache;
 use crate::config::gzip::Gzip;
 use crate::config::http_caching::HttpCaching;
 use crate::config::logging::Logging;
-use crate::config::request_handler::RequestHandler;
+use crate::config::request_handler::{Processor, RequestHandler};
 use crate::config::server_settings::ServerSettings;
 use crate::config::site::Site;
 use crate::config::telemetry::Telemetry;
@@ -14,9 +14,6 @@ use crate::config::tls_settings::TlsSettings;
 use crate::config::{binding::Binding, binding_site_relation::BindingSiteRelationship};
 use crate::external_connections::managed_system::php_cgi::PhpCgi;
 use crate::file::app_paths::get_app_paths;
-use crate::http::request_handlers::processor_trait::ProcessorTrait;
-use crate::http::request_handlers::processors::php_processor::PHPProcessor;
-use crate::http::request_handlers::processors::proxy_processor::ProxyProcessor;
 use crate::http::request_handlers::processors::static_files_processor::StaticFileProcessor;
 
 use serde::{Deserialize, Serialize};
@@ -29,11 +26,6 @@ pub struct Configuration {
     pub sites: Vec<Site>,
     pub binding_sites: Vec<BindingSiteRelationship>,
     pub core: Core,
-    // Request handlers and the processors they use
-    pub request_handlers: Vec<RequestHandler>,
-    pub static_file_processors: Vec<StaticFileProcessor>,
-    pub php_processors: Vec<PHPProcessor>,
-    pub proxy_processors: Vec<ProxyProcessor>,
     // External systems, such as PHP-CGI instances, FastCGI handlers, etc.
     pub php_cgi_handlers: Vec<PhpCgi>,
 }
@@ -64,10 +56,6 @@ impl Configuration {
                 http_caching: HttpCaching::new(),
                 logging: Logging::new(),
             },
-            request_handlers: vec![],
-            static_file_processors: vec![],
-            php_processors: vec![],
-            proxy_processors: vec![],
             php_cgi_handlers: vec![],
         }
     }
@@ -87,26 +75,6 @@ impl Configuration {
         // Sanitize core settings
         self.core.sanitize();
 
-        // Sanitize request handlers
-        for handler in &mut self.request_handlers {
-            handler.sanitize();
-        }
-
-        // Sanitize static file processors
-        for processor in &mut self.static_file_processors {
-            processor.sanitize();
-        }
-
-        // Sanitize PHP processors
-        for processor in &mut self.php_processors {
-            processor.sanitize();
-        }
-
-        // Sanitize proxy processors
-        for processor in &mut self.proxy_processors {
-            processor.sanitize();
-        }
-
         // Sanitize external systems
         for php_cgi in &mut self.php_cgi_handlers {
             php_cgi.sanitize();
@@ -122,11 +90,21 @@ impl Configuration {
             errors.push(format!("Configuration version '{}' does not match current version '{}'", self.version, CURRENT_CONFIGURATION_VERSION));
         }
 
+        let mut handler_ids = std::collections::HashSet::new();
+        let mut processor_ids = std::collections::HashSet::new();
         // Validate sites
         for (site_idx, site) in self.sites.iter().enumerate() {
             if let Err(site_errors) = site.validate() {
                 for error in site_errors {
                     errors.push(format!("Site {}: {}", site_idx + 1, error));
+                }
+                for handler in &site.request_handlers {
+                    if !handler_ids.insert(&handler.id) {
+                        errors.push(format!("Duplicate request handler ID: '{}'", handler.id));
+                    }
+                    if !processor_ids.insert((std::mem::discriminant(&handler.processor), handler.processor.id())) {
+                        errors.push(format!("Duplicate processor ID: '{}'", handler.processor.id()));
+                    }
                 }
             }
         }
@@ -157,46 +135,6 @@ impl Configuration {
             }
         }
 
-        // Validate request handlers
-        for (handler_idx, handler) in self.request_handlers.iter().enumerate() {
-            if let Err(handler_errors) = handler.validate() {
-                for error in handler_errors {
-                    errors.push(format!("Request Handler {}: {}", handler_idx + 1, error));
-                }
-            }
-        }
-
-        // Check for duplicate request handler IDs
-        let mut handler_ids = std::collections::HashSet::new();
-        for handler in &self.request_handlers {
-            if !handler_ids.insert(&handler.id) {
-                errors.push(format!("Duplicate request handler ID: '{}'", handler.id));
-            }
-        }
-
-        // Valdidate processors
-        for processor in &self.static_file_processors {
-            if let Err(processor_errors) = processor.validate() {
-                for error in processor_errors {
-                    errors.push(format!("Static File Processor {}: {}", processor.id, error));
-                }
-            }
-        }
-        for processor in &self.php_processors {
-            if let Err(processor_errors) = processor.validate() {
-                for error in processor_errors {
-                    errors.push(format!("PHP Processor {}: {}", processor.id, error));
-                }
-            }
-        }
-        for processor in &self.proxy_processors {
-            if let Err(processor_errors) = processor.validate() {
-                for error in processor_errors {
-                    errors.push(format!("Proxy Processor {}: {}", processor.id, error));
-                }
-            }
-        }
-
         // Validate external systems
         for php_cgi in self.php_cgi_handlers.iter() {
             if let Err(php_cgi_errors) = php_cgi.validate() {
@@ -213,44 +151,6 @@ impl Configuration {
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
-    }
-
-    pub fn clean_orphans(&mut self) {
-        // Remove any request handlers that are not referenced by any site
-        let mut referenced_handler_ids = std::collections::HashSet::new();
-        for site in &self.sites {
-            for handler_id in &site.request_handlers {
-                referenced_handler_ids.insert(handler_id);
-            }
-        }
-        self.request_handlers.retain(|handler| referenced_handler_ids.contains(&handler.id));
-
-        // Remove any static file processors that are not referenced by any request handler
-        let mut referenced_static_processor_ids = std::collections::HashSet::new();
-        for handler in &self.request_handlers {
-            if handler.processor_type == "static" {
-                referenced_static_processor_ids.insert(&handler.processor_id);
-            }
-        }
-        self.static_file_processors.retain(|processor| referenced_static_processor_ids.contains(&processor.id));
-
-        // Remove any PHP processors that are not referenced by any request handler
-        let mut referenced_php_processor_ids = std::collections::HashSet::new();
-        for handler in &self.request_handlers {
-            if handler.processor_type == "php" {
-                referenced_php_processor_ids.insert(&handler.processor_id);
-            }
-        }
-        self.php_processors.retain(|processor| referenced_php_processor_ids.contains(&processor.id));
-
-        // Remove any proxy processors that are not referenced by any request handler
-        let mut referenced_proxy_processor_ids = std::collections::HashSet::new();
-        for handler in &self.request_handlers {
-            if handler.processor_type == "proxy" {
-                referenced_proxy_processor_ids.insert(&handler.processor_id);
-            }
-        }
-        self.proxy_processors.retain(|processor| referenced_proxy_processor_ids.contains(&processor.id));
     }
 
     pub fn get_default() -> Self {
@@ -286,15 +186,14 @@ impl Configuration {
             id: Uuid::new_v4().to_string(),
             is_enabled: true,
             name: "Static File Handler".to_string(),
-            processor_type: "static".to_string(),
-            processor_id: request1_static_processor.id.clone(),
+            processor: Processor::Static(request1_static_processor),
             url_match: vec!["*".to_string()],
         };
 
         // Sites
         let mut default_site = Site::new();
         default_site.is_default = true;
-        default_site.request_handlers = vec![request_handler1.id.clone()];
+        default_site.request_handlers = vec![request_handler1];
 
         // Default site
         configuration.binding_sites.push(BindingSiteRelationship {
@@ -306,8 +205,6 @@ impl Configuration {
             site_id: default_site.id.clone(),
         });
         configuration.sites.push(default_site);
-        configuration.request_handlers.push(request_handler1);
-        configuration.static_file_processors.push(request1_static_processor);
 
         configuration.bindings.push(default_binding);
         configuration.bindings.push(default_binding_tls);

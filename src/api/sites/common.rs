@@ -26,5 +26,8 @@ pub(super) async fn read_site(request: &mut GruxiRequest) -> Result<Site, GruxiR
     let mut site: Site = serde_json::from_slice(&body).map_err(|_| json_error(StatusCode::BAD_REQUEST, "Invalid JSON"))?;
     site.sanitize();
     site.validate().map_err(|errors| json_error(StatusCode::BAD_REQUEST, &errors.join(", ")))?;
+    for handler in &mut site.request_handlers {
+        handler.processor.initialize();
+    }
     Ok(site)
 }

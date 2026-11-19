@@ -1,9 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createResourceApi, createSiteBindingApi, globalConfiguration, loadEditorResources, saveEditorResources } from './resourceApi.js';
+import { createResourceApi, createSiteBindingApi, globalConfiguration, loadEditorResources, saveEditorResources, saveResourceChanges } from './resourceApi.js';
 
 const resource = (id, value = id) => ({ id, value });
 const relation = (site_id, binding_id) => ({ site_id, binding_id });
+
+test('editing a nested processor saves its owning site', async () => {
+    const original = [{ id: 'site', request_handlers: [{ id: 'handler', processor: { type: 'static', config: { web_root: 'old' } } }] }];
+    const draft = structuredClone(original);
+    draft[0].request_handlers[0].processor.config.web_root = 'new';
+    const updates = [];
+    const api = { update: async (site) => { updates.push(site); return site; } };
+    await saveResourceChanges(api, original, draft, () => {});
+    assert.deepEqual(updates, draft);
+});
 
 test('editor loads resources without prefetching site relationships', async () => {
     const originalFetch = globalThis.fetch;
